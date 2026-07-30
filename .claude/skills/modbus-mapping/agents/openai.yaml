@@ -1,0 +1,4 @@
+interface:
+  display_name: "Modbus Mapping"
+  short_description: "Mapeamento Modbus para tags IoT"
+  default_prompt: "Use $modbus-mapping to apply the BlueBee IoT modbus-mapping standards."

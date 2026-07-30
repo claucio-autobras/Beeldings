@@ -1,0 +1,356 @@
+@import "tailwindcss";
+
+/* Variante `dark:` ativada por classe no <html> (controlada pelo usuário,
+   não pelo SO — a preferência "system" espelha o SO na classe). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Tokens de cor SEM `inline`: as utilities compilam para var(--color-*),
+   permitindo o override sob `.dark` abaixo. */
+@theme {
+  /* ── Backgrounds ──────────────────────────────────────────────── */
+  --color-background:        #F8FAFC;
+  --color-card:              #FFFFFF;
+  --color-popover:           #FFFFFF;
+  --color-muted:             #F1F5F9;
+
+  /* ── Foregrounds ──────────────────────────────────────────────── */
+  --color-foreground:        #0F172A;
+  --color-card-foreground:   #0F172A;
+  --color-muted-foreground:  #64748B;
+
+  /* ── Borders ──────────────────────────────────────────────────── */
+  --color-border:            #E2E8F0;
+  --color-input:             #E2E8F0;
+  --color-ring:              #0E7490;
+
+  /* ── Brand / Primary (cyan-700, WCAG AA 7:1) ─────────────────── */
+  --color-primary:           #0E7490;
+  --color-primary-foreground: #FFFFFF;
+
+  /* ── Secondary ────────────────────────────────────────────────── */
+  --color-secondary:         #F1F5F9;
+  --color-secondary-foreground: #0F172A;
+
+  /* ── Accent (hover) ───────────────────────────────────────────── */
+  --color-accent:            #E2E8F0;
+  --color-accent-foreground: #0F172A;
+
+  /* ── Destructive ──────────────────────────────────────────────── */
+  --color-destructive:       #DC2626;
+  --color-destructive-foreground: #FFFFFF;
+
+  /* ── Device status ────────────────────────────────────────────── */
+  --color-status-online:     #166534;
+  --color-status-offline:    #64748B;
+  --color-status-warning:    #92400E;
+  --color-status-alarm:      #B91C1C;
+
+  /* ── Alarm severities ─────────────────────────────────────────── */
+  --color-alarm-critical:    #B91C1C;
+  --color-alarm-high:        #C2410C;
+  --color-alarm-medium:      #92400E;
+  --color-alarm-low:         #1D4ED8;
+  --color-alarm-info:        #6D28D9;
+
+  /* ── Radius ───────────────────────────────────────────────────── */
+  --radius:    0.5rem;
+  --radius-sm: 0.25rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+}
+
+/* Fontes seguem `inline` porque referenciam variáveis do next/font. */
+@theme inline {
+  --font-sans: var(--font-inter), system-ui, sans-serif;
+  --font-mono: var(--font-fira-code), ui-monospace, monospace;
+}
+
+/* ── Tema escuro ─────────────────────────────────────────────────────────────
+   Sobrescreve os tokens semânticos e os tons claros da paleta usados como
+   fundo/hover/borda/realce nas telas principais. Tons escuros (slate-700+)
+   NÃO são tocados — sidebar e editor SCADA já são escuros por design. */
+.dark {
+  /* Tokens semânticos */
+  --color-background:        #0B1220;
+  --color-card:              #111A2C;
+  --color-popover:           #111A2C;
+  --color-muted:             #1B2740;
+  --color-foreground:        #E6EDF7;
+  --color-card-foreground:   #E6EDF7;
+  --color-muted-foreground:  #8CA0BF;
+  --color-border:            #24334F;
+  --color-input:             #24334F;
+  --color-ring:              #22D3EE;
+  --color-secondary:         #1B2740;
+  --color-secondary-foreground: #E6EDF7;
+  --color-accent:            #24334F;
+  --color-accent-foreground: #E6EDF7;
+
+  /* Neutros claros usados como superfície/hover/borda em telas claras */
+  --color-slate-50:          #16213A;
+  --color-slate-100:         #1B2740;
+  --color-slate-200:         #24334F;
+  --color-slate-300:         #35476B;
+  --color-slate-400:         #64748B;
+  --color-slate-500:         #8CA0BF;
+  --color-slate-600:         #B7C4DA;
+
+  /* Realces (tints -50/-100/-200) → equivalentes escuros */
+  --color-cyan-50:           #0C2E3D;
+  --color-cyan-100:          #0E3A4D;
+  --color-cyan-200:          #155E75;
+
+  --color-red-50:            #331318;
+  --color-red-100:           #47181E;
+  --color-red-200:           #7F1D1D;
+
+  --color-emerald-50:        #0A2A20;
+  --color-emerald-100:       #0D3A2C;
+  --color-emerald-200:       #065F46;
+
+  --color-amber-50:          #33230A;
+  --color-amber-100:         #45300D;
+  --color-amber-200:         #92400E;
+
+  --color-orange-50:         #351D0C;
+  --color-orange-100:        #47270F;
+  --color-orange-200:        #9A3412;
+
+  --color-blue-50:           #101E3C;
+  --color-blue-100:          #152750;
+  --color-blue-200:          #1E40AF;
+
+  --color-purple-50:         #221238;
+  --color-purple-100:        #2D1849;
+  --color-purple-200:        #6B21A8;
+}
+
+/* Controles nativos (select/option, scrollbars, inputs de data) seguem o tema:
+   sem isso o dropdown do <select> abre claro sobre painéis escuros. */
+.dark {
+  color-scheme: dark;
+}
+
+/* A sidebar tem fundo escuro fixo nos dois temas — dentro dela, os tons
+   slate voltam aos valores originais para o texto ficar legível no dark. */
+.dark .app-sidebar {
+  --color-slate-50:  #f8fafc;
+  --color-slate-100: #f1f5f9;
+  --color-slate-200: #e2e8f0;
+  --color-slate-300: #cbd5e1;
+  --color-slate-400: #94a3b8;
+  --color-slate-500: #64748b;
+  --color-slate-600: #475569;
+}
+
+/* ── SCADA: chrome escuro por design ─────────────────────────────────────────
+   O editor SCADA, o viewer e a bancada flutuante têm fundo escuro fixo nos
+   DOIS temas do app. Este escopo:
+   1. força color-scheme: dark → o dropdown nativo dos <select> (Controladora,
+      operadores, ícones…) abre escuro e legível, mesmo com o app no tema claro;
+   2. sob `.dark`, devolve os tons slate claros aos valores originais (o
+      override global os escurece p/ telas claras — aqui viraria cinza sobre
+      cinza / texto invisível). */
+.scada-dark-chrome {
+  color-scheme: dark;
+}
+
+.dark .scada-dark-chrome {
+  --color-slate-50:  #f8fafc;
+  --color-slate-100: #f1f5f9;
+  --color-slate-200: #e2e8f0;
+  --color-slate-300: #cbd5e1;
+  --color-slate-400: #94a3b8;
+  --color-slate-500: #64748b;
+  --color-slate-600: #475569;
+
+  /* Realces usados no chrome escuro (avisos, badges) voltam aos tints claros
+     p/ manter o contraste calculado sobre fundos slate-800/900. */
+  --color-cyan-50:  #ecfeff;
+  --color-cyan-100: #cffafe;
+  --color-cyan-200: #a5f3fc;
+  --color-amber-50: #fffbeb;
+  --color-amber-100: #fef3c7;
+  --color-amber-200: #fde68a;
+  --color-red-50:   #fef2f2;
+  --color-red-100:  #fee2e2;
+  --color-red-200:  #fecaca;
+  --color-emerald-50:  #ecfdf5;
+  --color-emerald-100: #d1fae5;
+  --color-emerald-200: #a7f3d0;
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans);
+}
+
+/* Tabular numbers para todos os valores de telemetria */
+.data-value {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* Pulso de fundo para alarmes ativos — apenas background, texto não é afetado */
+@keyframes alarm-pulse {
+  0%, 100% { background-color: #fef2f2; }
+  50%       { background-color: #fecaca; }
+}
+
+.animate-alarm-pulse {
+  animation: alarm-pulse 2s ease-in-out infinite;
+}
+
+/* Pulso de fundo para alarmes a reconhecer (normalizados, aguardando ACK) — laranja */
+@keyframes alarm-pulse-ack {
+  0%, 100% { background-color: #fff7ed; }
+  50%       { background-color: #fed7aa; }
+}
+
+.animate-alarm-pulse-ack {
+  animation: alarm-pulse-ack 2s ease-in-out infinite;
+}
+
+/* Versões escuras dos pulsos (os keyframes acima usam tons claros fixos) */
+@keyframes alarm-pulse-dark {
+  0%, 100% { background-color: #331318; }
+  50%       { background-color: #5B1A1F; }
+}
+
+.dark .animate-alarm-pulse {
+  animation-name: alarm-pulse-dark;
+}
+
+@keyframes alarm-pulse-ack-dark {
+  0%, 100% { background-color: #33230A; }
+  50%       { background-color: #5C3A10; }
+}
+
+.dark .animate-alarm-pulse-ack {
+  animation-name: alarm-pulse-ack-dark;
+}
+
+/* ── Toast ───────────────────────────────────────────────────────────────────  */
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Painel de notificações (drawer) ─────────────────────────────────────── */
+
+@keyframes notif-drawer-in {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+.animate-notif-drawer-in {
+  animation: notif-drawer-in 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes notif-overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.animate-notif-overlay-in {
+  animation: notif-overlay-in 0.25s ease-out;
+}
+
+@keyframes notif-item-in {
+  from { opacity: 0; transform: translateX(16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.animate-notif-item-in {
+  animation: notif-item-in 0.35s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes bell-badge-pulse {
+  0%   { transform: scale(1); }
+  30%  { transform: scale(1.35); }
+  60%  { transform: scale(0.95); }
+  100% { transform: scale(1); }
+}
+.animate-bell-badge-pulse {
+  animation: bell-badge-pulse 0.6s ease-in-out 2;
+}
+
+/* ── Barra de progresso indeterminada (busca em andamento) ──────────────── */
+
+@keyframes indeterminate-bar {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
+.animate-indeterminate {
+  animation: indeterminate-bar 1.3s ease-in-out infinite;
+}
+
+/* ── SCADA widget animations ────────────────────────────────────────────── */
+
+@keyframes scada-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.15; }
+}
+
+@keyframes scada-pulse {
+  0%, 100% { transform: scale(1);    opacity: 1; }
+  50%       { transform: scale(1.12); opacity: 0.8; }
+}
+
+@keyframes scada-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes scada-fade {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.1; }
+}
+
+/* Balançar — pêndulo suave de lado a lado */
+@keyframes scada-sway {
+  0%, 100% { transform: rotate(-6deg); }
+  50%       { transform: rotate(6deg); }
+}
+
+/* Ondular — sobe/desce com leve cisalhamento */
+@keyframes scada-wave {
+  0%, 100% { transform: translateY(0)     skewX(0deg); }
+  25%       { transform: translateY(-9%)  skewX(5deg); }
+  75%       { transform: translateY(9%)   skewX(-5deg); }
+}
+
+/* Brilho/glow — brilho pulsante ao redor do elemento */
+@keyframes scada-glow {
+  0%, 100% { filter: brightness(1)   drop-shadow(0 0 2px rgba(255,255,255,0.25)); }
+  50%       { filter: brightness(1.5) drop-shadow(0 0 11px rgba(255,255,255,0.95)); }
+}
+
+/* Deslizar — desliza para os lados */
+@keyframes scada-slide {
+  0%, 100% { transform: translateX(-12%); }
+  50%       { transform: translateX(12%); }
+}
+
+/* Tremer — vibração rápida */
+@keyframes scada-shake {
+  0%, 100% { transform: translateX(0)     rotate(0deg); }
+  20%       { transform: translateX(-3px) rotate(-2.5deg); }
+  40%       { transform: translateX(3px)  rotate(2.5deg); }
+  60%       { transform: translateX(-2px) rotate(-1.5deg); }
+  80%       { transform: translateX(2px)  rotate(1.5deg); }
+}
+
+/* Fluxo da tubulação SCADA: animado via Web Animations API no PipeWidget
+   (element.animate) — CSS var dentro de @keyframes não resolve em algumas
+   composições/navegadores e congelava o tracejado. */
+
+/* Reduzir animações quando o usuário preferir */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

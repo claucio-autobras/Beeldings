@@ -1,0 +1,80 @@
+{
+  "name": "@bluebee/gateway",
+  "version": "1.8.2",
+  "description": "BlueBee IoT Gateway — BACnet/Modbus local microservice",
+  "author": "",
+  "private": true,
+  "license": "UNLICENSED",
+  "scripts": {
+    "build": "nest build",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "start:debug": "nest start --debug --watch",
+    "start:prod": "node dist/main",
+    "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:cov": "jest --coverage",
+    "dev": "nest start --watch",
+    "build:exe": "nest build && pkg dist/main.js --targets node22-win-x64 --output release/bluebee-gateway.exe",
+    "package:win": "node scripts/package-windows.mjs"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.0.1",
+    "@nestjs/config": "^4.0.4",
+    "@nestjs/core": "^11.0.1",
+    "@nestjs/event-emitter": "^3.0.1",
+    "@nestjs/platform-express": "^11.0.1",
+    "adm-zip": "^0.6.0",
+    "modbus-serial": "^8.0.25",
+    "mqtt": "^5.10.1",
+    "net-snmp": "^3.26.3",
+    "node-bacnet": "^0.2.4",
+    "onvif": "^0.8.1",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1",
+    "serialport": "^13.0.0"
+  },
+  "pkg": {
+    "scripts": [
+      "dist/**/*.js"
+    ],
+    "targets": [
+      "node22-win-x64"
+    ],
+    "outputPath": "release"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^11.0.0",
+    "@nestjs/schematics": "^11.0.0",
+    "@nestjs/testing": "^11.0.1",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.0.0",
+    "@yao-pkg/pkg": "^6.3.0",
+    "jest": "^30.0.0",
+    "prettier": "^3.4.2",
+    "source-map-support": "^0.5.21",
+    "ts-jest": "^29.2.5",
+    "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
+    "typescript": "^5.7.3"
+  },
+  "jest": {
+    "moduleFileExtensions": [
+      "js",
+      "json",
+      "ts"
+    ],
+    "rootDir": "src",
+    "testRegex": ".*\\.spec\\.ts$",
+    "transform": {
+      "^.+\\.(t|j)s$": "ts-jest"
+    },
+    "collectCoverageFrom": [
+      "**/*.(t|j)s"
+    ],
+    "coverageDirectory": "../coverage",
+    "testEnvironment": "node"
+  }
+}

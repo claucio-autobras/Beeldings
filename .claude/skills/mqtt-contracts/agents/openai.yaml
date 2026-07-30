@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mqtt Contracts"
+  short_description: "Contratos MQTT cloud-edge IoT"
+  default_prompt: "Use $mqtt-contracts to apply the BlueBee IoT mqtt-contracts standards."

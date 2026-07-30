@@ -1,0 +1,799 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Tenant ───────────────────────────────────────────────────────────────────
+
+model Tenant {
+  id               String   @id @default(uuid())
+  name             String
+  slug             String   @unique
+  // Cliente ativo/inativo. Inativo bloqueia login dos usuários do tenant,
+  // derruba sessões/sockets e silencia notificações de alarme — mas o motor de
+  // alarmes/telemetria continua registrando os eventos no histórico.
+  active           Boolean  @default(true) @map("is_active")
+  // Cobertura automática de trends: ao cadastrar/sincronizar pontos relevantes
+  // (analógicos de medição e estados digitais principais) o sistema cria trends
+  // padrão. Administrador pode desligar por cliente.
+  autoTrendEnabled Boolean  @default(true) @map("auto_trend_enabled")
+  // Identidade visual do cliente exibida na topbar: logo (URL relativa servida
+  // pelo backend via App Storage) e cor de destaque (#rrggbb). Ambos opcionais.
+  logoUrl          String?  @map("logo_url")
+  accentColor      String?  @map("accent_color")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  users           User[]
+  devices         Device[]
+  projects        Project[]
+  sites           Site[]
+  gateways        Gateway[]
+  scadaScreens    ScadaScreen[]
+  scadaComponents ScadaComponent[]
+  aiConversations AiConversation[]
+  alarmGroups     AlarmGroup[]
+
+  @@map("tenants")
+}
+
+// ─── User ─────────────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(uuid())
+  supabaseId   String   @unique @map("supabase_id")
+  passwordHash String?  @map("password_hash")
+  email        String   @unique
+  name         String
+  role         Role     @default(VISUALIZADOR)
+  tenantId     String?  @map("tenant_id")
+  tenant       Tenant?  @relation(fields: [tenantId], references: [id])
+  // Preferências pessoais (tema, idioma, notificações do sino). JSON livre —
+  // o backend valida/mescla com defaults na leitura e na escrita.
+  preferences  Json?
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  aiConversations AiConversation[]
+
+  @@map("users")
+}
+
+enum Role {
+  ADMIN
+  CCO
+  SUPERVISOR
+  CLIENTE
+  VISUALIZADOR
+}
+
+// ─── Site ─────────────────────────────────────────────────────────────────────
+// Localidade física de um cliente (ex.: Unidade Morumbi). Pertence ao Tenant
+// e contém um ou mais Projetos (BMS, CFTV, Energia...).
+
+model Site {
+  id        String   @id @default(uuid())
+  name      String
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  projects     Project[]
+  devices      Device[]
+  scadaScreens ScadaScreen[]
+  alarmGroups  AlarmGroup[]
+
+  @@map("sites")
+}
+
+// ─── Project ──────────────────────────────────────────────────────────────────
+// Sistema implantado num Site (ex.: BMS Principal). Pertence ao Site e possui
+// exatamente um Gateway (dispositivo de borda) que gera o gateway-config.env.
+
+model Project {
+  id               String   @id @default(uuid())
+  name             String
+  address          String?
+  technicalContact String?  @map("technical_contact")
+  // Quando true, o projeto aparece como card na landing do módulo SCADA.
+  scadaEnabled     Boolean  @default(false) @map("scada_enabled")
+  siteId           String   @map("site_id")
+  site             Site     @relation(fields: [siteId], references: [id])
+  tenantId         String   @map("tenant_id")
+  tenant           Tenant   @relation(fields: [tenantId], references: [id])
+  // Gateway compartilhável: vários projetos do mesmo cliente (inclusive de sites
+  // diferentes — ex.: torres com rack central) podem usar o mesmo gateway físico.
+  // SetNull para não quebrar projetos se o gateway for removido.
+  gatewayId        String?  @map("gateway_id")
+  gateway          Gateway? @relation(fields: [gatewayId], references: [id], onDelete: SetNull)
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  scadaScreens ScadaScreen[]
+
+  @@index([gatewayId])
+  @@map("projects")
+}
+
+// ─── Gateway ──────────────────────────────────────────────────────────────────
+// Dispositivo de borda com credenciais MQTT exclusivas. Pertence a um cliente
+// (tenant) e pode atender vários projetos/sites (mesmo rack/computador central).
+
+model Gateway {
+  id              String    @id
+  tenantId        String    @map("tenant_id")
+  tenant          Tenant    @relation(fields: [tenantId], references: [id])
+  mqttUser        String    @unique @map("mqtt_user")
+  mqttPass        String    @map("mqtt_pass")
+  // Credencial DEDICADA p/ equipamentos MQTT publicarem (publish-only em
+  // bluebee/{tenant}/gateway/{id}/sensors/#). Separada da credencial do gateway
+  // para não dar a um sensor acesso aos tópicos de comando/config/telemetria.
+  sensorMqttUser  String?   @map("sensor_mqtt_user")
+  sensorMqttPass  String?   @map("sensor_mqtt_pass")
+  status          String    @default("offline")
+  lastSeen        DateTime? @map("last_seen")
+  // Versão do gateway reportada pelo próprio agente (health) — null para
+  // instalações antigas que ainda não reportam versão (sem suporte a OTA).
+  reportedVersion String?   @map("reported_version")
+  // Último resultado da atualização remota (OTA): estágio final + mensagem.
+  otaState        String?   @map("ota_state")
+  otaMessage      String?   @map("ota_message")
+  otaAt           DateTime? @map("ota_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  // Um gateway físico pode atender vários projetos (mesmo rack/computador).
+  projects Project[]
+  devices  Device[]
+
+  @@map("gateways")
+}
+
+// ─── Device ───────────────────────────────────────────────────────────────────
+
+model Device {
+  id        String   @id @default(uuid())
+  name      String
+  protocol  String
+  ip        String
+  port      Int      @default(47808)
+  status    String   @default("offline")
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  siteId    String?  @map("site_id")
+  site      Site?    @relation(fields: [siteId], references: [id])
+  gatewayId String?  @map("gateway_id")
+  gateway   Gateway? @relation(fields: [gatewayId], references: [id])
+  // Ativo crítico: marcado pelo operador para acompanhamento prioritário no
+  // dashboard (horas ligado, falha contínua, tempo offline) e consumo pela IA.
+  critical  Boolean  @default(false) @map("is_critical")
+  config    Json? // config do device específica de protocolo (ex.: Modbus { unitId, pollingIntervalMs })
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  points    DevicePoint[]
+  telemetry Telemetry[]
+
+  @@map("devices")
+}
+
+// ─── DevicePoint ──────────────────────────────────────────────────────────────
+
+model DevicePoint {
+  id             String    @id @default(uuid())
+  deviceId       String    @map("device_id")
+  device         Device    @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  tag            String
+  objectName     String    @map("object_name")
+  objectType     String    @map("object_type")
+  instance       Int
+  unit           String?
+  binding        Json? // config do ponto específica de protocolo (Modbus { register, registerType, dataType, scale, offset }; MQTT { sourceTopic, jsonPath, valueType })
+  // Último valor lido (persistido só para câmeras CFTV — status inicial imediato na UI)
+  lastValue      Float?    @map("last_value")
+  lastValueAt    DateTime? @map("last_value_at")
+  // Estado do último valor (câmeras CFTV): 'waiting_event' | 'unsupported' |
+  // 'error' | 'estimated' — null = leitura real do hardware.
+  lastValueState String?   @map("last_value_state")
+  // Papel operacional do ponto no equipamento (contexto p/ IA/correlação):
+  // 'status' (ligado/desligado) | 'mode' (modo de operação) | 'setpoint'.
+  // null = ponto sem papel operacional definido.
+  opRole         String?   @map("op_role")
+  // Ponto crítico: acompanhamento individual no card de Ativos Críticos.
+  critical       Boolean   @default(false) @map("is_critical")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  trends     Trend[]
+  alarmRules AlarmRule[]
+
+  @@unique([deviceId, objectType, instance])
+  @@map("device_points")
+}
+
+// ─── Trends (histórico de variáveis, opt-in por ponto) ──────────────────────────
+// Estilo EBO: histórico só existe para pontos com Trend configurada. O backend
+// grava a partir do stream de telemetria (gateway segue "burro" publicando).
+
+enum TrendMode {
+  ON_CHANGE
+  INTERVAL
+}
+
+enum TrendQuality {
+  GOOD
+  BAD
+  UNAVAILABLE
+}
+
+model Trend {
+  id                 String      @id @default(uuid())
+  tenantId           String      @map("tenant_id")
+  pointId            String      @map("point_id")
+  point              DevicePoint @relation(fields: [pointId], references: [id], onDelete: Cascade)
+  name               String
+  mode               TrendMode
+  intervalSeconds    Int?        @map("interval_seconds") // só p/ INTERVAL (60/300/900/1800/3600)
+  // ON_CHANGE: deadband analógico — só grava se variar >= este valor (null/0 = qualquer mudança)
+  covThreshold       Float?      @map("cov_threshold")
+  // ON_CHANGE: heartbeat — grava no máximo a cada X segundos mesmo sem variação (null = desligado)
+  maxIntervalSeconds Int?        @map("max_interval_seconds")
+  retentionDays      Int         @map("retention_days") // 30/90/365/1825
+  enabled            Boolean     @default(true)
+  startDate          DateTime    @default(now()) @map("start_date")
+  createdAt          DateTime    @default(now()) @map("created_at")
+  updatedAt          DateTime    @updatedAt @map("updated_at")
+
+  records TrendRecord[]
+
+  @@index([tenantId])
+  @@index([pointId])
+  @@map("trends")
+}
+
+// Particionada por RANGE("timestamp") (mensal) no banco — por isso a PK é
+// composta (id, timestamp): o PostgreSQL exige a coluna de particionamento na
+// chave. A retenção descarta partições inteiras quando possível.
+model TrendRecord {
+  id        BigInt       @default(autoincrement())
+  trendId   String       @map("trend_id")
+  trend     Trend        @relation(fields: [trendId], references: [id], onDelete: Cascade)
+  tenantId  String       @map("tenant_id")
+  timestamp DateTime
+  value     Float // digital = 0.0/1.0
+  quality   TrendQuality @default(GOOD)
+
+  @@id([id, timestamp])
+  @@index([trendId, timestamp(sort: Desc)])
+  @@index([tenantId, timestamp(sort: Desc)])
+  @@map("trend_records")
+}
+
+// ─── Rollups de trend (agregações contínuas p/ IA e gráficos longos) ───────────
+// Alimentados incrementalmente pelo TrendRollupService a partir de trend_records
+// (cursor por id). Guardam SUM (não AVG) para permitir merge incremental; a média
+// é derivada na leitura (sum/count). Retenção própria, mais longa que a dos brutos.
+
+model TrendRollupHourly {
+  trendId  String   @map("trend_id")
+  tenantId String   @map("tenant_id")
+  bucket   DateTime // início da hora (date_trunc('hour'))
+  min      Float
+  max      Float
+  sum      Float
+  count    Int
+
+  @@id([trendId, bucket])
+  @@index([tenantId, bucket(sort: Desc)])
+  @@map("trend_rollups_hourly")
+}
+
+model TrendRollupDaily {
+  trendId  String   @map("trend_id")
+  tenantId String   @map("tenant_id")
+  bucket   DateTime // início do dia (date_trunc('day'))
+  min      Float
+  max      Float
+  sum      Float
+  count    Int
+
+  @@id([trendId, bucket])
+  @@index([tenantId, bucket(sort: Desc)])
+  @@map("trend_rollups_daily")
+}
+
+// Cursor do job incremental de rollup (linha única, id=1).
+model TrendRollupState {
+  id           Int      @id @default(1)
+  lastRecordId BigInt   @default(0) @map("last_record_id")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("trend_rollup_state")
+}
+
+// ─── Telemetry ────────────────────────────────────────────────────────────────
+
+model Telemetry {
+  id         String   @id @default(uuid())
+  deviceId   String   @map("device_id")
+  device     Device   @relation(fields: [deviceId], references: [id])
+  tenantId   String   @map("tenant_id")
+  tag        String
+  value      Float
+  unit       String?
+  recordedAt DateTime @map("recorded_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([deviceId, recordedAt(sort: Desc)])
+  @@index([tenantId, recordedAt(sort: Desc)])
+  @@map("telemetry")
+}
+
+// ─── Alarmes (config por-ponto × ocorrência) ────────────────────────────────────
+
+enum AlarmType {
+  STATE_CHANGE
+  VALUE_RANGE
+}
+
+enum AlarmSeverity {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum AlarmCondition {
+  GT
+  LT
+  GTE
+  LTE
+  BETWEEN
+  OUTSIDE
+}
+
+enum AlarmEventState {
+  ACTIVE
+  ACTIVE_ACK
+  NORMALIZED_UNACK
+  NORMALIZED_ACK
+}
+
+enum AlarmEventKind {
+  // Alarme de telemetria (VALUE_RANGE/STATE_CHANGE) — vinculado a uma AlarmRule.
+  ALARM
+  // Aviso disparado por uma automação (ação NOTIFY) — sem AlarmRule.
+  AUTOMATION_NOTICE
+}
+
+model AlarmRule {
+  id              String          @id @default(uuid())
+  tenantId        String          @map("tenant_id")
+  pointId         String          @map("point_id")
+  point           DevicePoint     @relation(fields: [pointId], references: [id], onDelete: Cascade)
+  name            String
+  message         String
+  type            AlarmType
+  severity        AlarmSeverity
+  enabled         Boolean         @default(true)
+  // STATE_CHANGE (digital): dispara quando o ponto == este estado
+  activationState Boolean?        @map("activation_state")
+  // VALUE_RANGE (analógico)
+  condition       AlarmCondition?
+  limitValue      Float?          @map("limit_value") // p/ GT/LT/GTE/LTE
+  limitLow        Float?          @map("limit_low") // p/ BETWEEN/OUTSIDE
+  limitHigh       Float?          @map("limit_high")
+  hysteresis      Float           @default(0)
+  delaySeconds    Int             @default(0) @map("delay_seconds")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  events           AlarmEvent[]
+  groupMemberships AlarmGroupMember[]
+
+  @@index([tenantId])
+  @@index([pointId])
+  @@map("alarm_rules")
+}
+
+model AlarmEvent {
+  id                String          @id @default(uuid())
+  // Opcional: avisos de automação (kind=AUTOMATION_NOTICE) não têm regra.
+  alarmRuleId       String?         @map("alarm_rule_id")
+  alarmRule         AlarmRule?      @relation(fields: [alarmRuleId], references: [id], onDelete: Cascade)
+  tenantId          String          @map("tenant_id")
+  kind              AlarmEventKind  @default(ALARM)
+  state             AlarmEventState @default(ACTIVE)
+  valueAtTrigger    Float?          @map("value_at_trigger")
+  // Campos desnormalizados p/ avisos de automação (null em alarmes de telemetria,
+  // que herdam mensagem/severidade da AlarmRule).
+  sourceName        String?         @map("source_name") // nome da automação de origem
+  sourceId          String?         @map("source_id") // id da automação de origem (deep-link p/ histórico)
+  message           String? // texto do aviso configurado na automação
+  severity          AlarmSeverity? // severidade do aviso (avisos usam LOW)
+  activatedAt       DateTime        @map("activated_at")
+  normalizedAt      DateTime?       @map("normalized_at")
+  // Quantas vezes a ocorrência oscilou (normalizou e voltou a ATIVO antes do ACK).
+  // Zera implicitamente no novo ciclo: ocorrência nova nasce com 0.
+  reactivationCount Int             @default(0) @map("reactivation_count")
+  lastReactivatedAt DateTime?       @map("last_reactivated_at")
+  acknowledgedAt    DateTime?       @map("acknowledged_at")
+  acknowledgedBy    String?         @map("acknowledged_by") // userId
+  ackNote           String?         @map("ack_note") // motivo do reconhecimento (opcional)
+  createdAt         DateTime        @default(now()) @map("created_at")
+
+  @@index([tenantId, activatedAt(sort: Desc)])
+  @@index([alarmRuleId])
+  @@index([state])
+  @@index([kind])
+  @@map("alarm_events")
+}
+
+// ─── AlarmGroup (Soma de Alarmes) ───────────────────────────────────────────────
+// Agrupa várias regras de alarme (AlarmRule) por Site em um único indicador. O
+// agregado "ativos/total" + maior severidade ativa é derivado em tempo de leitura
+// a partir dos AlarmEvent abertos (kind='ALARM'), nunca persistido aqui.
+
+model AlarmGroup {
+  id        String   @id @default(uuid())
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  siteId    String   @map("site_id")
+  site      Site     @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  name      String
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  members AlarmGroupMember[]
+
+  @@index([tenantId])
+  @@index([siteId])
+  @@map("alarm_groups")
+}
+
+// Associação grupo ↔ regra de alarme (membro). Cascade em ambos os lados: some do
+// grupo quando o grupo OU a regra é excluída.
+model AlarmGroupMember {
+  id          String     @id @default(uuid())
+  groupId     String     @map("group_id")
+  group       AlarmGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  alarmRuleId String     @map("alarm_rule_id")
+  alarmRule   AlarmRule  @relation(fields: [alarmRuleId], references: [id], onDelete: Cascade)
+  createdAt   DateTime   @default(now()) @map("created_at")
+
+  @@unique([groupId, alarmRuleId])
+  @@index([alarmRuleId])
+  @@map("alarm_group_members")
+}
+
+// ─── StatusEvent (transições online/offline p/ relatório de disponibilidade) ───
+// Histórico durável das MUDANÇAS de status de gateways, dispositivos e câmeras.
+// Grava só transições (deduplicadas) — nunca polling contínuo. Alimentado pelo
+// AvailabilityRecorderService (LWT/heartbeat de gateway, recência de telemetria
+// de dispositivos, ponto STATUS de câmeras). Retenção: 12 meses.
+
+model StatusEvent {
+  id         BigInt   @id @default(autoincrement())
+  entityType String   @map("entity_type") // 'gateway' | 'device' | 'camera'
+  entityId   String   @map("entity_id")
+  tenantId   String   @map("tenant_id")
+  status     String // 'online' | 'offline'
+  at         DateTime
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([entityId, at])
+  @@index([tenantId, at])
+  @@map("status_events")
+}
+
+// ─── AuditLog (trilha de auditoria, append-only) ────────────────────────────────
+// Registra quem fez o quê, quando e de onde. Nunca sofre update/delete pela
+// aplicação. Snapshots do ator e do cliente (nome) sobrevivem à exclusão das
+// entidades referenciadas. NENHUM segredo é gravado em before/after/metadados.
+
+enum AuditResult {
+  SUCCESS
+  FAILURE
+}
+
+model AuditLog {
+  id          String      @id @default(uuid())
+  tenantId    String?     @map("tenant_id") // null = ação global (admin)
+  tenantName  String?     @map("tenant_name") // snapshot do nome do cliente p/ exibição
+  actorUserId String?     @map("actor_user_id") // null em falha de login de usuário inexistente
+  actorName   String?     @map("actor_name") // snapshot do nome do usuário
+  actorEmail  String      @map("actor_email") // identificador (sobrevive à exclusão; e-mail tentado em falha)
+  actorRole   String?     @map("actor_role")
+  action      String // código: LOGIN/LOGOUT/CREATE/UPDATE/DELETE/COMMAND/ACK
+  entityType  String?     @map("entity_type") // rótulo legível da entidade (ex.: "Regra de alarme")
+  entityName  String?     @map("entity_name")
+  entityId    String?     @map("entity_id")
+  change      String? // resumo legível before→after (ex.: "Severidade: MÉDIA → ALTA")
+  before      Json? // estado anterior (apenas dados não-sensíveis)
+  after       Json? // estado novo (apenas dados não-sensíveis)
+  ip          String? // origem (IP bruto; mascarado na exibição)
+  userAgent   String?     @map("user_agent")
+  result      AuditResult @default(SUCCESS)
+  createdAt   DateTime    @default(now()) @map("created_at")
+
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([actorUserId])
+  @@index([action])
+  @@map("audit_logs")
+}
+
+// ─── ScadaScreen ────────────────────────────────────────────────────────────────
+// Tela sinótica (SCADA) desenhada pelo integrador. Pertence a um Tenant e é
+// escopada por Site/Projeto (a tela vive "dentro do projeto"). O layout — lista
+// de widgets e ajustes de canvas — é guardado como JSON opaco; o frontend é dono
+// do schema dos widgets. O binding de cada widget referencia deviceId + ponto
+// (objectType:instance) das controladoras reais já cadastradas no projeto.
+
+model ScadaScreen {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  tenantId    String   @map("tenant_id")
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  siteId      String?  @map("site_id")
+  site        Site?    @relation(fields: [siteId], references: [id], onDelete: SetNull)
+  projectId   String?  @map("project_id")
+  project     Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  width       Int      @default(1920)
+  height      Int      @default(1080)
+  status      String   @default("active")
+  // Tela inicial do projeto: só uma por projeto deve ter true (garantido na aplicação).
+  isHome      Boolean  @default(false) @map("is_home")
+  widgets     Json     @default("[]")
+  settings    Json     @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@index([projectId])
+  @@index([siteId])
+  @@map("scada_screens")
+}
+
+// ─── ScadaComponent ─────────────────────────────────────────────────────────
+// Biblioteca global de componentes reutilizáveis do editor SCADA ("Meus
+// Componentes"). Escopada por tenant: um componente salvo em qualquer tela fica
+// disponível em todas as telas do mesmo cliente. `widgets` é JSON opaco
+// (posições relativas ao grupo); o frontend é dono do schema.
+
+model ScadaComponent {
+  id        String   @id @default(uuid())
+  name      String
+  tenantId  String   @map("tenant_id")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  width     Int
+  height    Int
+  widgets   Json     @default("[]")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@map("scada_components")
+}
+
+// ─── AI Chat ──────────────────────────────────────────────────────────────────
+// Histórico do Chat IA. Cada conversa pertence ao usuário que a criou (e,
+// quando aplicável, ao seu tenant), garantindo que cada operador veja apenas as
+// próprias conversas. As mensagens guardam o turno de usuário/assistente para
+// retomar a conversa entre sessões.
+
+model AiConversation {
+  id        String   @id @default(uuid())
+  title     String
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenantId  String?  @map("tenant_id")
+  tenant    Tenant?  @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  messages AiMessage[]
+
+  @@index([userId])
+  @@map("ai_conversations")
+}
+
+model AiMessage {
+  id             String         @id @default(uuid())
+  conversationId String         @map("conversation_id")
+  conversation   AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String
+  content        String
+  createdAt      DateTime       @default(now()) @map("created_at")
+
+  @@index([conversationId])
+  @@map("ai_messages")
+}
+
+// Registro de cada chamada ao /ai/chat, usado pelo rate limit. Em memória o
+// limite valia só por processo; persistindo aqui, o teto é compartilhado entre
+// múltiplas instâncias do backend. Uma linha por turno; o guard expurga as
+// linhas fora da janela a cada verificação. `key` é o id do usuário (ou IP como
+// fallback). Sem FK de propósito: o expurgo é por tempo, não por entidade.
+model AiRateLimitHit {
+  id        String   @id @default(uuid())
+  key       String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([key, createdAt])
+  @@map("ai_rate_limit_hits")
+}
+
+// ─── Base de Conhecimento (RAG) ───────────────────────────────────────────────
+// Conhecimento curado e GLOBAL do Chat IA. NÃO guarda dados crus de tenant: só
+// material anonimizado e aprovado (manuais, how-tos e playbooks de alarmes). O
+// isolamento por tenant vale para os dados operacionais; o conhecimento aqui é
+// compartilhado entre todos os tenants, por isso só entra na busca depois de
+// passar pela curadoria (status APPROVED). Cada doc é fatiado em chunks com um
+// embedding (pgvector) usado na busca semântica do RAG.
+
+enum KnowledgeType {
+  MANUAL
+  HOWTO
+  PLAYBOOK
+}
+
+enum KnowledgeStatus {
+  DRAFT
+  APPROVED
+}
+
+model KnowledgeDoc {
+  id               String          @id @default(uuid())
+  type             KnowledgeType
+  status           KnowledgeStatus @default(DRAFT)
+  title            String
+  content          String
+  equipmentType    String?         @map("equipment_type")
+  equipmentModel   String?         @map("equipment_model")
+  source           String?
+  // SHA-256 do arquivo PDF importado — bloqueia importação duplicada do mesmo
+  // arquivo. Null para documentos criados manualmente (sem PDF).
+  fileHash         String?         @unique @map("file_hash")
+  anonymized       Boolean         @default(true)
+  createdByUserId  String?         @map("created_by_user_id")
+  approvedByUserId String?         @map("approved_by_user_id")
+  approvedAt       DateTime?       @map("approved_at")
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+
+  chunks KnowledgeChunk[]
+
+  @@index([status])
+  @@index([equipmentType])
+  @@map("knowledge_docs")
+}
+
+model KnowledgeChunk {
+  id        String                       @id @default(uuid())
+  docId     String                       @map("doc_id")
+  doc       KnowledgeDoc                 @relation(fields: [docId], references: [id], onDelete: Cascade)
+  ord       Int
+  content   String
+  // Gerenciado por SQL bruto (pgvector); Prisma não lê/escreve este tipo.
+  embedding Unsupported("vector(1536)")?
+  createdAt DateTime                     @default(now()) @map("created_at")
+
+  @@index([docId])
+  @@map("knowledge_chunks")
+}
+
+// ─── Automação (motor de comando QUANDO/SE/ENTÃO) ───────────────────────────────
+// Regras que comandam os pontos das controladoras (BACnet/Modbus/MQTT), inspirado
+// em apps de casa inteligente mas voltado a BMS. Dois modos: ONESHOT (em horários)
+// e CONTINUOUS (enquanto um ponto obedecer a uma condição). A execução da escrita
+// reusa o BacnetWriteService e é auditada como COMMAND. Multi-tenant sempre.
+
+enum AutomationMode {
+  ONESHOT
+  CONTINUOUS
+}
+
+enum AutomationTriggerType {
+  SCHEDULE
+}
+
+enum AutomationActionType {
+  WRITE_POINT
+  NOTIFY
+}
+
+enum AutomationBranch {
+  ALWAYS
+  ON_TRUE
+  ON_FALSE
+}
+
+enum AutomationExecutesOn {
+  CLOUD
+  EDGE
+}
+
+model Automation {
+  id            String                @id @default(uuid())
+  tenantId      String                @map("tenant_id")
+  siteId        String?               @map("site_id")
+  name          String
+  enabled       Boolean               @default(true)
+  mode          AutomationMode        @default(ONESHOT)
+  triggerType   AutomationTriggerType @default(SCHEDULE) @map("trigger_type")
+  triggerConfig Json                  @map("trigger_config")
+  condition     Json?
+  evalSeconds   Int                   @default(30) @map("eval_seconds")
+  executesOn    AutomationExecutesOn  @default(CLOUD) @map("executes_on")
+  priority      Int                   @default(8)
+  createdBy     String?               @map("created_by")
+  lastRunAt     DateTime?             @map("last_run_at")
+  lastRunResult String?               @map("last_run_result") // SUCCESS | PARTIAL | FAILURE
+  createdAt     DateTime              @default(now()) @map("created_at")
+  updatedAt     DateTime              @updatedAt @map("updated_at")
+  actions       AutomationAction[]
+  runs          AutomationRun[]
+
+  @@index([tenantId])
+  @@index([enabled, mode])
+  @@map("automations")
+}
+
+// ─── AutomationRun (histórico de execuções) ─────────────────────────────────────
+// Um registro por execução da automação (início, término ou avaliação "enquanto"
+// que agiu). Guarda o resultado geral e o detalhe por ação (com motivo de falha).
+// Retenção fixa simples: o runner expurga registros com mais de 90 dias.
+
+enum AutomationRunResult {
+  SUCCESS
+  PARTIAL
+  FAILURE
+}
+
+model AutomationRun {
+  id             String              @id @default(uuid())
+  tenantId       String              @map("tenant_id")
+  automationId   String              @map("automation_id")
+  automation     Automation          @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  // Snapshot do nome (o histórico continua legível se a automação for renomeada).
+  automationName String              @map("automation_name")
+  // Gatilho humano: 'agenda' | 'término' | 'enquanto'.
+  trigger        String
+  result         AutomationRunResult
+  startedAt      DateTime            @map("started_at")
+  // Detalhe por ação: [{ type, branch, label, status: SUCCESS|FAILURE|SKIPPED, error? }]
+  details        Json
+  // Resumo legível dos erros (null quando SUCCESS).
+  errorSummary   String?             @map("error_summary")
+  createdAt      DateTime            @default(now()) @map("created_at")
+
+  @@index([tenantId, startedAt(sort: Desc)])
+  @@index([automationId, startedAt(sort: Desc)])
+  @@map("automation_runs")
+}
+
+model AutomationAction {
+  id            String               @id @default(uuid())
+  automationId  String               @map("automation_id")
+  automation    Automation           @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  order         Int
+  branch        AutomationBranch     @default(ALWAYS)
+  type          AutomationActionType
+  targetPointId String?              @map("target_point_id") // coluna simples, SEM FK (runner carrega por id)
+  value         Json? // number (analógico) | boolean (digital)
+  delaySeconds  Int                  @default(0) @map("delay_seconds")
+  config        Json? // NOTIFY: { message }
+  createdAt     DateTime             @default(now()) @map("created_at")
+
+  @@index([automationId])
+  @@index([targetPointId])
+  @@map("automation_actions")
+}

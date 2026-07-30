@@ -1,0 +1,58 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# Dependencies
+node_modules
+.pnp
+.pnp.js
+
+# Local env files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Testing
+coverage
+
+# Turbo
+.turbo
+
+# Vercel
+.vercel
+
+# Build Outputs
+.next/
+out/
+build
+dist
+
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Misc
+.DS_Store
+*.pem
+
+# Claude Code — ferramentas de desenvolvimento (não necessário no deploy)
+/src/
+
+# Gerados automaticamente
+modules/*/dist/
+modules/*/coverage/
+
+# Claude Code — configurações pessoais e dados pesados
+.claude/settings.local.json
+.claude/skills/ui-ux-pro-max/data/
+
+# Segredos de infraestrutura — nunca versionar
+infra/emqx/bootstrap_api_keys.txt
+
+# Imagens enviadas pelas telas SCADA (gravadas em disco em runtime)
+apps/backend/uploads/
+uploads/
+
+# Backups locais — não versionar (dados pesados de snapshot)
+backups/

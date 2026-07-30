@@ -1,0 +1,235 @@
+uploads = []
+
+[[generated]]
+id = "xqIisFBQhVgK_-2qg3Esp"
+uri = "file://attached_assets/generated_images/iso_chiller.png"
+type = "image"
+title = "isometric chiller"
+
+[[generated]]
+id = "TYa1wZmvxfpE4ZQBHxdRZ"
+uri = "file://attached_assets/generated_images/iso_ahu.png"
+type = "image"
+title = "isometric AHU"
+
+[[generated]]
+id = "cmtF6RD-u90OJbc1cH3EP"
+uri = "file://attached_assets/generated_images/iso_pump.png"
+type = "image"
+title = "isometric pump"
+
+[[generated]]
+id = "yJutkZLSukqgdHCiipODe"
+uri = "file://attached_assets/generated_images/iso_fan.png"
+type = "image"
+title = "isometric fan"
+
+[[generated]]
+id = "lM_eNaPfJciuzOGGCu7ko"
+uri = "file://attached_assets/generated_images/iso_valve.png"
+type = "image"
+title = "isometric valve"
+
+[[generated]]
+id = "GA46Z0yNZn0dJaLKfL9m9"
+uri = "file://attached_assets/generated_images/iso_generator.png"
+type = "image"
+title = "isometric generator"
+
+[[generated]]
+id = "9gtf5qAEZrYsAa0RSOT9B"
+uri = "file://attached_assets/generated_images/iso_meter.png"
+type = "image"
+title = "isometric meter"
+
+[[generated]]
+id = "h3gKuI1Mi1KaK4eBvkOlM"
+uri = "file://attached_assets/generated_images/iso_controller.png"
+type = "image"
+title = "isometric controller (no brand)"
+
+[[generated]]
+id = "GHD7-jZIunQ0eRE56rUhK"
+uri = "file://attached_assets/generated_images/iso_compressor.png"
+type = "image"
+title = "isometric compressor"
+
+[[generated]]
+id = "VgTGszN1UyEhql3ajZIBy"
+uri = "file://attached_assets/generated_images/iso_cooling_tower.png"
+type = "image"
+title = "isometric cooling-tower"
+
+[[generated]]
+id = "-zKcen_cT_2SsJMwJ6DqS"
+uri = "file://attached_assets/generated_images/iso_fan_coil.png"
+type = "image"
+title = "isometric fan-coil"
+
+[[generated]]
+id = "rASgIqLP3a2Z85gxJnSfT"
+uri = "file://attached_assets/generated_images/iso_electrical_panel.png"
+type = "image"
+title = "isometric electrical-panel"
+
+[[generated]]
+id = "1YK137G0I5Gf72jIn_1bD"
+uri = "file://attached_assets/generated_images/iso_tank.png"
+type = "image"
+title = "isometric tank"
+
+[[generated]]
+id = "-qneQagS6L8qtJVFlUUIF"
+uri = "file://attached_assets/generated_images/iso_sensor.png"
+type = "image"
+title = "isometric sensor"
+
+[[generated]]
+id = "ogVINZ7wZXQVO6m_VIjWF"
+uri = "file://attached_assets/generated_images/iso_smoke_detector.png"
+type = "image"
+title = "isometric smoke-detector"
+
+[[generated]]
+id = "UOHaTiytReD4OPpEoawq-"
+uri = "file://apps/frontend/public/scada-equipment/camera.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "E5JP1oFS3tDvjj2_smHGF"
+uri = "file://apps/frontend/public/scada-equipment/camera-dome.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "pzqv1zRgGgtB0QmAh4VjV"
+uri = "file://apps/frontend/public/scada-equipment/lighting.png"
+type = "image"
+title = "generated_image"
+
+[[outputs]]
+id = "2Ea3LTEHM0eu4fBOdVgoE"
+uri = "file://backups/bluebee-backup-2026-06-30.tar.gz"
+type = "unspecified"
+title = "Backup BlueBee — 30/06/2026"
+
+[[outputs]]
+id = "qkVKGAQkWlLu5z20dOz8u"
+uri = "file://backups/bluebee-source-2026-07-01.tar.gz"
+type = "unspecified"
+title = "Código-fonte — backup 01/07/2026"
+
+[[outputs]]
+id = "IJ6UM6MmAICBwmTPjtPV-"
+uri = "file://backups/bluebee-db-2026-07-01.sql.gz"
+type = "unspecified"
+title = "Banco de dados — backup 01/07/2026"
+
+[[outputs]]
+id = "aL7sVumFo-TVPOoOPkgGJ"
+uri = "file://exports/levantamento-melhorias-06-08-jul-2026.pdf"
+type = "pdf"
+title = "Levantamento de Melhorias — BlueBee (06 a 08/07/2026)"
+
+[[outputs]]
+id = "X3N9l3yjySUcIsePDh8jE"
+uri = "file://exports/levantamento-melhorias-bluebee.pdf"
+type = "pdf"
+title = "Levantamento de Melhorias — BlueBee"
+
+[[outputs]]
+id = "deZBAgesEO2A-xA4ecSTz"
+uri = "file://exports/levantamento-melhorias-2-semanas.pdf"
+type = "pdf"
+title = "Levantamento de Melhorias — BlueBee (29/06 a 08/07/2026)"
+
+[[outputs]]
+id = "n1RX6t-5psTC1reE_o-az"
+uri = "file://artifacts/video-comercial/public/audio/vo_intro.mp3"
+type = "audio"
+title = "narração intro"
+
+[[outputs]]
+id = "cGCTObqlg9JwpiVRD3y2Y"
+uri = "file://artifacts/video-comercial/public/audio/vo_dashboard.mp3"
+type = "audio"
+title = "narração dashboard"
+
+[[outputs]]
+id = "HVynfAYH053IQsWmPKsXQ"
+uri = "file://artifacts/video-comercial/public/audio/vo_alarms.mp3"
+type = "audio"
+title = "narração alarms"
+
+[[outputs]]
+id = "hFdLGM0hMzkPHsiSELtbd"
+uri = "file://artifacts/video-comercial/public/audio/vo_devices.mp3"
+type = "audio"
+title = "narração devices"
+
+[[outputs]]
+id = "tRBTrJJ_3HLRJppCgrnyY"
+uri = "file://artifacts/video-comercial/public/audio/vo_cftv.mp3"
+type = "audio"
+title = "narração cftv"
+
+[[outputs]]
+id = "24jh9REoNCWHHfX0EVxz-"
+uri = "file://artifacts/video-comercial/public/audio/vo_scada.mp3"
+type = "audio"
+title = "narração scada"
+
+[[outputs]]
+id = "3XUA37ufogVrUKaGD2K5Z"
+uri = "file://artifacts/video-comercial/public/audio/vo_trends.mp3"
+type = "audio"
+title = "narração trends"
+
+[[outputs]]
+id = "6ds6s3JgZ6s_pp2z7VajB"
+uri = "file://artifacts/video-comercial/public/audio/vo_reports.mp3"
+type = "audio"
+title = "narração reports"
+
+[[outputs]]
+id = "pciM65FpTDr4hCqhiYdfV"
+uri = "file://artifacts/video-comercial/public/audio/vo_automations.mp3"
+type = "audio"
+title = "narração automations"
+
+[[outputs]]
+id = "jjiitvpzt9Up4we224MEF"
+uri = "file://artifacts/video-comercial/public/audio/vo_ai.mp3"
+type = "audio"
+title = "narração ai"
+
+[[outputs]]
+id = "4sXrXpKBk1Fx5txiJlinQ"
+uri = "file://artifacts/video-comercial/public/audio/vo_outro.mp3"
+type = "audio"
+title = "narração outro"
+
+[[outputs]]
+id = "gdYBhJmis6Ia_crMb6Fp9"
+uri = "file://artifacts/video-comercial/public/audio/bg_music.mp3"
+type = "audio"
+title = "música de fundo"
+
+[[outputs]]
+id = "fd8jyg3Jt6SnRs3LWKAkY"
+uri = "file://exports/bluebee-comercial.mp4"
+type = "video"
+title = "Vídeo Comercial BlueBee (corrigido, 1080p)"
+
+[[outputs]]
+id = "budyrOa4WN36X8TEwmyLV"
+uri = "file://exports/bluebee-comercial-quadrado.mp4"
+type = "video"
+title = "Vídeo comercial 1:1 (Instagram feed)"
+
+[[outputs]]
+id = "NivzNjpe1ZVUWA9c-CnG_"
+uri = "file://exports/bluebee-comercial-vertical.mp4"
+type = "video"
+title = "Vídeo comercial 9:16 (Reels/Stories)"

@@ -1,0 +1,115 @@
+Você é o agente de desenvolvimento do projeto BlueBee IoT. Leia e internalize todas as instruções abaixo antes de executar qualquer ação.
+
+═══════════════════════════════════════════
+CONTEXTO DO PROJETO
+═══════════════════════════════════════════
+
+Produto: BlueBee IoT — Plataforma supervisória SaaS multi-tenant para monitoramento remoto de sistemas BMS.
+Repositório: github.com/claucio-autobras/BlueBee.git
+Branch de trabalho: develop (NUNCA tocar em main sem autorização)
+
+ESTADO ATUAL:
+- Frontend Next.js 14 já desenvolvido pela equipe BlueBee — rodando localmente
+- Os menus e estrutura de navegação existentes NÃO devem ser alterados em hipótese alguma
+- O layout pode ser melhorado visualmente mas rotas e menus são preservados
+- Banco de dados: ainda não existe
+- Backend NestJS: ainda não existe
+- Auth: ainda não implementada
+
+═══════════════════════════════════════════
+STACK
+═══════════════════════════════════════════
+
+Frontend: Next.js 14 + TypeScript + TailwindCSS + shadcn/ui (App Router, light mode exclusivo)
+Backend: NestJS 11 + TypeScript ESM (imports SEMPRE com sufixo .js)
+Auth: bcrypt + passport-jwt — JWT próprio com role + tenantId — SEM Supabase, SEM Replit Auth
+ORM: Prisma 6
+Banco: PostgreSQL 16 via Replit Database add-on (Neon nativo — zero configuração)
+Timeseries: TimescaleDB 2.13 (disponível nativamente no Replit)
+MQTT: HiveMQ Cloud via MQTT_BROKER_URL (externo)
+Monorepo: Turborepo + npm workspaces + npm@11
+
+═══════════════════════════════════════════
+REGRAS CRÍTICAS — NUNCA VIOLAR
+═══════════════════════════════════════════
+
+- NUNCA fazer push em main sem autorização explícita
+- NUNCA rodar prisma migrate dev sem autorização
+- NUNCA acessar Prisma diretamente no Controller — sempre via service
+- NUNCA omitir filtro tenant_id em queries de dados de negócio
+- NUNCA usar Supabase Auth, Replit Auth ou qualquer auth externo
+- NUNCA alterar menus e estrutura de navegação do frontend existente
+- NUNCA armazenar secrets em arquivos versionados
+- NUNCA inventar APIs que não existem — perguntar antes
+- SEMPRE usar sufixo .js em imports do backend NestJS (ESM)
+- SEMPRE validar DTOs com class-validator
+- SEMPRE trabalhar na branch develop
+
+═══════════════════════════════════════════
+SUA TAREFA AGORA — FASE 1
+═══════════════════════════════════════════
+
+Execute os passos abaixo EM ORDEM, um de cada vez. Após cada passo, reporte o resultado antes de avançar. Se encontrar erro, descreva o erro completo e aguarde instrução.
+
+PASSO 1 — Verificar Node
+  node --version && npm --version
+  Esperado: Node v20.x e npm 10.x ou superior
+
+PASSO 2 — Clonar repositório
+  git clone -b develop https://github.com/claucio-autobras/BlueBee.git .
+  (o ponto clona para o diretório atual)
+
+PASSO 3 — Verificar estrutura
+  ls apps/ && cat package.json | grep workspaces
+  Confirmar que apps/frontend existe
+
+PASSO 4 — Instalar dependências
+  npm install
+  Se houver conflito: npm install --legacy-peer-deps
+
+PASSO 5 — Criar arquivo .replit
+  Criar na raiz com este conteúdo:
+  run = "npm run dev"
+  entrypoint = "apps/frontend/src/app/page.tsx"
+  [nix]
+  channel = "stable-24_05"
+  [ports]
+  localPort = 3000
+  externalPort = 80
+
+PASSO 6 — Criar replit.nix
+  Criar na raiz com este conteúdo:
+  { pkgs }: {
+    deps = [
+      pkgs.nodejs_20
+      pkgs.nodePackages.npm
+      pkgs.openssl
+    ];
+  }
+
+PASSO 7 — Configurar variáveis do frontend
+  Criar apps/frontend/.env.local:
+  NEXT_PUBLIC_API_URL=http://localhost:4000
+  NEXT_PUBLIC_USE_MOCK=true
+
+PASSO 8 — Subir o frontend
+  cd apps/frontend && npm run dev
+  Esperado: frontend rodando em :3000 sem erros
+  OS MENUS EXISTENTES DEVEM APARECER CORRETAMENTE
+
+PASSO 9 — Inspecionar e reportar
+  Sem alterar nada, listar:
+  - Quais rotas existem em apps/frontend/src/app/
+  - Quais menus estão implementados
+  - Quais páginas têm dados hardcoded
+  - O que está com erro ou incompleto
+
+PASSO 10 — Commit
+  git add .replit replit.nix apps/frontend/.env.local
+  git commit -m "chore: configurar ambiente Replit fase 1"
+  NÃO fazer push ainda — aguardar revisão
+
+═══════════════════════════════════════════
+AO FINAL DA FASE 1 AGUARDAR INSTRUÇÃO
+═══════════════════════════════════════════
+Não avance para backend, banco ou qualquer outra coisa sem instrução explícita.

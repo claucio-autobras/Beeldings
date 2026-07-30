@@ -1,0 +1,108 @@
+# TAREFA: Auditoria completa de prontidão para produção — BlueBee IoT
+
+Você é um engenheiro de confiabilidade (SRE) + especialista em segurança de aplicações
++ QA sênior. O sistema BlueBee IoT já está em produção, mas hoje só tem 1 tenant real
+(nosso próprio escritório). Preciso garantir que quando entrarem MUITOS clientes o
+sistema aguente carga, não vaze dados entre clientes e tenha vida útil longa.
+
+Faça uma auditoria COMPLETA e, ao final, entregue um RELATÓRIO consolidado. NÃO altere
+código de produção sem antes listar o que pretende mudar — a fase de execução de correções
+é separada e só começa depois que eu aprovar.
+
+## Contexto da arquitetura (leve em conta em todos os testes)
+- SaaS multi-tenant. Regra de ouro: NENHUM dado de um tenant pode vazar para outro.
+  Socket.IO /(PostgreSQL)(telemetria) / MQTT (EMQX)
+- Ingestão de dados IoT em tempo real via MQTT + gateway local com store-and-forward.
+- Módulos: auth, devices, alarms, telemetry, automation, reports, integrations, ai, SCADA, User.
+
+## O que quero que você faça (execute cada bloco e registre evidências)
+
+### 1. Mapeamento e baseline
+- Liste rotas/endpoints, jobs BullMQ, subscribers MQTT, tabelas e hypertables.
+- Identifique variáveis de ambiente e segredos. Aponte qualquer segredo hardcoded,
+  chave exposta no frontend, ou .env commitado.
+- Verifique versões de dependências: liste pacotes desatualizados e com CVEs conhecidos.
+
+### 2. Isolamento multi-tenant (PRIORIDADE MÁXIMA)
+- Audite TODOS os queries/services/repositories: existe algum caminho que retorna dados
+  sem filtrar por tenant_id? Liste cada um com arquivo:linha.
+- Teste na prática: crie 2 tenants de teste (A e B) com dados distintos. Autenticado como
+  A, tente acessar recursos de B por ID direto (IDOR) em cada endpoint. Registre onde vaza.
+- Verifique se o tenant_id vem do JWT/servidor e NUNCA de um parâmetro que o cliente controla.
+- Teste Socket.IO/realtime: um cliente do tenant A recebe eventos do tenant B?
+
+### 3. Segurança de aplicação
+- Autenticação: força de senha, expiração/refresh de JWT, revogação, brute force / rate limit
+  no login
+- Autorização por role (ADMIN, CCO, SUPERVISOR, CLIENTE, VISUALIZADOR): teste escalonamento
+  de privilégio — um CLIENTE consegue chamar endpoints de ADMIN? Aprovar comandos? 
+- Injeção: SQL/Prisma, NoSQL, command injection, e injeção de payload MQTT malicioso.
+- Validação de entrada: todos os DTOs validam tipo/tamanho/formato? Teste payloads gigantes,
+  campos extras, tipos errados.
+- Headers de segurança (CSP, HSTS, X-Frame-Options), CORS (está permissivo demais?),
+  cookies (HttpOnly/Secure/SameSite).
+- Rate limiting geral e proteção contra abuso da Claude API (custo pode explodir).
+- Exposição de dados sensíveis em respostas de erro, logs e stack traces.
+- Segurança do MQTT/EMQX: ACLs por tópico e por tenant, autenticação de gateways,
+  um gateway consegue publicar em tópico de outro tenant?
+
+### 4. Performance e escalabilidade (simular MUITOS clientes)
+- Faça teste de carga e de estresse nos endpoints críticos (dashboard, listagem de alarmes,
+  telemetria/trends, login). Reporte p50/p95/p99 de latência e throughput.
+- Simule ingestão MQTT em alto volume (ex.: centenas de dispositivos publicando por segundo)
+  e meça se o backend/TimescaleDB aguentam sem acumular fila.
+- Identifique queries N+1, queries sem índice, e queries de telemetria sem time_bucket/limite.
+- Verifique índices em tenant_id + colunas de filtro comuns; hypertables com particionamento,
+  compressão e retenção configurados.
+- Redis/BullMQ: filas acumulando? jobs presos? concorrência adequada?
+- Frontend: bundle size, tempo de carregamento, re-renders, queries React Query sem cache.
+- Aponte pontos que quebram ao multiplicar tenants por 100x (gargalos de CPU/memória/conexões
+  de banco — pool de conexões do Prisma aguenta?).
+
+### 5. Resiliência e confiabilidade
+- Simule queda: banco offline, Redis offline, EMQX offline, gateway offline. O sistema
+  degrada com elegância ou derruba tudo? Há retry/backoff/circuit breaker?
+- Store-and-forward do gateway: dados são perdidos quando a conexão cai e volta?
+- Idempotência: mensagens MQTT duplicadas geram alarmes/telemetria duplicados?
+- Motor de alarmes: race conditions no ciclo de vida (TRIGGERED→ACK→RESOLVED)?
+  Escalonamento por tempo funciona sob carga?
+- Há healthchecks, graceful shutdown, e limites de memória?
+
+### 6. Integridade de dados
+- Timezone e precisão de timestamps na telemetria.
+- Política de retenção/backup: existe backup automatizado e restore testável?
+
+### 7. UI/UX e acessibilidade
+- Responsividade (desktop/tablet/mobile), estados de loading/erro/vazio em cada tela.
+- Acessibilidade básica (contraste, foco de teclado, labels/aria, leitores de tela).
+- Consistência visual, feedback de ações, e clareza de mensagens de erro para o usuário final.
+- Fluxos críticos do operador CCO: reconhecer alarme, aprovar comando, ver trend — são
+  rápidos e à prova de erro? Teste cliques em condição de rede lenta.
+- Compatibilidade entre navegadores.
+
+### 8. Observabilidade e operação
+- Existe logging estruturado, métricas, tracing e alertas? Dá para diagnosticar um
+  incidente em produção com o que existe hoje?
+- LGPD: dados pessoais de clientes tratados adequadamente (consentimento, minimização,
+  logs sem PII sensível)?
+
+## FORMATO DO RELATÓRIO FINAL (entregue ao final, em português)
+1. **Resumo executivo**: nota geral de prontidão (0–10) e os 5 riscos mais críticos.
+2. **Tabela de achados** com colunas:
+   - ID | Categoria (multi-tenant/segurança/performance/resiliência/dados/UX/observabilidade)
+   - Severidade (CRÍTICO / ALTO / MÉDIO / BAIXO)
+   - Descrição do problema | Evidência (arquivo:linha, log, ou resultado do teste)
+   - Impacto quando houver muitos clientes | Correção recomendada | Esforço estimado
+3. **Resultados dos testes de carga**: números (latência p95/p99, throughput, ponto de
+   saturação, uso de recursos) e o gráfico/estimativa de quando o sistema quebra com N tenants.
+4. **Plano de correção priorizado**: o que corrigir ANTES de aceitar novos clientes (bloqueadores),
+   o que corrigir no curto prazo, e melhorias de longo prazo.
+5. **Recomendações de arquitetura** para escalar com segurança (ex.: pool de conexões,
+   read replicas, rate limiting, particionamento, cache, hardening de EMQX).
+6. **Checklist go/no-go** para liberar entrada de clientes em produção.
+
+Comece pelo bloco 1 e 2 (mapeamento + isolamento multi-tenant), pois são os de maior risco.
+Registre evidências reais de cada teste — não invente resultados. Se algo não puder ser
+testado no ambiente Replit, diga explicitamente e proponha como testar.
+tudo que for feito criar um documentos com checkbox para apontar oque foi testado, oque foi aprovado e oque
+tem que ser melhorado no sistema.

@@ -1,0 +1,63 @@
+No módulo de relatórios do backend (apps/backend/src/modules/reports), redesenhar o PDF
+do Relatório de Alarmes com um layout moderno de CARTÕES (um cartão por ocorrência),
+mantendo os outros relatórios (telemetria e auditoria) intactos.
+
+CONTEXTO ATUAL
+- O PDF é gerado por buildReportPdf() em report-pdf.helper.ts usando jsPDF + jspdf-autotable.
+- Esse helper é COMPARTILHADO por 3 relatórios em reports.service.ts (alarmes, variáveis,
+  auditoria). NÃO alterar o comportamento dos relatórios de variáveis e auditoria.
+- Bug conhecido: os nomes de ponto saem corrompidos no PDF ("Sýýntese", "Poÿýo") porque a
+  fonte padrão do jsPDF (Helvetica/WinAnsi) não suporta os caracteres. PRECISA ser corrigido.
+
+TAREFA 1 — Corrigir a codificação de fonte (pré-requisito)
+- Embutir uma fonte TTF Unicode (Roboto Regular + Roboto Medium, ou Noto Sans) no jsPDF via
+  doc.addFileToVFS + doc.addFont, e usar doc.setFont('Roboto', ...). Isso resolve os acentos e
+  os caracteres corrompidos em TODOS os relatórios.
+- Colocar os arquivos .ttf (base64 ou binário) em apps/backend/src/modules/reports/assets/fonts
+  e carregá-los de forma que funcione no build de produção (sem depender de caminho relativo
+  de runtime frágil). Tipar tudo (TypeScript estrito, sem any).
+
+TAREFA 2 — Novo renderizador de cartões para alarmes
+- Criar uma função dedicada buildAlarmsReportPdf() (arquivo alarms-report-pdf.helper.ts) que
+  recebe as ocorrências já tipadas (severidade, estado, equipamento, ponto, mensagem, valor,
+  ativadoEm, normalizadoEm, reconhecidoEm, reconhecidoPor, motivo) + os metadados
+  (título, período, conteúdo, gerado em) e o resumo (total, contagem por severidade).
+- Em reports.service.ts, no ramo PDF do relatório de alarmes, trocar a chamada de
+  buildReportPdf() por buildAlarmsReportPdf(). Manter o CSV e os demais relatórios como estão.
+- Orientação: portrait A4 (o cartão é vertical, não precisa de landscape).
+
+DESIGN DOS CARTÕES (traduzir do mockup aprovado)
+- Cabeçalho leve, fundo branco (sem faixa azul sólida). Título "Relatório de alarmes" 22pt,
+  subtítulo cinza "Histórico completo · <período>", e à direita "Gerado em <data/hora>".
+- Bloco de resumo: 3 cartões (KPIs) lado a lado — "Total de ocorrências" (neutro),
+  "Severidade alta" (fundo vermelho claro, número vermelho), "Severidade média" (fundo âmbar
+  claro, número âmbar). Número grande (~24pt).
+- Lista de ocorrências: cada alarme é um cartão com borda hairline (0.5pt) e uma BARRA LATERAL
+  ESQUERDA de 3pt colorida por severidade (vermelho = alta, âmbar = média). Dentro:
+    · linha superior: pill de severidade (Alta/Média) + pill de estado (Ativo/Normalizado/
+      Reconhecido) + "equipamento · ponto" em cinza;
+    · mensagem em destaque (medium);
+    · se houver reconhecidoPor, linha extra "Reconhecido por <nome>";
+    · à direita, coluna com "Ativado" e "Normalizado" (rótulo cinza + data/hora).
+  Pills: fundo tom claro da cor + texto no tom escuro da MESMA cor (nunca preto). Alta = vermelho,
+  Média = âmbar, estado normalizado = cinza neutro.
+- Rodapé em cada página: "BlueBee IoT · Relatório de alarmes" à esquerda e "Página X de N" à direita.
+
+PAGINAÇÃO (importante — não é autoTable)
+- Calcular a altura de cada cartão e quebrar a página manualmente quando não couber na margem
+  inferior; repetir o rodapé (com numeração X de N) em todas as páginas. O cabeçalho completo só
+  na primeira página; nas seguintes, um cabeçalho compacto.
+- Manter o limite MAX_PDF_ROWS já existente e a nota de truncamento ("Exibindo as primeiras N de
+  M ocorrências. Use o CSV para o conjunto completo.").
+
+PALETA (usar tokens de cor consistentes)
+- Alta/vermelho: fundo ~#FCEBEB, texto ~#A32D2D, barra ~#E24B4A.
+- Média/âmbar: fundo ~#FAEEDA, texto ~#854F0B, barra ~#EF9F27.
+- Neutro/cinza: fundo ~#F1EFE8, texto ~#5F5E5A.
+- Título ~#0F172A, texto secundário ~#64748B, hairline ~#E2E8F0.
+
+QUALIDADE
+- TypeScript estrito, tipagem explícita de entrada e saída, sem any, sem try/catch vazio.
+- Não quebrar os relatórios de variáveis e auditoria (continuam usando buildReportPdf).
+- Testar gerando o PDF de alarmes e conferindo: acentos corretos, pills, barras de severidade,
+  quebra de página e rodapé numerado.

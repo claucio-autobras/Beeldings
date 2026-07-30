@@ -1,0 +1,93 @@
+# Integração com a API da Infraspeak
+
+## Objetivo
+
+Implementar a integração com a API da Infraspeak para consumir os dados do recurso que representa os chamados do negócio.
+
+A integração será **somente leitura**.
+
+## Regras
+
+* Antes de alterar qualquer arquivo, apresente um plano de implementação e aguarde aprovação.
+* Utilize apenas a documentação oficial da Infraspeak e as respostas reais da API.
+* Não invente endpoints, parâmetros, headers, campos ou comportamento da API.
+* Caso alguma informação não possa ser confirmada, pare a implementação e informe exatamente o que está faltando.
+
+## Implementação
+
+Analise a estrutura atual do projeto e siga o padrão arquitetural já existente.
+
+Reutilize componentes existentes sempre que possível.
+
+Toda comunicação com a Infraspeak deve passar por uma única camada de integração (client/service).
+
+Essa camada deve ser responsável por:
+
+* autenticação;
+* headers;
+* paginação;
+* tratamento de erros;
+* rate limit;
+* logs;
+* retries quando apropriado.
+
+## Serviço
+
+Implemente um serviço responsável por consumir o recurso correspondente aos chamados.
+
+Esse serviço deve:
+
+* consultar a API;
+* tratar automaticamente a paginação;
+* consolidar todas as páginas em uma única coleção;
+* retornar os dados para a aplicação.
+
+## Endpoint
+
+Crie ou adapte o endpoint interno seguindo o padrão já utilizado no projeto.
+
+Esse endpoint deverá apenas retornar os dados obtidos da Infraspeak.
+
+## Dados
+
+Utilize somente campos existentes nas respostas reais da API.
+
+Não criar propriedades fictícias.
+
+Se necessário, adapte os nomes para o padrão interno da aplicação, preservando também o payload original.
+
+## Tratamento de erros
+
+Implementar tratamento para:
+
+* autenticação inválida;
+* timeout;
+* endpoint inexistente;
+* rate limit;
+* indisponibilidade da API;
+* respostas inesperadas.
+
+## Configuração
+
+Utilize apenas variáveis de ambiente.
+
+Nunca coloque credenciais diretamente no código.
+
+Atualize o `.env.example` caso seja necessário.
+
+## Critérios de qualidade
+
+* Não alterar funcionalidades existentes sem necessidade.
+* Seguir o padrão do projeto.
+* Evitar duplicação de código.
+* Não adicionar dependências sem justificativa.
+* Escrever código limpo, reutilizável e de fácil manutenção.
+
+## Bloqueios
+
+Se a documentação oficial ou a API não fornecerem informações suficientes para identificar ou consumir o recurso correto:
+
+* interrompa a implementação;
+* não faça suposições;
+* informe exatamente qual informação está faltando;
+* explique como essa informação pode ser obtida para concluir a integração.

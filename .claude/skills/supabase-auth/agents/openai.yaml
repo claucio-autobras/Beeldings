@@ -1,0 +1,4 @@
+interface:
+  display_name: "Supabase Auth"
+  short_description: "Auth Supabase multi-tenant IoT"
+  default_prompt: "Use $supabase-auth to apply the BlueBee IoT supabase-auth standards."

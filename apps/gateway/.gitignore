@@ -1,0 +1,8 @@
+# Saída do empacotamento Windows (gerada por `npm run package:win`)
+/release/
+
+# Binário de terceiros baixado pelo build (NSSM — dominio publico)
+/vendor/
+
+# Log gerado pelo serviço em execução
+gateway.log

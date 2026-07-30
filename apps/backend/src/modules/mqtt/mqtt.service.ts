@@ -1,0 +1,157 @@
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import * as mqtt from 'mqtt';
+import type { MqttClient } from 'mqtt';
+
+type MessageHandler = (topic: string, payload: Buffer) => void;
+
+/** Snapshot da saúde da conexão MQTT do backend (read-only, sem segredos). */
+export interface MqttConnectionStatus {
+  /** Conectado ao broker neste instante. */
+  connected: boolean;
+  /** URL do broker com credenciais removidas (host:porta). */
+  broker: string;
+  /** Total de vezes que a conexão foi (re)estabelecida desde o boot. */
+  connectCount: number;
+  /** Total de tentativas de reconexão emitidas desde o boot. */
+  reconnectCount: number;
+  /** Último instante em que conectou (ISO), ou null. */
+  lastConnectedAt: string | null;
+  /** Último instante em que a conexão caiu (ISO), ou null. */
+  lastDisconnectedAt: string | null;
+  /** Mensagem do último erro MQTT, ou null. */
+  lastError: string | null;
+}
+
+@Injectable()
+export class MqttService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(MqttService.name);
+  private client!: MqttClient;
+  private readonly handlers: MessageHandler[] = [];
+
+  // ── Métricas de conexão (observabilidade) ──────────────────────────────────
+  private connected = false;
+  private connectCount = 0;
+  private reconnectCount = 0;
+  private lastConnectedAt: string | null = null;
+  private lastDisconnectedAt: string | null = null;
+  private lastError: string | null = null;
+  private sanitizedBroker = '';
+
+  constructor(private readonly config: ConfigService) {}
+
+  onModuleInit(): void {
+    const brokerUrl = this.config.get<string>('MQTT_BROKER_URL', 'mqtt://localhost:1883');
+    const clientId = this.config.get<string>('MQTT_CLIENT_ID', `backend-${Date.now()}`);
+    const username = this.config.get<string | undefined>('MQTT_USERNAME');
+    const password = this.config.get<string | undefined>('MQTT_PASSWORD');
+
+    this.sanitizedBroker = this.sanitizeBrokerUrl(brokerUrl);
+
+    this.client = mqtt.connect(brokerUrl, {
+      clientId,
+      username,
+      password,
+      reconnectPeriod: 5000,
+      connectTimeout: 10000,
+    });
+
+    this.client.on('connect', () => {
+      this.connected = true;
+      this.connectCount += 1;
+      this.lastConnectedAt = new Date().toISOString();
+      this.logger.log(`Connected to MQTT broker: ${this.sanitizedBroker}`);
+    });
+
+    this.client.on('error', (err) => {
+      this.lastError = err.message;
+      this.logger.error(`MQTT error: ${err.message}`);
+    });
+
+    this.client.on('reconnect', () => {
+      this.reconnectCount += 1;
+      this.logger.warn('Reconnecting to MQTT broker...');
+    });
+
+    this.client.on('close', () => {
+      if (this.connected) {
+        this.lastDisconnectedAt = new Date().toISOString();
+      }
+      this.connected = false;
+    });
+
+    this.client.on('offline', () => {
+      this.connected = false;
+    });
+
+    this.client.on('message', (topic: string, payload: Buffer) => {
+      for (const handler of this.handlers) {
+        handler(topic, payload);
+      }
+    });
+  }
+
+  /**
+   * Estado da conexão MQTT legível por HTTP (observabilidade). Não expõe
+   * credenciais: a URL do broker é sanitizada (userinfo removido).
+   */
+  getConnectionStatus(): MqttConnectionStatus {
+    return {
+      connected: this.connected,
+      broker: this.sanitizedBroker,
+      connectCount: this.connectCount,
+      reconnectCount: this.reconnectCount,
+      lastConnectedAt: this.lastConnectedAt,
+      lastDisconnectedAt: this.lastDisconnectedAt,
+      lastError: this.lastError,
+    };
+  }
+
+  /** Remove credenciais (user:pass@) da URL do broker antes de expô-la. */
+  private sanitizeBrokerUrl(url: string): string {
+    try {
+      const parsed = new URL(url);
+      const port = parsed.port ? `:${parsed.port}` : '';
+      return `${parsed.protocol}//${parsed.hostname}${port}`;
+    } catch {
+      return url.replace(/\/\/[^@/]*@/, '//');
+    }
+  }
+
+  onModuleDestroy(): void {
+    if (this.client) {
+      this.client.end();
+    }
+  }
+
+  subscribe(topicPattern: string, qos: 0 | 1 | 2 = 0): void {
+    this.client.subscribe(topicPattern, { qos }, (err) => {
+      if (err) {
+        this.logger.error(`Failed to subscribe to ${topicPattern}: ${err.message}`);
+      } else {
+        this.logger.debug(`Subscribed to ${topicPattern}`);
+      }
+    });
+  }
+
+  publish(topic: string, payload: object, qos: 0 | 1 | 2 = 1, retain = false): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.client.publish(
+        topic,
+        JSON.stringify(payload),
+        { qos, retain },
+        (err) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve();
+          }
+        },
+      );
+    });
+  }
+
+  onMessage(handler: MessageHandler): void {
+    this.handlers.push(handler);
+  }
+}

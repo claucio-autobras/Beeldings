@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mock Strategy"
+  short_description: "Mocks frontend realistas para BMS"
+  default_prompt: "Use $mock-strategy to apply the BlueBee IoT mock-strategy standards."

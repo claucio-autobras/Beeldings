@@ -1,0 +1,125 @@
+# Prompt de Correção — Coleta de Telemetria SNMP (Hikvision)
+
+## Contexto
+
+O sistema já consegue se conectar via SNMP na câmera e ler valores brutos corretamente
+(confirmado no painel de diagnóstico), mas o painel de telemetria final exibe "sem dados"
+para métricas que na verdade **foram lidas com sucesso**. Isso indica um bug no pipeline de
+parsing/normalização dos valores, não um problema de conectividade ou de OID.
+
+## Ambiente de referência (validado manualmente)
+
+- Câmera: Hikvision DS-2CD2721G0-IZS, firmware V5.5.94
+- Protocolo: **SNMP v1** (a câmera responde a v1; não confirmar suporte a v2c/v3 sem novo teste)
+- Community: `public`
+- IP: `10.201.10.23`
+- A câmera **não implementa a árvore MIB-II padrão** (`1.3.6.1.2.1.1.x`). Uma consulta a
+  `sysDescr` (`1.3.6.1.2.1.1.1.0`) retorna `noSuchName`. Isso é esperado e correto — não é bug.
+- Toda a telemetria real da câmera vive na árvore proprietária Hikvision:
+  `1.3.6.1.4.1.39165.1.x`
+
+Comando que comprova o funcionamento completo, e que deve servir de **contrato de
+referência** para os testes automatizados do sistema:
+
+```
+snmpwalk -v1 -c public 10.201.10.23 .1
+```
+
+Esse comando retorna, entre outros, os seguintes pares OID → valor (confirmados por walk manual):
+
+| OID | Valor retornado | Observação |
+|---|---|---|
+| `1.3.6.1.4.1.39165.1.1.0` | `DS-2CD2721G0-IZS` | Modelo |
+| `1.3.6.1.4.1.39165.1.3.0` | `V5.5.94 build 190902` | Firmware |
+| `1.3.6.1.4.1.39165.1.4.0` | `44-a6-42-87-98-83` | MAC |
+| `1.3.6.1.4.1.39165.1.6.0` | `Hikvision` | Fabricante |
+| `1.3.6.1.4.1.39165.1.7.0` | `45 PERCENT` | **CPU** — string, não inteiro puro |
+| `1.3.6.1.4.1.39165.1.8.0` | `0.0 GB` | Possível uso de storage/SD (verificar) |
+| `1.3.6.1.4.1.39165.1.9.0` | `0 PERCENT` | Possível % de storage/SD, **não de RAM** — ver seção "Ação 3" |
+| `1.3.6.1.4.1.39165.1.10.0` | `256 MB` | Memória RAM total |
+| `1.3.6.1.4.1.39165.1.11.0` | `87 PERCENT` | Possível uso real de **RAM** |
+| `1.3.6.1.4.1.39165.1.13-18.0` | IPs/máscara/gateway | Rede |
+| `1.3.6.1.4.1.39165.1.19.0` | Data/hora | Relógio interno do sistema |
+| `1.3.6.1.4.1.39165.1.21/22.0` | `H.264` | Codec de vídeo |
+
+## Bug identificado (Ação obrigatória 1)
+
+O valor de CPU (`45 PERCENT`) e de memória são retornados pela câmera como **string com
+sufixo de unidade**, não como inteiro/percentual numérico puro. Se o parser do sistema
+espera um `INTEGER` SNMP ou tenta fazer `parseInt`/cast direto sem antes limpar a string,
+ele falha silenciosamente e o campo cai para "sem dados" — mesmo a leitura SNMP tendo
+funcionado (como prova o painel de diagnóstico).
+
+**Correção:** antes de armazenar/exibir qualquer valor lido via SNMP dessa câmera, extrair
+apenas a parte numérica com regex, tratando os formatos observados:
+
+- `"45 PERCENT"` → `45`
+- `"0.0 GB"` → `0.0`
+- `"256 MB"` → `256`
+
+Não assumir que o valor virá como `INTEGER` tipado pelo SNMP — a Hikvision retorna esses
+campos como `OCTET STRING` (texto), então o parser precisa tratar string sempre, e só
+depois converter para número.
+
+## Ação obrigatória 2 — Consistência entre diagnóstico e telemetria
+
+Hoje o diagnóstico SNMP e o painel de telemetria parecem usar **caminhos de código
+diferentes** para o mesmo dado (um funciona, o outro não). O sistema precisa garantir que:
+
+1. Existe **uma única função/serviço** responsável por fazer o GET SNMP e normalizar o
+   valor.
+2. Tanto o painel de diagnóstico quanto o painel de telemetria final consomem essa mesma
+   função — nunca duas implementações paralelas de leitura/parsing para o mesmo OID.
+
+Isso evita exatamente o cenário atual: diagnóstico diz "Funcionando" e telemetria diz "sem
+dados" para o mesmo OID.
+
+## Ação obrigatória 3 — Revisar mapeamento semântico dos OIDs
+
+O sistema está assumindo que `1.3.6.1.4.1.39165.1.9.0` é "Memória" — mas o valor retornado
+(`0 PERCENT`) é suspeito. Olhando a sequência completa do walk, o padrão mais provável é:
+
+- `.1.8.0` (`0.0 GB`) + `.1.9.0` (`0 PERCENT`) → uso de **armazenamento** (cartão SD/HD)
+- `.1.10.0` (`256 MB`) + `.1.11.0` (`87 PERCENT`) → uso real de **memória RAM**
+
+**Ação:** confirmar esse mapeamento rodando o walk novamente e comparando com o uso real da
+câmera (ex: gravando em SD vs. não gravando, para ver se `.1.8/.1.9` mudam). Se confirmado,
+trocar o OID usado no campo "Memória" de `.1.9.0` para `.1.11.0`, e considerar adicionar um
+novo campo "Armazenamento" usando `.1.8.0`/`.1.9.0`.
+
+## Ação obrigatória 4 — Tratamento de OIDs não suportados (manter como está)
+
+Temperatura, Pacotes perdidos e Tempo ligado usam OIDs de MIB-II/Net-SNMP padrão que essa
+câmera **não implementa** (confirmado: consulta a OID padrão retorna `noSuchName`/`noSuchObject`).
+O sistema já está corretamente marcando isso como "não suportado pela câmera" — **não mexer
+nessa lógica**. Apenas garantir que esse tratamento de erro (capturar `noSuchName` /
+`noSuchObject` e converter para "não suportado", em vez de deixar a exceção quebrar o
+parsing dos outros campos) está isolado por campo, e não interrompe a leitura dos demais
+OIDs que funcionam.
+
+## Ação recomendada 5 — Tornar o mecanismo de coleta mais robusto (arquitetura)
+
+Ao invés de fixar uma lista rígida de OIDs por fabricante, considerar:
+
+1. Manter uma tabela de OIDs conhecidos por fabricante (Hikvision, Dahua, Intelbras, Axis,
+   genérico), como já parece existir no diagnóstico.
+2. Para cada campo, tentar o GET direto no OID esperado primeiro (rápido).
+3. Se falhar (`noSuchName`/`noSuchObject`/timeout), marcar como "não suportado" — não travar
+   os outros campos.
+4. Ter uma função central de normalização de valor (Ação 1) usada por **todos** os
+   consumidores desse dado (diagnóstico e telemetria).
+5. Usar SNMP v1 como fallback quando v2c falhar (essa câmera especificamente só respondeu a
+   v1 — o v2c pode falhar em cameras antigas por causa do uso de `GETBULK`, que nem todo
+   agente embarcado suporta).
+
+## Teste de aceitação
+
+Depois da correção, os seguintes campos devem sair de "sem dados" e passar a exibir valor
+numérico no painel de Telemetria (não só no Diagnóstico):
+
+- CPU → deve exibir `45` (ou o valor atual, sem o sufixo "PERCENT")
+- Memória → deve exibir o valor de `.1.11.0` (ou `.1.9.0`, dependendo da confirmação da
+  Ação 3), sem sufixo de texto
+
+Campos que devem continuar como "não suportado pela câmera" (comportamento correto, não é
+bug): Tempo ligado, Pacotes perdidos, Temperatura.

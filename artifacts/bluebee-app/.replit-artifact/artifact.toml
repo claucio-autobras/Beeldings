@@ -1,0 +1,19 @@
+kind = "web"
+  previewPath = "/"
+  title = "BlueBee"
+  version = "1.0.0"
+  id = "artifacts/bluebee-app"
+  router = "path"
+
+  [[services]]
+  name = "web"
+  paths = [ "/" ]
+  localPort = 8080
+
+  [services.development]
+  run = "echo 'BlueBee dev roda pelos workflows Start application / Start Backend'; sleep infinity"
+
+  [services.production]
+  build = [ "bash", "scripts/build-production.sh" ]
+  run = [ "bash", "scripts/start-production.sh" ]
+  

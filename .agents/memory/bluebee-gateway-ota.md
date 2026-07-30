@@ -1,0 +1,15 @@
+---
+name: Gateway OTA update
+description: Como funciona a atualização remota do gateway (launcher run.js, rollback, token de download, rota pública)
+---
+
+- O serviço (systemd/NSSM) executa `run.js` (launcher), nunca `dist/main.js` direto. O launcher aplica `update/staging` e seta `BLUEBEE_OTA_LAUNCHER=1` (é isso que define `otaSupported` no health). O run.js NÃO é atualizado pela OTA — mudanças nele exigem reinstalação manual.
+- Aceite da atualização é SÓ por confirmação: o gateway apaga `update/pending-verify.json` ao reconectar no MQTT. O launcher NUNCA aceita por uptime — se o processo sair com pending presente, ou ficar vivo 10min sem confirmar (watchdog mata), faz rollback e grava `update/ota-result.json` (publicado como `rolled_back` no boot seguinte).
+- Download do pacote OTA: rota pública `GET /gateways/update-package?token=` autenticada por token de uso único (consumido no 1º resgate, TTL 15min) + SHA-256 no comando MQTT. **O controller público precisa vir ANTES do GatewaysController no array `controllers` do módulo**, senão `GET /gateways/:id` captura "update-package" e o JwtAuthGuard devolve 401.
+- Pacote OTA não tem pasta-base no zip (extrai direto no staging); pacote do agente tem base `bluebee-gateway-agent/` e inclui run.js.
+- Progresso OTA fica em memória no backend (GatewayOtaService); só estágios finais + reportedVersion são persistidos no Postgres.
+- URL de download: montada de `BACKEND_PUBLIC_URL` (prefixa `https://` se vier sem protocolo; usada COMO VEIO, deve refletir a rota pública exata) ou dos headers do request **+ sufixo `/api`** — o host público é o do frontend Next e o backend só é alcançável de fora via o rewrite `/api/*`; sem o `/api` o download cai no Next, que redireciona p/ /login com Location relativo → "Invalid URL" no gateway antigo. Host vazio nos headers é recusado com 4xx (senão `https:///api` parseia com host "api"). Backend valida com `new URL()` e recusa 4xx ANTES de publicar o comando. Gateway resolve `Location` relativo contra a URL original e todos os erros de download citam host/caminho SEM a query (token). Testes do download vivem em `apps/gateway/test/` (fora de src, que é hasheado/empacotado) — rodar com `npx jest --config test/jest-unit.json`.
+- A detecção de update compara versões (package.json do apps/gateway vs reportedVersion): mudar código do gateway SEM subir a versão = campo nunca recebe OTA, silenciosamente. Guard: `apps/gateway/scripts/gateway-manifest.mjs` (check hasheia src/agent/config e compara com `gateway-manifest.json`; `--update` recusa regravar sem bump). Registrado como validação `gateway-manifest` — ao mexer no gateway, suba a versão e rode `--update`.
+
+**Why:** rollback precisa funcionar mesmo se a versão nova nem sobe; e o bug 401 da rota pública é silencioso (rota parece existir mas responde Unauthorized).
+**How to apply:** ao mexer em rotas estáticas sob `/gateways`, confira a ordem dos controllers; ao mudar formato do pacote/launcher, lembre que gateways em campo só ganham run.js novo via reinstalação manual.

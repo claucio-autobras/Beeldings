@@ -1,0 +1,95 @@
+modules = ["nodejs-24", "python-3.11", "postgresql-16"]
+
+[deployment]
+router = "application"
+deploymentTarget = "vm"
+build = ["bash", "scripts/build-production.sh"]
+run = ["bash", "scripts/start-production.sh"]
+
+[deployment.postBuild]
+args = ["pnpm", "store", "prune"]
+env = { "CI" = "true" }
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start application"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start Backend"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "gateway-manifest"
+
+[[workflows.workflow]]
+name = "Start application"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "bash -c \"npm install --no-audit --no-fund && cd apps/frontend && exec npx next dev -p 8080 -H 0.0.0.0\""
+waitForPort = 8080
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[workflows.workflow]]
+name = "Start Backend"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd apps/backend && PORT=4000 npm run start:dev"
+
+[[workflows.workflow]]
+name = "gateway-manifest"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "node apps/gateway/scripts/gateway-manifest.mjs"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[agent]
+stack = "PNPM_WORKSPACE"
+expertMode = true
+
+[postMerge]
+path = "scripts/post-merge.sh"
+timeoutMs = 180000
+
+[[ports]]
+localPort = 8080
+externalPort = 80
+
+[[ports]]
+localPort = 8081
+externalPort = 8081
+
+[nix]
+channel = "stable-25_05"
+
+[userenv]
+
+[userenv.production]
+
+[userenv.shared]
+INFRASPEAK_API_BASE_URL = "https://api.sandbox.infraspeak.com/v3"
+INFRASPEAK_REQUESTS_PATH = "failures"
+
+[objectStorage]
+defaultBucketID = "replit-objstore-01564882-551e-4ced-9b75-3d442051ba33"

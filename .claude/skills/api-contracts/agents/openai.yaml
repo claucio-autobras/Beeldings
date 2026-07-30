@@ -1,0 +1,4 @@
+interface:
+  display_name: "Api Contracts"
+  short_description: "Contratos REST do BlueBee IoT"
+  default_prompt: "Use $api-contracts to apply the BlueBee IoT api-contracts standards."
