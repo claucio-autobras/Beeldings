@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { FolderKanban, Loader2, Plus } from 'lucide-react';
 import { useCurrentUser } from '@/hooks/useCurrentUser';
 import { useSiteFilter } from '@/hooks/useSiteFilter';
+import { useTenantFilter } from '@/hooks/useTenantFilter';
 import { getTenants, type TenantItem } from '@/modules/tenants/services/tenants.service';
 import { getSites, type SiteItem } from '@/modules/sites/services/sites.service';
 import { getScadaProjects, getScreens, removeScadaProject, type ScadaProject } from '../services/scada.service';
@@ -23,7 +24,9 @@ export default function ScadaListPage() {
   const qc = useQueryClient();
   const canEdit = CAN_EDIT_ROLES.has(user.role);
   const isGlobal = GLOBAL_ROLES.has(user.role);
-  const tenantScope = isGlobal ? undefined : (user.tenantId ?? undefined);
+  const { selectedTenantId } = useTenantFilter();
+  // Globais: respeitam o cliente selecionado no topbar (null = todos). Demais: travados no próprio tenant.
+  const tenantScope = isGlobal ? (selectedTenantId ?? undefined) : (user.tenantId ?? undefined);
   const { selectedSiteId } = useSiteFilter();
 
   const [showAdd, setShowAdd] = useState(false);
@@ -39,11 +42,11 @@ export default function ScadaListPage() {
 
   // Apenas os projetos adicionados ao SCADA viram card.
   const { data: scadaProjects = [], isLoading, isError, error } = useQuery<ScadaProject[]>({
-    queryKey: ['scada-projects', user.tenantId],
+    queryKey: ['scada-projects', tenantScope ?? 'all'],
     queryFn: () => getScadaProjects(tenantScope),
   });
   const { data: sites = [] } = useQuery<SiteItem[]>({
-    queryKey: ['sites', 'all', user.tenantId],
+    queryKey: ['sites', 'all', tenantScope ?? 'all'],
     queryFn: () => getSites(tenantScope),
   });
   const { data: tenants = [] } = useQuery<TenantItem[]>({
@@ -51,10 +54,10 @@ export default function ScadaListPage() {
     queryFn: getTenants,
     enabled: isGlobal,
   });
-  // Telas (sem filtro) só para contar quantas cada projeto possui.
+  // Telas (no mesmo escopo de cliente) só para contar quantas cada projeto possui.
   const { data: screens = [] } = useQuery<ScadaScreen[]>({
-    queryKey: ['scada-screens'],
-    queryFn: () => getScreens(),
+    queryKey: ['scada-screens', tenantScope ?? 'all'],
+    queryFn: () => getScreens({ tenantId: tenantScope }),
   });
 
   const cards = useMemo<ScadaProjectCardData[]>(() => {
