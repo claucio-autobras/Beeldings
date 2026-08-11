@@ -74,7 +74,7 @@ function NewSiteModal({ tenantId, onClose, onCreated }: NewSiteModalProps) {
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Ex: Unidade Morumbi"
+              placeholder="Ex: Site Morumbi"
               className="w-full rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
               autoFocus
             />

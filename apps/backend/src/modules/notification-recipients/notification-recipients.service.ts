@@ -139,7 +139,7 @@ export class NotificationRecipientsService {
     const siteIds = allSites ? [] : (input.siteIds ?? []);
     if (!allSites && siteIds.length === 0) {
       throw new BadRequestException(
-        'Informe ao menos um site quando "Todas as unidades" estiver desabilitado',
+        'Informe ao menos um site quando "Todos os sites" estiver desabilitado',
       );
     }
     if (siteIds.length > 0) {
@@ -198,7 +198,7 @@ export class NotificationRecipientsService {
         input.siteIds !== undefined ? input.siteIds.length : existing.sites.length;
       if (effectiveCount === 0) {
         throw new BadRequestException(
-          'Informe ao menos um site quando "Todas as unidades" estiver desabilitado',
+          'Informe ao menos um site quando "Todos os sites" estiver desabilitado',
         );
       }
     }
