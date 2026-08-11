@@ -34,3 +34,7 @@ local `main` to `github.com/claucio-autobras/BlueBee-Infra` is off the table per
 
 `scripts/post-merge.sh` runs `sync-github.sh status` non-fatally as a reminder.
 User-facing guide (clone/run locally/commit/pull): `docs/github-sync.md`.
+
+## Recuperação sem init-base (aprendido 11/08/2026)
+- Se `.git/bluebee-github-sync` sumir (rollback), NÃO precisa de init-base: o trailer `(source: <sha>)` do commit mais recente do remoto dá o LOCAL_SHA; regrave o state file com ele + o SHA do head remoto e o fluxo volta a funcionar.
+- Replay de muitos commits (100+) estoura o limite de 5 min do shell; fallback válido: 1 commit squash "BlueBee snapshot <ISO> (source: <sha>)" em cima do main remoto (clone raso → limpar tudo exceto .git → `git archive HEAD -- . ':(exclude)backups'` → commit → push SEM force) e atualizar o sync point.
