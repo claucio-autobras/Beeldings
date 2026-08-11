@@ -1,5 +1,22 @@
-// Dicionário pt-BR → en do módulo Ajustes (settings) — destinatários de notificação.
+// Dicionário pt-BR → en do módulo Ajustes (settings) — cliente, site, projeto e destinatários.
 export const DICT_SETTINGS: Record<string, string> = {
+  // ── Página / cabeçalho ──
+  'Configure clientes, sites, projetos e destinatários de notificação': 'Configure clients, sites, projects and notification recipients',
+
+  // ── Card Site ──
+  'Site': 'Site',
+  'Localização física e responsável do site': "Site's physical location and responsible person",
+  'Nenhum site cadastrado para este cliente.': 'No sites registered for this client.',
+  'Selecionar site': 'Select site',
+  'Salvar site': 'Save site',
+  'Site atualizado com sucesso.': 'Site updated successfully.',
+  'Não foi possível atualizar o site.': 'Could not update the site.',
+
+  // ── Card Projeto ──
+  'Sistemas implantados no site selecionado': 'Systems deployed at the selected site',
+  'Nenhum projeto disponível para este site.': 'No projects available for this site.',
+  'Nenhum projeto disponível para este cliente.': 'No projects available for this client.',
+  'Selecionar projeto': 'Select project',
   // ── Seção destinatários ──
   'Destinatários de Notificação': 'Notification Recipients',
   'Quem deve receber alarmes e insights por e-mail ou WhatsApp': 'Who should receive alarms and insights by email or WhatsApp',
@@ -15,8 +32,11 @@ export const DICT_SETTINGS: Record<string, string> = {
   'Categorias': 'Categories',
   'Escopo': 'Scope',
   'Todas as unidades': 'All sites',
+  'Todos os sites': 'All sites',
   'unidade': 'site',
   'unidades': 'sites',
+  'site': 'site',
+  'sites': 'sites',
   'destinatário': 'recipient',
   'destinatários': 'recipients',
   'Ativo': 'Active',
@@ -39,11 +59,16 @@ export const DICT_SETTINGS: Record<string, string> = {
   'Alarmes': 'Alarms',
   'Insights da IA': 'AI Insights',
   'Escopo de unidades': 'Site scope',
+  'Escopo de sites': 'Site scope',
   'Todas as unidades do cliente': 'All client sites',
+  'Todos os sites do cliente': 'All client sites',
   'Unidades específicas': 'Specific sites',
+  'Sites específicos': 'Specific sites',
   'Selecione ao menos uma unidade': 'Select at least one site',
   'Carregando unidades…': 'Loading sites…',
+  'Carregando sites…': 'Loading sites…',
   'Nenhuma unidade disponível': 'No sites available',
+  'Nenhum site disponível': 'No sites available',
   'Destinatário ativo': 'Active recipient',
   'Salvar': 'Save',
   'Criar': 'Create',
@@ -71,4 +96,5 @@ export const DICT_SETTINGS: Record<string, string> = {
   'Canal E-mail habilitado, mas e-mail não informado': 'Email channel enabled but no email provided',
   'Canal WhatsApp habilitado, mas telefone não informado': 'WhatsApp channel enabled but no phone provided',
   'Informe ao menos uma unidade quando "Todas as unidades" estiver desabilitado': 'Provide at least one site when "All sites" is disabled',
+  'Informe ao menos um site quando "Todos os sites" estiver desabilitado': 'Provide at least one site when "All sites" is disabled',
 };

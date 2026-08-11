@@ -515,7 +515,7 @@ function TenantSection({
   );
 }
 
-// ─── Site / Unidade ──────────────────────────────────────────────────────────────
+// ─── Site ────────────────────────────────────────────────────────────────────────
 
 function SiteSection({
   role,
@@ -566,13 +566,13 @@ function SiteSection({
         responsibleName: payload.responsibleName,
       }),
     onSuccess: (updated) => {
-      setMsg({ type: 'success', text: t('Unidade atualizada com sucesso.') });
+      setMsg({ type: 'success', text: t('Site atualizado com sucesso.') });
       queryClient.setQueryData<SiteItem[]>(['sites', selectedTenantId], (prev) =>
         prev ? prev.map((s) => (s.id === updated.id ? { ...s, ...updated } : s)) : prev,
       );
     },
     onError: (err: Error) =>
-      setMsg({ type: 'error', text: err.message || t('Não foi possível atualizar a unidade.') }),
+      setMsg({ type: 'error', text: err.message || t('Não foi possível atualizar o site.') }),
   });
 
   function handleSubmit(e: React.FormEvent) {
@@ -593,8 +593,8 @@ function SiteSection({
 
   return (
     <SectionCard
-      title={t('Unidade')}
-      description={t('Localização física e responsável da unidade')}
+      title={t('Site')}
+      description={t('Localização física e responsável do site')}
       icon={MapPin}
     >
       {!selectedTenantId ? (
@@ -604,11 +604,11 @@ function SiteSection({
           <Loader2 className="h-4 w-4 animate-spin" /> {t('Carregando…')}
         </div>
       ) : sites.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{t('Nenhuma unidade cadastrada para este cliente.')}</p>
+        <p className="text-sm text-muted-foreground">{t('Nenhum site cadastrado para este cliente.')}</p>
       ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
           {sites.length > 1 && (
-            <Field label={t('Selecionar unidade')} icon={MapPin}>
+            <Field label={t('Selecionar site')} icon={MapPin}>
               <select
                 value={selectedSiteId}
                 onChange={(e) => onSiteChange(e.target.value)}
@@ -649,7 +649,7 @@ function SiteSection({
           {canEdit ? (
             <div className="flex justify-end">
               <SaveButton pending={mutation.isPending} disabled={!dirty}>
-                {t('Salvar unidade')}
+                {t('Salvar site')}
               </SaveButton>
             </div>
           ) : (
@@ -668,17 +668,19 @@ function SiteSection({
 function ProjectSection({
   role,
   selectedTenantId,
+  selectedSiteId,
 }: {
   role: UserRole;
   selectedTenantId: string;
+  selectedSiteId: string;
 }) {
   const t = useT();
   const queryClient = useQueryClient();
   const canEdit = GLOBAL_ROLES.includes(role);
 
   const { data: projects = [], isLoading } = useQuery<ProjectItem[]>({
-    queryKey: ['settings', 'projects', selectedTenantId],
-    queryFn: () => getProjects(undefined, selectedTenantId || undefined),
+    queryKey: ['settings', 'projects', selectedTenantId, selectedSiteId],
+    queryFn: () => getProjects(selectedSiteId || undefined, selectedTenantId || undefined),
     enabled: !!selectedTenantId,
   });
 
@@ -688,10 +690,10 @@ function ProjectSection({
 
   const selected = projects.find((p) => p.id === selectedId) ?? null;
 
-  // Reset selection when tenant changes or projects reload
+  // Reset selection when tenant or site changes
   useEffect(() => {
     setSelectedId('');
-  }, [selectedTenantId]);
+  }, [selectedTenantId, selectedSiteId]);
 
   useEffect(() => {
     if (projects.length > 0 && !selectedId) {
@@ -711,7 +713,7 @@ function ProjectSection({
       updateProject(payload.id, { name: payload.name }),
     onSuccess: (updated) => {
       setMsg({ type: 'success', text: t('Projeto atualizado com sucesso.') });
-      queryClient.setQueryData<ProjectItem[]>(['settings', 'projects', selectedTenantId], (prev) =>
+      queryClient.setQueryData<ProjectItem[]>(['settings', 'projects', selectedTenantId, selectedSiteId], (prev) =>
         prev ? prev.map((p) => (p.id === updated.id ? { ...p, ...updated } : p)) : prev,
       );
       void queryClient.invalidateQueries({ queryKey: ['projects'] });
@@ -736,7 +738,7 @@ function ProjectSection({
   return (
     <SectionCard
       title={t('Projeto')}
-      description={t('Sistemas implantados na unidade selecionada')}
+      description={t('Sistemas implantados no site selecionado')}
       icon={FolderKanban}
     >
       {!selectedTenantId ? (
@@ -746,7 +748,11 @@ function ProjectSection({
           <Loader2 className="h-4 w-4 animate-spin" /> {t('Carregando…')}
         </div>
       ) : projects.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{t('Nenhum projeto disponível para este cliente.')}</p>
+        <p className="text-sm text-muted-foreground">
+          {selectedSiteId
+            ? t('Nenhum projeto disponível para este site.')
+            : t('Nenhum projeto disponível para este cliente.')}
+        </p>
       ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
           {projects.length > 1 && (
@@ -853,7 +859,7 @@ function validateForm(form: RecipientFormState): string | null {
       return 'Telefone incompleto ou inválido. Ex.: (11) 91234-5678';
   }
   if (!form.allSites && form.siteIds.length === 0)
-    return 'Informe ao menos uma unidade quando "Todas as unidades" estiver desabilitado';
+    return 'Informe ao menos um site quando "Todos os sites" estiver desabilitado';
   return null;
 }
 
@@ -1037,7 +1043,7 @@ function RecipientDialog({
           <div className="space-y-2">
             <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
               <MapPin className="h-3.5 w-3.5 text-cyan-600" />
-              {t('Escopo de unidades')}
+              {t('Escopo de sites')}
             </span>
             <div className="flex gap-2">
               <ToggleChip
@@ -1045,14 +1051,14 @@ function RecipientDialog({
                 onChange={() => set('allSites', true)}
                 disabled={pending}
                 icon={Building2}
-                label={t('Todas as unidades do cliente')}
+                label={t('Todos os sites do cliente')}
               />
               <ToggleChip
                 checked={!form.allSites}
                 onChange={() => set('allSites', false)}
                 disabled={pending}
                 icon={MapPin}
-                label={t('Unidades específicas')}
+                label={t('Sites específicos')}
               />
             </div>
 
@@ -1061,10 +1067,10 @@ function RecipientDialog({
                 {sitesLoading ? (
                   <div className="flex items-center gap-2 p-3 text-xs text-muted-foreground">
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    {t('Carregando unidades…')}
+                    {t('Carregando sites…')}
                   </div>
                 ) : sites.length === 0 ? (
-                  <p className="p-3 text-xs text-muted-foreground">{t('Nenhuma unidade disponível')}</p>
+                  <p className="p-3 text-xs text-muted-foreground">{t('Nenhum site disponível')}</p>
                 ) : (
                   <ul className="divide-y divide-border">
                     {sites.map((site) => (
@@ -1445,8 +1451,8 @@ function NotificationRecipientsSection({
                               <MapPin className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
                             )}
                             {r.allSites
-                              ? t('Todas as unidades')
-                              : `${r.sites.length} ${r.sites.length === 1 ? t('unidade') : t('unidades')}`}
+                              ? t('Todos os sites')
+                              : `${r.sites.length} ${r.sites.length === 1 ? t('site') : t('sites')}`}
                           </span>
                         </td>
                         <td className="px-4 py-3.5 text-center align-top">
@@ -1567,7 +1573,7 @@ export default function SettingsPage() {
           <div>
             <h1 className="text-xl font-semibold tracking-tight text-foreground">{t('Ajustes')}</h1>
             <p className="mt-0.5 text-sm text-muted-foreground">
-              {t('Configure clientes, unidades, projetos e destinatários de notificação')}
+              {t('Configure clientes, sites, projetos e destinatários de notificação')}
             </p>
           </div>
         </div>
@@ -1594,6 +1600,7 @@ export default function SettingsPage() {
           <ProjectSection
             role={user.role}
             selectedTenantId={selectedTenantId}
+            selectedSiteId={selectedSiteId}
           />
         </div>
       </div>
