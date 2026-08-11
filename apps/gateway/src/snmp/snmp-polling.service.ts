@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { OnEvent } from '@nestjs/event-emitter';
 import { GatewayMqttService } from '../mqtt/gateway-mqtt.service';
 import { PollingMetricsService } from '../observability/polling-metrics.service';
+import { computeStartJitterMs } from '../observability/poll-jitter.util';
 import { readSnmpOids, readSnmpStrings, readSnmpTable } from './snmp-read.util';
 import { pingPacketLoss } from '../cameras/ping.util';
 import { fetchIsapiUptime } from '../cameras/isapi.util';
@@ -63,6 +64,8 @@ interface GatewayConfigPayload {
 
 interface ActiveSnmpPoll {
   handle: ReturnType<typeof setInterval>;
+  /** Delay de partida (jitter) — pendente até o primeiro ciclo. */
+  startTimeout: ReturnType<typeof setTimeout> | null;
   polling: boolean;
   driver: SnmpDriver;
 }
@@ -142,15 +145,20 @@ export class SnmpPollingService implements OnModuleDestroy {
     this.stopPoll(device.deviceId);
 
     const intervalMs = device.pollingIntervalMs || 30_000;
+    // Jitter determinístico de partida: espalha os ciclos dos devices do
+    // gateway dentro do intervalo, evitando rajadas sincronizadas no broker.
+    const jitterMs = computeStartJitterMs(device.deviceId, intervalMs);
     this.logger.log(
       `SNMP ${device.deviceId} (${device.ip}:${device.port}, v${device.snmpVersion}): ` +
         `polling a cada ${intervalMs}ms — ${device.points.length} ponto(s)` +
         (device.manufacturer ? `, fabricante=${device.manufacturer}` : '') +
-        (device.monitoredDeviceType ? `, tipo=${device.monitoredDeviceType}` : ''),
+        (device.monitoredDeviceType ? `, tipo=${device.monitoredDeviceType}` : '') +
+        ` (partida em ${jitterMs}ms)`,
     );
 
     const state: ActiveSnmpPoll = {
       handle: undefined as never,
+      startTimeout: null,
       polling: false,
       driver: new SnmpDriver({
         readNumbers: readSnmpOids,
@@ -165,10 +173,13 @@ export class SnmpPollingService implements OnModuleDestroy {
           : {}),
       }),
     };
-    void this.pollDevice(state, device);
-    state.handle = setInterval(() => {
+    state.startTimeout = setTimeout(() => {
+      state.startTimeout = null;
       void this.pollDevice(state, device);
-    }, intervalMs);
+      state.handle = setInterval(() => {
+        void this.pollDevice(state, device);
+      }, intervalMs);
+    }, jitterMs);
     this.activePolls.set(device.deviceId, state);
   }
 
@@ -176,6 +187,9 @@ export class SnmpPollingService implements OnModuleDestroy {
     const state = this.activePolls.get(deviceId);
     if (!state) {
       return;
+    }
+    if (state.startTimeout) {
+      clearTimeout(state.startTimeout);
     }
     if (state.handle) {
       clearInterval(state.handle);
@@ -187,7 +201,13 @@ export class SnmpPollingService implements OnModuleDestroy {
   /** Um ciclo de polling: driver coleta com motor de perfis e o resultado é publicado. */
   private async pollDevice(state: ActiveSnmpPoll, device: SnmpDeviceBlock): Promise<void> {
     if (state.polling) {
-      return; // ciclo anterior ainda em andamento (device lento) — pula
+      // Ciclo anterior ainda em andamento (device lento) — pula e contabiliza.
+      this.pollingMetrics.recordSkipped({
+        protocol: 'snmp',
+        deviceId: device.deviceId,
+        intervalMs: device.pollingIntervalMs || 30_000,
+      });
+      return;
     }
     state.polling = true;
     const startedAt = Date.now();
@@ -220,6 +240,7 @@ export class SnmpPollingService implements OnModuleDestroy {
           ? points.filter((pt) => pt.value !== null).length
           : 0,
         pointsAttempted: device.points.length,
+        intervalMs: device.pollingIntervalMs || 30_000,
       });
 
       this.logger.debug(

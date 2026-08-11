@@ -20,6 +20,12 @@ export interface DevicePollingMetric {
   totalCycles: number;
   /** Instante da última leitura BEM-SUCEDIDA (>0 pontos lidos), se houver. */
   lastSuccessAt?: string;
+  /** Ciclos pulados porque o anterior ainda estava em andamento (busy). */
+  skippedCycles?: number;
+  /** Ciclos cuja duração excedeu o intervalo configurado do device. */
+  intervalOverruns?: number;
+  /** Intervalo de polling configurado (ms) — contexto para os estouros. */
+  intervalMs?: number;
   /** MQTT (passivo): total de mensagens recebidas desde o boot. */
   messagesReceived?: number;
   /** MQTT (passivo): instante da última mensagem recebida (ISO). */
@@ -54,10 +60,16 @@ export class PollingMetricsService {
     latencyMs: number;
     pointsRead: number;
     pointsAttempted: number;
+    /** Intervalo configurado do device (ms) — habilita a contagem de estouros. */
+    intervalMs?: number;
   }): void {
     const key = `${params.protocol}:${params.deviceId}`;
     const prev = this.metrics.get(key);
     const now = new Date().toISOString();
+    const overran =
+      typeof params.intervalMs === 'number' &&
+      params.intervalMs > 0 &&
+      params.latencyMs > params.intervalMs;
     this.metrics.set(key, {
       protocol: params.protocol,
       deviceId: params.deviceId,
@@ -67,6 +79,36 @@ export class PollingMetricsService {
       lastPollAt: now,
       totalCycles: (prev?.totalCycles ?? 0) + 1,
       lastSuccessAt: params.pointsRead > 0 ? now : prev?.lastSuccessAt,
+      skippedCycles: prev?.skippedCycles ?? 0,
+      intervalOverruns: (prev?.intervalOverruns ?? 0) + (overran ? 1 : 0),
+      intervalMs: params.intervalMs ?? prev?.intervalMs,
+    });
+  }
+
+  /**
+   * Registra um ciclo PULADO: o intervalo disparou mas o ciclo anterior do
+   * device ainda estava em andamento (guard de sobreposição). Contabilizado
+   * para dar visibilidade a devices que não cabem no intervalo configurado.
+   */
+  recordSkipped(params: {
+    protocol: 'bacnet' | 'modbus' | 'snmp' | 'onvif';
+    deviceId: string;
+    intervalMs?: number;
+  }): void {
+    const key = `${params.protocol}:${params.deviceId}`;
+    const prev = this.metrics.get(key);
+    this.metrics.set(key, {
+      protocol: params.protocol,
+      deviceId: params.deviceId,
+      lastLatencyMs: prev?.lastLatencyMs ?? 0,
+      lastPointsRead: prev?.lastPointsRead ?? 0,
+      lastPointsAttempted: prev?.lastPointsAttempted ?? 0,
+      lastPollAt: prev?.lastPollAt ?? '',
+      totalCycles: prev?.totalCycles ?? 0,
+      lastSuccessAt: prev?.lastSuccessAt,
+      skippedCycles: (prev?.skippedCycles ?? 0) + 1,
+      intervalOverruns: prev?.intervalOverruns ?? 0,
+      intervalMs: params.intervalMs ?? prev?.intervalMs,
     });
   }
 

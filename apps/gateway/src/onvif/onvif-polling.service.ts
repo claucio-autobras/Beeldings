@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { OnEvent } from '@nestjs/event-emitter';
 import { GatewayMqttService } from '../mqtt/gateway-mqtt.service';
 import { PollingMetricsService } from '../observability/polling-metrics.service';
+import { computeStartJitterMs } from '../observability/poll-jitter.util';
 import { OnvifDriver } from '../drivers/onvif.driver';
 import type { DriverTelemetryPoint } from '../drivers/collection-driver.interface';
 
@@ -57,8 +58,12 @@ interface GatewayConfigPayload {
 
 interface ActiveOnvifPoll {
   handle: ReturnType<typeof setInterval> | null;
+  /** Delay de partida (jitter) — pendente até o primeiro ciclo. */
+  startTimeout: ReturnType<typeof setTimeout> | null;
   polling: boolean;
   driver: OnvifDriver;
+  /** Intervalo configurado (ms) — usado na contagem de ciclos pulados. */
+  intervalMs: number;
   /** Snapshot JSON do bloco de config — detecta mudanças sem reiniciar tudo. */
   configKey: string;
 }
@@ -154,9 +159,12 @@ export class OnvifPollingService implements OnModuleDestroy {
     this.stopPoll(device.deviceId);
 
     const intervalMs = device.pollingIntervalMs || 30_000;
+    // Jitter determinístico de partida: espalha os ciclos das câmeras do
+    // gateway dentro do intervalo, evitando rajadas sincronizadas no broker.
+    const jitterMs = computeStartJitterMs(device.deviceId, intervalMs);
     this.logger.log(
       `Câmera ONVIF ${device.deviceId} (${device.ip}:${device.port}, user=${device.username}): ` +
-        `polling a cada ${intervalMs}ms — ${device.points.length} ponto(s)`,
+        `polling a cada ${intervalMs}ms — ${device.points.length} ponto(s) (partida em ${jitterMs}ms)`,
     );
 
     const driver = new OnvifDriver(
@@ -178,22 +186,30 @@ export class OnvifPollingService implements OnModuleDestroy {
 
     const state: ActiveOnvifPoll = {
       handle: null,
+      startTimeout: null,
       polling: false,
       driver,
+      intervalMs,
       configKey: configKey ?? this.configKeyFor(device),
     };
     this.activePolls.set(device.deviceId, state);
 
-    void this.pollDevice(state);
-    state.handle = setInterval(() => {
+    state.startTimeout = setTimeout(() => {
+      state.startTimeout = null;
       void this.pollDevice(state);
-    }, intervalMs);
+      state.handle = setInterval(() => {
+        void this.pollDevice(state);
+      }, intervalMs);
+    }, jitterMs);
   }
 
   private stopPoll(deviceId: string): void {
     const state = this.activePolls.get(deviceId);
     if (!state) {
       return;
+    }
+    if (state.startTimeout) {
+      clearTimeout(state.startTimeout);
     }
     if (state.handle) {
       clearInterval(state.handle);
@@ -204,7 +220,16 @@ export class OnvifPollingService implements OnModuleDestroy {
 
   /** Um ciclo de polling: driver executa runCycle e o resultado é publicado. */
   private async pollDevice(state: ActiveOnvifPoll): Promise<void> {
-    if (state.polling || state.driver.disposed) {
+    if (state.driver.disposed) {
+      return;
+    }
+    if (state.polling) {
+      // Ciclo anterior ainda em andamento (câmera lenta) — pula e contabiliza.
+      this.pollingMetrics.recordSkipped({
+        protocol: 'onvif',
+        deviceId: state.driver.deviceId,
+        intervalMs: state.intervalMs,
+      });
       return;
     }
     state.polling = true;
@@ -222,6 +247,7 @@ export class OnvifPollingService implements OnModuleDestroy {
         latencyMs: elapsedMs,
         pointsRead: result.reachable ? points.filter((pt) => pt.value !== null).length : 0,
         pointsAttempted: points.length,
+        intervalMs: state.intervalMs,
       });
 
       this.logger.debug(

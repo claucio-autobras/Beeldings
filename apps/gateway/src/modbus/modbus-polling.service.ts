@@ -4,6 +4,7 @@ import { OnEvent } from '@nestjs/event-emitter';
 import ModbusRTU from 'modbus-serial';
 import { GatewayMqttService } from '../mqtt/gateway-mqtt.service';
 import { PollingMetricsService } from '../observability/polling-metrics.service';
+import { computeStartJitterMs } from '../observability/poll-jitter.util';
 import { SerialPortManager, SerialSettings } from './serial-port-manager';
 
 /** Registrador Modbus de um device (vem do binding cadastrado no backend). */
@@ -46,6 +47,8 @@ interface ActiveModbusPoll {
   /** Cliente TCP dedicado — no modo RTU o cliente vive no SerialPortManager. */
   client: ModbusRTU | null;
   handle: ReturnType<typeof setInterval>;
+  /** Delay de partida (jitter) — pendente até o primeiro ciclo. */
+  startTimeout: ReturnType<typeof setTimeout> | null;
   connecting: boolean;
   /** Ciclo em andamento — evita sobrepor ciclos num escravo RTU lento. */
   busy: boolean;
@@ -203,6 +206,7 @@ export class ModbusPollingService implements OnModuleDestroy {
     const state: ActiveModbusPoll = {
       client: isRtu ? null : new ModbusRTU(),
       handle: undefined as never,
+      startTimeout: null,
       connecting: false,
       busy: false,
       serialPath: isRtu ? device.serial!.path : undefined,
@@ -214,16 +218,22 @@ export class ModbusPollingService implements OnModuleDestroy {
     }
 
     const intervalMs = device.pollingIntervalMs || 15_000;
+    // Jitter determinístico de partida: espalha os ciclos dos devices do
+    // gateway dentro do intervalo, evitando rajadas sincronizadas no broker.
+    const jitterMs = computeStartJitterMs(key, intervalMs);
     this.logger.log(
       `Device Modbus ${device.deviceId} (${this.deviceLabel(device)}, unit ${device.unitId}): ` +
-        `polling a cada ${intervalMs}ms — ${registers.length} registrador(es)`,
+        `polling a cada ${intervalMs}ms — ${registers.length} registrador(es) (partida em ${jitterMs}ms)`,
     );
 
-    // Primeira leitura imediata + ciclos subsequentes
-    void this.pollDevice(state, device);
-    state.handle = setInterval(() => {
+    // Primeira leitura após o jitter + ciclos subsequentes
+    state.startTimeout = setTimeout(() => {
+      state.startTimeout = null;
       void this.pollDevice(state, device);
-    }, intervalMs);
+      state.handle = setInterval(() => {
+        void this.pollDevice(state, device);
+      }, intervalMs);
+    }, jitterMs);
 
     this.activePolls.set(key, state);
   }
@@ -232,6 +242,9 @@ export class ModbusPollingService implements OnModuleDestroy {
     const state = this.activePolls.get(key);
     if (!state) {
       return;
+    }
+    if (state.startTimeout) {
+      clearTimeout(state.startTimeout);
     }
     if (state.handle) {
       clearInterval(state.handle);
@@ -315,7 +328,14 @@ export class ModbusPollingService implements OnModuleDestroy {
   /** Executa um ciclo completo de leitura e publica a telemetria. */
   private async pollDevice(state: ActiveModbusPoll, device: ModbusDeviceBlock): Promise<void> {
     if (state.busy) {
-      return; // ciclo anterior ainda em andamento (barramento lento) — não sobrepõe
+      // Ciclo anterior ainda em andamento (barramento lento) — não sobrepõe;
+      // pula este ciclo e contabiliza para observabilidade.
+      this.pollingMetrics.recordSkipped({
+        protocol: 'modbus',
+        deviceId: device.deviceId,
+        intervalMs: device.pollingIntervalMs || 15_000,
+      });
+      return;
     }
     state.busy = true;
     try {
@@ -377,6 +397,7 @@ export class ModbusPollingService implements OnModuleDestroy {
       latencyMs: elapsedMs,
       pointsRead: ordered.length,
       pointsAttempted: device.registers.length,
+      intervalMs: device.pollingIntervalMs || 15_000,
     });
 
     this.logger.debug(

@@ -75,6 +75,26 @@ function deviceHealthOk(p: GatewayPollingHealth): boolean {
   return !!p.lastPollAt && p.lastPointsRead > 0;
 }
 
+/**
+ * Device "furando" o intervalo de polling com frequência: mais de 20% dos
+ * ciclos estouraram o intervalo configurado (e pelo menos 3 estouros) —
+ * sinal de que o intervalo é curto demais para o device (ex.: BACnet sem RPM).
+ */
+function isFrequentOverrunner(p: GatewayPollingHealth): boolean {
+  const overruns = p.intervalOverruns ?? 0;
+  const skipped = p.skippedCycles ?? 0;
+  const cycles = p.totalCycles + skipped;
+  if (cycles === 0) return false;
+  return (overruns + skipped) >= 3 && (overruns + skipped) / cycles > 0.2;
+}
+
+/** Soma de devices com problemas de ciclo (pulados ou estourando o intervalo). */
+function cycleIssueCount(health: GatewayHealthSummary): number {
+  return health.polling.filter(
+    (p) => p.protocol !== 'mqtt' && ((p.skippedCycles ?? 0) > 0 || (p.intervalOverruns ?? 0) > 0),
+  ).length;
+}
+
 /** Selo visual de status por device (OK / Sem resposta). */
 function DeviceStatusBadge({ ok }: { ok: boolean }) {
   return (
@@ -756,6 +776,11 @@ function HealthDetail({ health }: { health: GatewayHealthSummary | null }) {
           tone={latency !== null && latency > 2000 ? 'warn' : 'ok'}
         />
         <HealthMetric
+          label="Devices com ciclos pulados/estourados"
+          value={String(cycleIssueCount(health))}
+          tone={cycleIssueCount(health) > 0 ? 'warn' : 'ok'}
+        />
+        <HealthMetric
           label="Devices monitorados"
           value={String(health.polling.length)}
           tone="neutral"
@@ -778,6 +803,18 @@ function HealthDetail({ health }: { health: GatewayHealthSummary | null }) {
                 <th className="text-right px-3 py-2 font-medium">Latência</th>
                 <th className="text-right px-3 py-2 font-medium hidden sm:table-cell">Leituras</th>
                 <th className="text-right px-3 py-2 font-medium hidden sm:table-cell">Ciclos</th>
+                <th
+                  className="text-right px-3 py-2 font-medium"
+                  title="Ciclos pulados porque o anterior ainda estava em andamento"
+                >
+                  Pulados
+                </th>
+                <th
+                  className="text-right px-3 py-2 font-medium"
+                  title="Ciclos que demoraram mais que o intervalo configurado"
+                >
+                  Estouros
+                </th>
                 <th className="text-right px-3 py-2 font-medium">Última leitura OK</th>
               </tr>
             </thead>
@@ -785,9 +822,27 @@ function HealthDetail({ health }: { health: GatewayHealthSummary | null }) {
               {health.polling.map((p) => {
                 const isMqtt = p.protocol === 'mqtt';
                 const ok = deviceHealthOk(p);
+                const overrunning = !isMqtt && isFrequentOverrunner(p);
+                const skipped = p.skippedCycles ?? 0;
+                const overruns = p.intervalOverruns ?? 0;
                 return (
-                  <tr key={`${p.protocol}:${p.deviceId}`}>
-                    <td className="px-3 py-2 text-foreground">{p.deviceName ?? '—'}</td>
+                  <tr
+                    key={`${p.protocol}:${p.deviceId}`}
+                    className={overrunning ? 'bg-amber-50/60 dark:bg-amber-950/20' : undefined}
+                  >
+                    <td className="px-3 py-2 text-foreground">
+                      {p.deviceName ?? '—'}
+                      {overrunning && (
+                        <span
+                          className="ml-2 inline-flex items-center text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800"
+                          title={`Este device está furando o intervalo de polling com frequência${
+                            p.intervalMs ? ` (intervalo configurado: ${Math.round(p.intervalMs / 1000)}s)` : ''
+                          } — considere aumentar o intervalo.`}
+                        >
+                          fura intervalo
+                        </span>
+                      )}
+                    </td>
                     <td className="px-3 py-2 uppercase text-muted-foreground">{p.protocol}</td>
                     <td className="px-3 py-2">
                       <DeviceStatusBadge ok={ok} />
@@ -802,6 +857,22 @@ function HealthDetail({ health }: { health: GatewayHealthSummary | null }) {
                     </td>
                     <td className="px-3 py-2 text-right text-muted-foreground hidden sm:table-cell">
                       {isMqtt ? '—' : p.totalCycles}
+                    </td>
+                    <td
+                      className={`px-3 py-2 text-right ${
+                        !isMqtt && skipped > 0 ? 'text-amber-700 dark:text-amber-500 font-medium' : 'text-muted-foreground'
+                      }`}
+                      title="Ciclos pulados porque o anterior ainda estava em andamento"
+                    >
+                      {isMqtt ? '—' : skipped}
+                    </td>
+                    <td
+                      className={`px-3 py-2 text-right ${
+                        !isMqtt && overruns > 0 ? 'text-amber-700 dark:text-amber-500 font-medium' : 'text-muted-foreground'
+                      }`}
+                      title="Ciclos que demoraram mais que o intervalo configurado"
+                    >
+                      {isMqtt ? '—' : overruns}
                     </td>
                     <td className="px-3 py-2 text-right text-muted-foreground">
                       {formatRelative(isMqtt ? p.lastMessageAt : p.lastSuccessAt)}

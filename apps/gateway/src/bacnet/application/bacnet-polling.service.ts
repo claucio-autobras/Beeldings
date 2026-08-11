@@ -4,6 +4,7 @@ import { OnEvent } from '@nestjs/event-emitter';
 import { NodeBacnetClient, BacnetTarget } from '../infrastructure/node-bacnet.client';
 import { GatewayMqttService } from '../../mqtt/gateway-mqtt.service';
 import { PollingMetricsService } from '../../observability/polling-metrics.service';
+import { computeStartJitterMs } from '../../observability/poll-jitter.util';
 import { bacnetDevices } from '../../config/bacnet-devices.config';
 import { BACnetDeviceConfig, BACnetObjectConfig } from '../domain/interfaces/bacnet-config.interface';
 
@@ -79,8 +80,18 @@ export class BacnetPollingService implements OnModuleInit {
   private readonly tenantId: string;
   private readonly gatewayId: string;
 
-  /** Polls ativos keyed por `${ip}:${port}` → handle do setInterval. */
-  private readonly activePolls = new Map<string, ReturnType<typeof setInterval>>();
+  /** Polls ativos keyed por `${ip}:${port}` → agendamento + guard de ciclo. */
+  private readonly activePolls = new Map<
+    string,
+    {
+      /** Delay de partida (jitter) — pendente até o primeiro ciclo. */
+      timeout: ReturnType<typeof setTimeout> | null;
+      /** Ciclos periódicos — criado após o jitter de partida. */
+      interval: ReturnType<typeof setInterval> | null;
+      /** Ciclo em andamento — evita sobrepor ciclos num device lento. */
+      busy: boolean;
+    }
+  >();
   /** Chaves (ip:port) atualmente gerenciadas pela config dinâmica do backend. */
   private dynamicKeys = new Set<string>();
   /**
@@ -218,26 +229,38 @@ export class BacnetPollingService implements OnModuleInit {
       return;
     }
 
+    // Jitter determinístico de partida: espalha os ciclos dos devices do
+    // gateway dentro do intervalo, evitando rajadas sincronizadas no broker.
+    const jitterMs = computeStartJitterMs(key, device.pollingIntervalMs);
+
     this.logger.log(
       `Dispositivo ${device.id} (${device.ipAddress}): polling a cada ` +
-        `${device.pollingIntervalMs}ms — ${pollableObjects.length} objeto(s)`,
+        `${device.pollingIntervalMs}ms — ${pollableObjects.length} objeto(s)` +
+        ` (partida em ${jitterMs}ms)`,
     );
 
-    // Executa imediatamente
-    void this.pollDevice(device, pollableObjects);
+    const state = {
+      timeout: null as ReturnType<typeof setTimeout> | null,
+      interval: null as ReturnType<typeof setInterval> | null,
+      busy: false,
+    };
 
-    // Agenda ciclos subsequentes
-    const handle = setInterval(() => {
-      void this.pollDevice(device, pollableObjects);
-    }, device.pollingIntervalMs);
+    state.timeout = setTimeout(() => {
+      state.timeout = null;
+      void this.pollDevice(state, device, pollableObjects);
+      state.interval = setInterval(() => {
+        void this.pollDevice(state, device, pollableObjects);
+      }, device.pollingIntervalMs);
+    }, jitterMs);
 
-    this.activePolls.set(key, handle);
+    this.activePolls.set(key, state);
   }
 
   private stopPoll(key: string): void {
-    const handle = this.activePolls.get(key);
-    if (handle) {
-      clearInterval(handle);
+    const state = this.activePolls.get(key);
+    if (state) {
+      if (state.timeout) clearTimeout(state.timeout);
+      if (state.interval) clearInterval(state.interval);
       this.activePolls.delete(key);
     }
     this.rpmUnsupported.delete(key);
@@ -275,11 +298,40 @@ export class BacnetPollingService implements OnModuleInit {
    * Agrupa os pontos lidos e publica um único payload MQTT.
    */
   private async pollDevice(
+    state: { busy: boolean },
     device: BACnetDeviceConfig,
     objects: BACnetObjectConfig[],
   ): Promise<void> {
     const label = device.name || device.id;
     const key = this.configKey(device);
+
+    if (state.busy) {
+      // Ciclo anterior ainda em andamento (device lento / sem RPM) — não
+      // sobrepõe leituras: pula este ciclo e contabiliza para observabilidade.
+      this.pollingMetrics.recordSkipped({
+        protocol: 'bacnet',
+        deviceId: device.id,
+        intervalMs: device.pollingIntervalMs,
+      });
+      this.logger.warn(
+        `[${label}] Ciclo anterior ainda em andamento — ciclo pulado (busy)`,
+      );
+      return;
+    }
+    state.busy = true;
+    try {
+      await this.runPollCycle(device, objects, label, key);
+    } finally {
+      state.busy = false;
+    }
+  }
+
+  private async runPollCycle(
+    device: BACnetDeviceConfig,
+    objects: BACnetObjectConfig[],
+    label: string,
+    key: string,
+  ): Promise<void> {
     const useRpm = this.rpmEnabled && !this.rpmUnsupported.has(key);
 
     this.logger.log(
@@ -299,6 +351,7 @@ export class BacnetPollingService implements OnModuleInit {
       latencyMs: elapsedMs,
       pointsRead: points.length,
       pointsAttempted: objects.length,
+      intervalMs: device.pollingIntervalMs,
     });
 
     this.logger.log(

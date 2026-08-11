@@ -28,6 +28,12 @@ export interface GatewayPollingHealth {
   messagesReceived?: number;
   /** MQTT (passivo): instante da última mensagem recebida (ISO). */
   lastMessageAt?: string;
+  /** Ciclos pulados porque o anterior ainda estava em andamento (busy). */
+  skippedCycles?: number;
+  /** Ciclos cuja duração excedeu o intervalo configurado do device. */
+  intervalOverruns?: number;
+  /** Intervalo de polling configurado (ms) — contexto para os estouros. */
+  intervalMs?: number;
 }
 
 /** Último resumo de saúde recebido de um gateway (aditivo, pode faltar). */
