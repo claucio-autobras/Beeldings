@@ -4,9 +4,9 @@ export const modules: ModuleMap = {
   "./components/mockups/GatewayBadgePreview.tsx": () => import("../components/mockups/GatewayBadgePreview.tsx"),
   "./components/mockups/iso-equipment-preview.tsx": () => import("../components/mockups/iso-equipment-preview.tsx"),
   "./components/mockups/admin-dashboard/Moderna.tsx": () => import("../components/mockups/admin-dashboard/Moderna.tsx"),
-  "./components/mockups/client-dashboard/Cliente.tsx": () => import("../components/mockups/client-dashboard/Cliente.tsx"),
   "./components/mockups/ativos-criticos/CardVazio.tsx": () => import("../components/mockups/ativos-criticos/CardVazio.tsx"),
   "./components/mockups/ativos-criticos/DashboardComCard.tsx": () => import("../components/mockups/ativos-criticos/DashboardComCard.tsx"),
   "./components/mockups/ativos-criticos/ToggleCFTV.tsx": () => import("../components/mockups/ativos-criticos/ToggleCFTV.tsx"),
-  "./components/mockups/ativos-criticos/ToggleDispositivos.tsx": () => import("../components/mockups/ativos-criticos/ToggleDispositivos.tsx")
+  "./components/mockups/ativos-criticos/ToggleDispositivos.tsx": () => import("../components/mockups/ativos-criticos/ToggleDispositivos.tsx"),
+  "./components/mockups/client-dashboard/Cliente.tsx": () => import("../components/mockups/client-dashboard/Cliente.tsx")
 };
