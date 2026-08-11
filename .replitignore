@@ -9,8 +9,10 @@
 # Histórico git (3,9 GB) — não é necessário em runtime de produção
 .git
 
-# Build de DEV do Next (o build de produção gera o próprio .next no deploy)
-apps/frontend/.next
+# Cache do Next (pesado e desnecessário em runtime). NUNCA excluir
+# apps/frontend/.next inteiro: o .replitignore também remove o build de
+# produção da imagem final → "Could not find a production build" em prod.
+apps/frontend/.next/cache
 
 # Libs Python (usadas só em ferramentas de dev, nada em produção roda Python)
 .pythonlibs
