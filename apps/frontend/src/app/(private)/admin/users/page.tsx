@@ -27,11 +27,11 @@ const ROLE_LABELS: Record<UserRole, string> = {
 };
 
 const ROLE_COLORS: Record<UserRole, string> = {
-  ADMIN:        'bg-red-100 text-red-700 border-red-200',
-  CCO:          'bg-orange-100 text-orange-700 border-orange-200',
-  SUPERVISOR:   'bg-blue-100 text-blue-700 border-blue-200',
-  CLIENTE:      'bg-cyan-100 text-cyan-700 border-cyan-200',
-  VISUALIZADOR: 'bg-slate-100 text-slate-600 border-slate-200',
+  ADMIN:        'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/60 dark:text-red-300 dark:border-red-800',
+  CCO:          'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950/60 dark:text-orange-300 dark:border-orange-800',
+  SUPERVISOR:   'bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800',
+  CLIENTE:      'bg-cyan-50 text-cyan-700 border-cyan-200 dark:bg-cyan-950/60 dark:text-cyan-300 dark:border-cyan-800',
+  VISUALIZADOR: 'bg-muted text-muted-foreground border-border',
 };
 
 function formatDate(iso: string): string {
@@ -198,23 +198,28 @@ export default function UsersPage() {
   const tenantMap = Object.fromEntries(tenants.map((t) => [t.id, t.name]));
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto w-full max-w-6xl space-y-6">
       {/* Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-foreground">Usuários</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Gerencie os usuários e seus acessos à plataforma
-          </p>
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-cyan-500/10">
+            <Users className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
+          </div>
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight text-foreground">Usuários</h1>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Gerencie os usuários e seus acessos à plataforma
+            </p>
+          </div>
         </div>
         <button
           onClick={() => setShowModal(true)}
-          className="flex items-center gap-2 h-9 px-4 text-sm rounded-md font-medium bg-cyan-700 text-white hover:bg-cyan-800 transition-colors self-start"
+          className="inline-flex shrink-0 items-center gap-2 self-start rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-cyan-700 sm:self-auto"
         >
           <Plus className="h-4 w-4" />
           Novo Usuário
         </button>
-      </div>
+      </header>
 
       {/* Loading */}
       {isLoading && (
@@ -225,19 +230,21 @@ export default function UsersPage() {
 
       {/* Error */}
       {error && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-400">
           Endpoint de usuários ainda não disponível. Os dados aparecerão quando o módulo estiver ativo.
         </div>
       )}
 
       {/* Empty */}
       {!isLoading && users.length === 0 && !error && (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
-          <Users className="h-12 w-12 text-muted-foreground/25 mb-3" />
+        <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-border bg-card px-6 py-16 text-center shadow-sm">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-cyan-500/10">
+            <Users className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
+          </div>
           <p className="text-sm text-muted-foreground">Nenhum usuário cadastrado ainda.</p>
           <button
             onClick={() => setShowModal(true)}
-            className="mt-4 flex items-center gap-2 h-9 px-4 text-sm rounded-md font-medium bg-cyan-700 text-white hover:bg-cyan-800 transition-colors"
+            className="inline-flex items-center gap-2 rounded-lg border border-dashed border-cyan-400 px-4 py-2 text-sm font-medium text-cyan-600 transition-colors hover:bg-cyan-50 dark:text-cyan-400 dark:hover:bg-cyan-950/40"
           >
             <Plus className="h-4 w-4" />
             Criar Primeiro Usuário
@@ -247,48 +254,50 @@ export default function UsersPage() {
 
       {/* Table */}
       {!isLoading && users.length > 0 && (
-        <div className="border border-border rounded-xl overflow-x-auto">
+        <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm transition-shadow duration-200 hover:shadow-md">
+          <div className="overflow-x-auto">
           <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="bg-muted/30 border-b border-border">
-                <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">Usuário</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground hidden sm:table-cell">E-mail</th>
-                <th className="text-center px-4 py-3 text-xs font-medium text-muted-foreground">Perfil</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground hidden md:table-cell">Cliente</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground hidden lg:table-cell">Criado em</th>
+                <th className="text-left px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Usuário</th>
+                <th className="text-left px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hidden sm:table-cell">E-mail</th>
+                <th className="text-center px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Perfil</th>
+                <th className="text-left px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hidden md:table-cell">Cliente</th>
+                <th className="text-right px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hidden lg:table-cell">Criado em</th>
+                <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {users.map((u) => (
-                <tr key={u.id} className="hover:bg-muted/20 transition-colors">
-                  <td className="px-4 py-3">
+                <tr key={u.id} className="transition-colors duration-150 hover:bg-muted/30">
+                  <td className="px-5 py-3.5">
                     <div className="flex items-center gap-2.5">
-                      <div className="h-8 w-8 rounded-full bg-cyan-100 flex items-center justify-center shrink-0 text-xs font-semibold text-cyan-700">
+                      <div className="h-8 w-8 rounded-full bg-cyan-500/10 flex items-center justify-center shrink-0 text-xs font-semibold text-cyan-600 dark:text-cyan-400">
                         {u.name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)}
                       </div>
                       <span className="font-medium text-foreground">{u.name}</span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 hidden sm:table-cell text-sm text-muted-foreground">{u.email}</td>
-                  <td className="px-4 py-3 text-center">
+                  <td className="px-4 py-3.5 hidden sm:table-cell text-sm text-muted-foreground">{u.email}</td>
+                  <td className="px-4 py-3.5 text-center">
                     <span className={`inline-flex items-center text-[11px] font-medium px-2 py-0.5 rounded-full border ${ROLE_COLORS[u.role]}`}>
                       {ROLE_LABELS[u.role]}
                     </span>
                   </td>
-                  <td className="px-4 py-3 hidden md:table-cell text-sm text-muted-foreground">
+                  <td className="px-4 py-3.5 hidden md:table-cell text-sm text-muted-foreground">
                     {u.tenantId ? (tenantMap[u.tenantId] ?? u.tenantId) : '—'}
                   </td>
-                  <td className="px-4 py-3 text-right hidden lg:table-cell text-xs text-muted-foreground">
+                  <td className="px-4 py-3.5 text-right hidden lg:table-cell text-xs text-muted-foreground">
                     {formatDate(u.createdAt)}
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3.5 text-right">
                     {/* Sem botão de excluir para ADMIN nem para o próprio
                         usuário logado — ninguém pode excluir a si mesmo. */}
                     {u.role !== 'ADMIN' && u.id !== currentUser.id && (
                       <button
                         onClick={() => setConfirmDeleteId(u.id)}
                         title="Excluir usuário"
-                        className="inline-flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-red-600 hover:bg-red-50 transition-colors"
+                        className="inline-flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 dark:hover:text-red-400 transition-colors"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
@@ -298,6 +307,10 @@ export default function UsersPage() {
               ))}
             </tbody>
           </table>
+          </div>
+          <div className="border-t border-border bg-muted/20 px-5 py-2.5 text-xs text-muted-foreground">
+            {users.length} usuário{users.length !== 1 ? 's' : ''} cadastrado{users.length !== 1 ? 's' : ''}
+          </div>
         </div>
       )}
 

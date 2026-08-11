@@ -16,14 +16,10 @@ export interface GatewayEntry {
 }
 
 export interface AdminStats {
-  totalSites: number;
-  activeSites: number;
   totalDevices: number;
   onlineDevices: number;
-  pendingCommands: number;
   alarmsByTenant: TenantAlarmEntry[];
   devicesByStatus: { online: number; offline: number };
-  alarmsByStatus: { alarme: number; normal: number; reconhecido: number };
   gateways: GatewayEntry[];
   activeAutomations: number;
 }

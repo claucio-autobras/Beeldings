@@ -272,6 +272,27 @@ export class GatewayMqttService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
+   * Publica uma mensagem volátil (ex.: frame de visualização ao vivo):
+   * QoS0, SEM retain e SEM store-and-forward — se estiver offline ou a
+   * publicação falhar, a mensagem é simplesmente descartada (o próximo frame
+   * a substitui). Nunca lança.
+   */
+  publishVolatile(topic: string, payload: unknown): void {
+    try {
+      if (!this.client?.connected) return;
+      this.client.publish(topic, JSON.stringify(payload), { qos: 0, retain: false }, (err) => {
+        if (err) {
+          this.logger.debug(`Falha ao publicar mensagem volátil em ${topic}: ${err.message}`);
+        }
+      });
+    } catch (err) {
+      this.logger.debug(
+        `Falha ao publicar mensagem volátil em ${topic}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  /**
    * Publica uma mensagem já serializada diretamente no broker.
    * Se a publicação falhar e `enqueueOnError` estiver ativo, a mensagem é
    * enfileirada como fallback (store-and-forward).

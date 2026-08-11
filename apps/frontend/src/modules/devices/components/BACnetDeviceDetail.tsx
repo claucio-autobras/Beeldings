@@ -19,7 +19,7 @@ import {
   Zap,
 } from 'lucide-react';
 import type { BACnetDevice, DeviceStatus } from '@/mocks/data/devices.mock';
-import { deleteBACnetPoint, renameDevicePoint, setPointCritical, type PointOpRole } from '../services/devices.service';
+import { deleteBACnetPoint, renameDevicePoint, setPointCritical, setPointOpRole, type PointOpRole } from '../services/devices.service';
 import { CriticalStarButton } from '@/components/CriticalStarButton';
 import { ForcePointValueControl } from './ForcePointValueControl';
 import { isCommandable, isDigital, objectTypeToNum } from '../utils/bacnet-object-types';
@@ -30,6 +30,7 @@ import BACnetSyncModal from './BACnetSyncModal';
 import { getTrends } from '@/modules/trends/services/trends-api.service';
 import { getAlarmRules } from '@/modules/alarms/services/alarms-api.service';
 import { PointConfigPanel } from '@/modules/trends/components/PointConfigPanel';
+import { OpRoleBadge } from './OpRoleBadge';
 import { AlarmGroupsSection } from './AlarmGroupsSection';
 import { DeviceTimelineTab } from './DeviceTimelineTab';
 import {
@@ -127,6 +128,13 @@ export default function BACnetDeviceDetail({ device: initialDevice, onBack }: Pr
     } catch {
       setCriticalById((m) => ({ ...m, [pointId]: current }));
     }
+  }
+
+  async function handleSetStatusRole(pointId: string) {
+    await setPointOpRole(device.id, pointId, 'status');
+    setOpRoleById((m) => ({ ...m, [pointId]: 'status' }));
+    qc.invalidateQueries({ queryKey: ['devices'] });
+    qc.invalidateQueries({ queryKey: ['dashboard-critical-assets'] });
   }
 
   async function handleDeletePoint(pointId: string) {
@@ -383,13 +391,14 @@ export default function BACnetDeviceDetail({ device: initialDevice, onBack }: Pr
                             />
                           )}
                           <span className="min-w-0 break-words">{p.objectName ?? p.tag}</span>
+                          <OpRoleBadge role={pointOpRole(p)} />
                         </div>
                         {p.objectName && (
                           <div className="font-mono text-xs text-muted-foreground mt-0.5 break-all">{p.tag}</div>
                         )}
                       </div>
                       <span className="inline-flex items-center gap-1 shrink-0 text-muted-foreground">
-                        <CriticalStarButton critical={isCritical(p)} size={16} onToggle={() => handleToggleCritical(p.id, isCritical(p))} markHint={pointOpRole(p) !== 'status' ? CRITICAL_MARK_HINT : undefined} />
+                        <CriticalStarButton critical={isCritical(p)} size={16} onToggle={() => handleToggleCritical(p.id, isCritical(p))} markHint={pointOpRole(p) !== 'status' ? CRITICAL_MARK_HINT : undefined} onSetStatusRole={pointOpRole(p) !== 'status' && isDigital(p.objectType) ? () => handleSetStatusRole(p.id) : undefined} />
                         {isCommandable(p.objectType) && (
                           <button
                             type="button"
@@ -549,6 +558,7 @@ export default function BACnetDeviceDetail({ device: initialDevice, onBack }: Pr
                             />
                           )}
                           {p.objectName ?? p.tag}
+                          <OpRoleBadge role={pointOpRole(p)} />
                         </div>
                         {p.objectName && (
                           <div className="font-mono text-xs text-muted-foreground mt-0.5">{p.tag}</div>
@@ -593,7 +603,7 @@ export default function BACnetDeviceDetail({ device: initialDevice, onBack }: Pr
                       {/* Excluir / Expandir */}
                       <td className="px-4 py-3 text-right text-muted-foreground">
                         <span className="inline-flex items-center gap-1">
-                          <CriticalStarButton critical={isCritical(p)} size={16} className="!p-1" onToggle={() => handleToggleCritical(p.id, isCritical(p))} markHint={pointOpRole(p) !== 'status' ? CRITICAL_MARK_HINT : undefined} />
+                          <CriticalStarButton critical={isCritical(p)} size={16} className="!p-1" onToggle={() => handleToggleCritical(p.id, isCritical(p))} markHint={pointOpRole(p) !== 'status' ? CRITICAL_MARK_HINT : undefined} onSetStatusRole={pointOpRole(p) !== 'status' && isDigital(p.objectType) ? () => handleSetStatusRole(p.id) : undefined} />
                           {isCommandable(p.objectType) && (
                             <button
                               type="button"

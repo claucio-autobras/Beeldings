@@ -16,7 +16,7 @@ export async function downloadAgentPackage(os: AgentOs): Promise<void> {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `bluebee-gateway-agent-${os}.zip`;
+  a.download = `beeldings-gateway-agent-${os}.zip`;
   document.body.appendChild(a);
   a.click();
   a.remove();

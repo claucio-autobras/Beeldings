@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /* ===========================================================================
- * BlueBee IoT Gateway — Launcher OTA (run.js)
+ * Beeldings IoT Gateway — Launcher OTA (run.js)
  *
  * O serviço (systemd/NSSM) executa ESTE arquivo, não o dist/main.js direto.
  * Responsabilidades:
@@ -104,7 +104,28 @@ function rollback(reason) {
   log(`ROLLBACK: nova versao nao estabilizou (${reason}) — restaurando anterior`);
 
   if (!fs.existsSync(path.join(PREVIOUS, 'dist', 'main.js'))) {
+    // Sem versão anterior válida não há o que restaurar — mas o desfecho NUNCA
+    // pode sumir em silêncio: grava um resultado terminal de falha para o
+    // gateway (se voltar a subir) publicar à plataforma no próximo boot.
     log('AVISO: previous/ nao contem uma versao valida; mantendo a atual');
+    fs.mkdirSync(UPDATE_DIR, { recursive: true });
+    fs.writeFileSync(
+      RESULT,
+      JSON.stringify(
+        {
+          status: 'failed',
+          command_id: info.command_id || '',
+          tenant_id: info.tenant_id || '',
+          gateway_id: info.gateway_id || '',
+          version: info.version || '',
+          previousVersion: info.previousVersion || '',
+          error: `Nova versão não estabilizou (${reason}) e o rollback falhou: previous/ ausente ou inválido — instalação mantida como está; verifique o gateway no local.`,
+          at: new Date().toISOString(),
+        },
+        null,
+        2,
+      ),
+    );
     fs.rmSync(PENDING, { force: true });
     return;
   }

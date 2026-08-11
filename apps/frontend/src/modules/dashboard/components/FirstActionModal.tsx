@@ -19,6 +19,7 @@ import {
   getFirstActionSuggestion,
   type FirstActionResult,
 } from '../services/dashboard.service';
+import { SimilarCasesList } from '@/modules/ai/components/SimilarCasesList';
 
 interface FirstActionModalProps {
   asset: CriticalAsset;
@@ -201,6 +202,9 @@ export function FirstActionModal({ asset, onNavigate, onClose }: FirstActionModa
               </ul>
             </div>
           )}
+
+          {/* Casos semelhantes da memória operacional anônima (cross-tenant) */}
+          <SimilarCasesList cases={result?.similarCases} />
 
           {/* Sugestão da IA */}
           {loading ? (

@@ -254,7 +254,7 @@ function handlePost(pathname: string, body: unknown): unknown {
     const b = (body ?? {}) as { conversationId?: string | null; content?: string };
     return {
       reply:
-        'Olá! Sou o assistente do BlueBee. No modo demonstração não há backend de IA ' +
+        'Olá! Sou o Bluebee, assistente da plataforma Beeldings. No modo demonstração não há backend de IA ' +
         'conectado, então respondo com uma mensagem de exemplo. Na próxima fase, com o ' +
         'backend ativo, as respostas serão geradas por IA com base na sua operação.',
       conversationId: b.conversationId ?? genId(),

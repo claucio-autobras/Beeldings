@@ -26,11 +26,8 @@ export const mockGateways: GatewayEntry[] = [
 ];
 
 export const mockAdminStats = {
-  totalSites: 13,
-  activeSites: 11,
   totalDevices: 1248,
   onlineDevices: 1056,
-  pendingCommands: 5,
   alarmsByTenant: [
     { tenantName: 'Petroquímica Norte',    alarmCount: 8, severity: 'active'       },
     { tenantName: 'Shopping Metrópolis',   alarmCount: 6, severity: 'active'       },
@@ -42,7 +39,6 @@ export const mockAdminStats = {
     { tenantName: 'Indústria Cimenteira',  alarmCount: 1, severity: 'none'         },
   ] as TenantAlarmEntry[],
   devicesByStatus: { online: 1056, offline: 192 },
-  alarmsByStatus: { alarme: 6, normal: 3, reconhecido: 12 },
   gateways: mockGateways,
   activeAutomations: 14,
 };

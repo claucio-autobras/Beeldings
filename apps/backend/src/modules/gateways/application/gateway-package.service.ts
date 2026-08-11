@@ -51,7 +51,7 @@ export class GatewayPackageService {
   buildAgentZip(target: 'linux' | 'windows'): Buffer {
     const gatewayRoot = this.resolveGatewayRoot();
     const agentDir = join(gatewayRoot, 'agent');
-    const base = 'bluebee-gateway-agent';
+    const base = 'beeldings-gateway-agent';
 
     const zip = new AdmZip();
     zip.addLocalFolder(join(gatewayRoot, 'src'), `${base}/src`);

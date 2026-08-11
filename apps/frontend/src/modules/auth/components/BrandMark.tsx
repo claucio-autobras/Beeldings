@@ -15,7 +15,7 @@ const SIZES = {
 } as const;
 
 /**
- * Marca da BlueBee — ícone hexagonal + wordmark "bluebee".
+ * Marca Beeldings — ícone hexagonal + wordmark "Beeldings".
  * Reutilizável em login, e-mails, telas públicas, etc.
  */
 export function BrandMark({ size = 'md', iconOnly = false, className }: BrandMarkProps) {
@@ -45,8 +45,8 @@ export function BrandMark({ size = 'md', iconOnly = false, className }: BrandMar
 
       {!iconOnly && (
         <span className={cn('font-semibold tracking-tight', s.text)}>
-          <span className="text-slate-900">Blue</span>
-          <span className="text-cyan-700">bee</span>
+          <span className="text-slate-900">Beel</span>
+          <span className="text-cyan-700">dings</span>
         </span>
       )}
     </div>

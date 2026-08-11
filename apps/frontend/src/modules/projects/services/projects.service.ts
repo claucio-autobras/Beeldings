@@ -11,8 +11,6 @@ export interface ProjectGateway {
 export interface ProjectItem {
   id: string;
   name: string;
-  address?: string | null;
-  technicalContact?: string | null;
   siteId: string;
   tenantId: string;
   createdAt: string;
@@ -21,8 +19,6 @@ export interface ProjectItem {
 
 export interface CreateProjectDto {
   name: string;
-  address?: string;
-  technicalContact?: string;
   siteId: string;
   tenantId: string;
   /** Quando informado, vincula a um gateway existente em vez de criar um novo. */
@@ -46,8 +42,6 @@ export async function getProject(id: string): Promise<ProjectItem> {
 
 export interface UpdateProjectDto {
   name?: string;
-  address?: string | null;
-  technicalContact?: string | null;
 }
 
 export async function updateProject(id: string, data: UpdateProjectDto): Promise<ProjectItem> {

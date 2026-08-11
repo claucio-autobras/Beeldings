@@ -96,17 +96,104 @@ export function liveOrSeed(
 /** Saúde da câmera derivada do ponto STATUS (não da recência do device). */
 export type CameraHealth = 'online' | 'offline' | 'unknown';
 
+/** Motivo opcional quando health = 'offline'. */
+export type CameraOfflineReason = 'gateway_offline';
+
+/** Resultado detalhado de saúde da câmera — inclui razão quando relevante. */
+export interface CameraHealthInfo {
+  health: CameraHealth;
+  /**
+   * Preenchido quando health='offline' e o motivo é o gateway fora do ar
+   * (STATUS congelado em 1, dado velho, gateway=false). Usado pela UI para
+   * exibir tooltip diferenciado "Gateway offline".
+   */
+  reason?: CameraOfflineReason;
+}
+
 /**
- * Critério canônico de online/offline de câmera: o ponto STATUS via telemetria
- * (com fallback para o último valor persistido). A recência do device não
- * serve — o gateway publica STATUS=0 mesmo com a câmera offline. É o MESMO
- * critério da tela CFTV; o card do dashboard reutiliza para os números baterem.
+ * Limiar de "dado velho" para câmeras — espelha CAMERA_SILENCE_MS do backend
+ * (apps/backend/src/modules/mqtt/availability-recorder.service.ts).
+ * Alterando aqui, altere lá também.
+ */
+const CAMERA_STALE_MS = 5 * 60 * 1000; // 5 min
+
+/**
+ * Implementação canônica da regra de saúde de câmera.
+ *
+ * Aceita um callback `getReading` genérico para que o mesmo critério possa ser
+ * reutilizado em contextos sem TelemetryMap (ex.: widget SCADA DeviceCounter).
+ * O callback deve devolver a leitura ao vivo do ponto quando disponível; a
+ * função cai no seed persistido em `camera.points` quando o live retorna null
+ * — mesma prioridade de `liveOrSeed`.
+ *
+ * Regras (em ordem de prioridade):
+ *  1. Sem ponto STATUS cadastrado → unknown.
+ *  2. Sem dado (nunca recebeu STATUS) → unknown.
+ *  3. STATUS = 0 → offline (sem reason: é o STATUS real da câmera).
+ *  4. STATUS ≥ 1 E dado recente (<5min) → online (dado recente vence qualquer LWT;
+ *     cobre o caso do gateway acabou de cair antes do próximo heartbeat).
+ *  5. STATUS ≥ 1, dado velho, gatewayOnline=true → online (gateway confirma vida
+ *     e pode publicar só na mudança; dado velho mas confiável).
+ *  6. STATUS ≥ 1, dado velho, gatewayOnline=false → offline, reason='gateway_offline'
+ *     (STATUS congelado — gateway offline impossibilita nova publicação).
+ *  7. STATUS ≥ 1, dado velho, gatewayOnline=null → unknown ("Dados desatualizados";
+ *     sem dado de gateway não inventamos offline).
+ *
+ * TODO(follow-up): receber gatewayOnline atualizado em tempo real via socket
+ * 'gateway:status'; hoje vem do snapshot REST (refetch a cada 30s no useCameras).
+ */
+export function cameraHealthFromReader(
+  camera: Camera,
+  getReading: (deviceId: string, tag: string) => { value: number | boolean | string | null; timestamp: string | null } | null,
+): CameraHealthInfo {
+  if (!camera.points.some((p) => p.tag === 'STATUS')) return { health: 'unknown' };
+
+  // Live first, then persisted seed (mirrors liveOrSeed priority).
+  const liveEntry = getReading(camera.id, 'STATUS');
+  const point = camera.points.find((p) => p.tag === 'STATUS');
+  const seedTimestamp = point?.lastValueAt ?? null;
+  const seedValue = seedTimestamp ? (point?.lastValue ?? null) : null;
+  const entry = liveEntry ?? (seedTimestamp ? { value: seedValue, timestamp: seedTimestamp } : null);
+
+  if (!entry || entry.value === null) return { health: 'unknown' };
+
+  const statusValue = Number(entry.value);
+  if (statusValue < 1) return { health: 'offline' };
+
+  const age = entry.timestamp ? Date.now() - Date.parse(entry.timestamp) : Infinity;
+  const dataRecent = age < CAMERA_STALE_MS;
+  if (dataRecent) return { health: 'online' };
+
+  const gwOnline = camera.gatewayOnline;
+  if (gwOnline === true) return { health: 'online' };
+  if (gwOnline === false) return { health: 'offline', reason: 'gateway_offline' };
+  return { health: 'unknown' };
+}
+
+/**
+ * Adaptador sobre `cameraHealthFromReader` para contextos com TelemetryMap
+ * disponível (área CFTV). Constrói o reader a partir de `liveOrSeed`.
+ *
+ * TODO(follow-up): receber gatewayOnline atualizado em tempo real via socket
+ * 'gateway:status'; hoje vem do snapshot REST (refetch a cada 30s no useCameras).
+ */
+export function cameraHealthInfo(camera: Camera, live: TelemetryMap): CameraHealthInfo {
+  return cameraHealthFromReader(camera, (_deviceId, tag) => {
+    const entry = liveOrSeed(camera, tag, live);
+    if (!entry) return null;
+    return { value: entry.value, timestamp: entry.timestamp };
+  });
+}
+
+/**
+ * Critério canônico de online/offline de câmera (wrapper simplificado).
+ * Usa cameraHealthInfo() internamente — preferir cameraHealthInfo() quando
+ * o motivo for necessário (ex.: badge/tooltip do CFTV).
+ * É o MESMO critério da tela CFTV; o card do dashboard reutiliza para os
+ * números baterem.
  */
 export function cameraHealth(camera: Camera, live: TelemetryMap): CameraHealth {
-  if (!camera.points.some((p) => p.tag === 'STATUS')) return 'unknown';
-  const entry = liveOrSeed(camera, 'STATUS', live);
-  if (!entry || entry.value === null) return 'unknown';
-  return Number(entry.value) >= 1 ? 'online' : 'offline';
+  return cameraHealthInfo(camera, live).health;
 }
 
 /**

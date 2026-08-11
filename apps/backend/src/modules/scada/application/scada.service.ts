@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { ScadaScreen, ScadaComponent } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service.js';
@@ -97,6 +97,35 @@ export class ScadaService {
     return screen;
   }
 
+  /**
+   * Bloqueia nomes duplicados (case-insensitive, trimmed) no mesmo escopo:
+   * mesmo projeto; sem projeto, mesmo site; sem site, mesmo tenant.
+   * Duplicatas legadas continuam válidas — só novas duplicações são barradas.
+   */
+  private async assertNameAvailable(
+    name: string,
+    scope: { tenantId: string; siteId: string | null; projectId: string | null },
+    excludeId?: string,
+  ): Promise<void> {
+    const normalized = name.trim().toLowerCase();
+    const siblings = await this.prisma.scadaScreen.findMany({
+      where: {
+        tenantId: scope.tenantId,
+        ...(scope.projectId
+          ? { projectId: scope.projectId }
+          : scope.siteId
+            ? { projectId: null, siteId: scope.siteId }
+            : { projectId: null, siteId: null }),
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+      },
+      select: { name: true },
+    });
+    if (siblings.some((s) => s.name.trim().toLowerCase() === normalized)) {
+      const where = scope.projectId ? 'neste projeto' : scope.siteId ? 'neste site' : 'neste cliente';
+      throw new ConflictException(`Já existe uma tela com esse nome ${where}`);
+    }
+  }
+
   async create(dto: CreateScadaScreenDto): Promise<ScadaScreen> {
     if (!dto.name?.trim()) {
       throw new BadRequestException('name é obrigatório');
@@ -124,6 +153,12 @@ export class ScadaService {
       }
     }
 
+    await this.assertNameAvailable(dto.name, {
+      tenantId: dto.tenantId,
+      siteId: dto.siteId ?? null,
+      projectId: dto.projectId ?? null,
+    });
+
     return this.prisma.scadaScreen.create({
       data: {
         name: dto.name.trim(),
@@ -145,10 +180,25 @@ export class ScadaService {
     dto: UpdateScadaScreenDto,
   ): Promise<ScadaScreen> {
     // Garante que a tela existe e pertence ao tenant antes de alterar.
-    await this.findOne(id, tenantId);
+    const existing = await this.findOne(id, tenantId);
 
     const data: Prisma.ScadaScreenUpdateInput = {};
-    if (dto.name !== undefined) data.name = dto.name.trim();
+    if (dto.name !== undefined) {
+      const trimmed = dto.name.trim();
+      if (!trimmed) {
+        throw new BadRequestException('name é obrigatório');
+      }
+      // Escopo final considera projeto/site também sendo alterados no mesmo PATCH.
+      const scope = {
+        tenantId: existing.tenantId,
+        siteId: dto.siteId !== undefined ? (dto.siteId ?? null) : existing.siteId,
+        projectId: dto.projectId !== undefined ? (dto.projectId ?? null) : existing.projectId,
+      };
+      // Renomear para o próprio nome atual (mesmo mudando caixa/espaços) é permitido,
+      // mas ainda validamos contra as OUTRAS telas do escopo (excludeId cobre isso).
+      await this.assertNameAvailable(trimmed, scope, id);
+      data.name = trimmed;
+    }
     if (dto.description !== undefined) data.description = dto.description?.trim() ?? null;
     if (dto.siteId !== undefined) data.site = dto.siteId ? { connect: { id: dto.siteId } } : { disconnect: true };
     if (dto.projectId !== undefined) {

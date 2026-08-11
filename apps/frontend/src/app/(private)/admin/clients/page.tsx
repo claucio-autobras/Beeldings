@@ -3,11 +3,17 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Building2, Plus, ExternalLink, Calendar, Server, Loader2, Trash2, Ban, CircleCheck, Palette } from 'lucide-react';
-import { apiGet, apiPost, apiPatch, apiDelete, sensitiveActionHeaders } from '@/lib/api-client';
+import { Building2, Plus, ExternalLink, Calendar, Server, Loader2, Trash2, Ban, CircleCheck, Palette, Mail, Phone } from 'lucide-react';
+import { apiGet, apiPatch, apiDelete, sensitiveActionHeaders } from '@/lib/api-client';
 import PasswordConfirmDialog from '@/components/PasswordConfirmDialog';
+import PhoneInput from '@/components/PhoneInput';
+import { isValidPhone } from '@/lib/phone';
 import { BrandingModal } from './BrandingModal';
-import { resolveTenantLogoUrl } from '@/modules/tenants/services/tenants.service';
+import {
+  resolveTenantLogoUrl,
+  createTenant,
+  type CreateTenantDto,
+} from '@/modules/tenants/services/tenants.service';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -22,18 +28,15 @@ interface Tenant {
   siteCount?: number;
 }
 
-interface CreateTenantDto {
-  name: string;
-  slug: string;
-}
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function slugify(text: string): string {
   return text
     .toLowerCase()
     .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 }
@@ -57,10 +60,14 @@ function NewClientModal({ onClose, onCreated }: NewClientModalProps) {
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [slugManual, setSlugManual] = useState(false);
+  // Initial recipient
+  const [recipName, setRecipName] = useState('');
+  const [recipEmail, setRecipEmail] = useState('');
+  const [recipPhone, setRecipPhone] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const mutation = useMutation({
-    mutationFn: (dto: CreateTenantDto) => apiPost<Tenant>('/tenants', dto),
+    mutationFn: (dto: CreateTenantDto) => createTenant(dto),
     onSuccess: () => {
       onCreated();
       onClose();
@@ -85,24 +92,53 @@ function NewClientModal({ onClose, onCreated }: NewClientModalProps) {
     setError(null);
     if (!name.trim()) { setError('Nome é obrigatório'); return; }
     if (!slug.trim()) { setError('Slug é obrigatório'); return; }
-    mutation.mutate({ name: name.trim(), slug: slug.trim() });
+    if (!recipName.trim()) { setError('Informe o nome do destinatário inicial'); return; }
+    const emailTrimmed = recipEmail.trim();
+    const phoneTrimmed = recipPhone.trim();
+    if (!emailTrimmed && !phoneTrimmed) {
+      setError('Informe ao menos e-mail ou telefone do destinatário');
+      return;
+    }
+    if (emailTrimmed && !EMAIL_RE.test(emailTrimmed)) {
+      setError('Informe um e-mail válido para o destinatário');
+      return;
+    }
+    if (phoneTrimmed && !isValidPhone(phoneTrimmed)) {
+      setError('Telefone incompleto ou inválido. Ex.: (11) 91234-5678');
+      return;
+    }
+    mutation.mutate({
+      name: name.trim(),
+      slug: slug.trim(),
+      initialRecipient: {
+        name: recipName.trim(),
+        email: emailTrimmed || undefined,
+        phone: phoneTrimmed || undefined,
+        emailEnabled: !!emailTrimmed,
+        whatsappEnabled: !!phoneTrimmed,
+      },
+    });
   }
+
+  const inputClass =
+    'w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition-colors focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative bg-card rounded-xl shadow-xl w-full max-w-md border border-slate-200 max-h-[90vh] flex flex-col overflow-hidden">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 shrink-0">
+      <div className="relative bg-card rounded-xl shadow-xl w-full max-w-md border border-border max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-muted/30 shrink-0">
           <h2 className="text-base font-semibold text-foreground">Novo Cliente</h2>
           <button
             onClick={onClose}
-            className="text-slate-400 hover:text-slate-600 text-xl leading-none"
+            className="text-muted-foreground hover:text-foreground text-xl leading-none transition-colors"
           >
             &times;
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4 flex-1 overflow-y-auto">
+          {/* ── Dados do cliente ── */}
           <div>
             <label className="block text-sm font-medium text-foreground mb-1">
               Nome da empresa
@@ -112,7 +148,7 @@ function NewClientModal({ onClose, onCreated }: NewClientModalProps) {
               value={name}
               onChange={(e) => handleNameChange(e.target.value)}
               placeholder="Ex: Empresa ABC Ltda"
-              className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+              className={inputClass}
               autoFocus
             />
           </div>
@@ -120,19 +156,68 @@ function NewClientModal({ onClose, onCreated }: NewClientModalProps) {
           <div>
             <label className="block text-sm font-medium text-foreground mb-1">
               Slug
-              <span className="ml-1 text-xs text-slate-400 font-normal">(identificador único)</span>
+              <span className="ml-1 text-xs text-muted-foreground font-normal">(identificador único)</span>
             </label>
             <input
               type="text"
               value={slug}
               onChange={(e) => handleSlugChange(e.target.value)}
               placeholder="empresa-abc"
-              className="w-full rounded-md border border-slate-200 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-transparent"
+              className={`${inputClass} font-mono`}
             />
           </div>
 
+          {/* ── Destinatário inicial (obrigatório) ── */}
+          <div className="pt-2 border-t border-border space-y-3">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Destinatário de notificações
+              <span className="ml-1 font-normal normal-case text-red-500">* obrigatório</span>
+            </p>
+
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-1">Nome</label>
+              <input
+                type="text"
+                value={recipName}
+                onChange={(e) => setRecipName(e.target.value)}
+                placeholder="Ex: João Silva"
+                className={inputClass}
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-1">
+                <Mail className="inline h-3.5 w-3.5 mr-1 text-muted-foreground/70" />
+                E-mail
+              </label>
+              <input
+                type="email"
+                value={recipEmail}
+                onChange={(e) => setRecipEmail(e.target.value)}
+                placeholder="joao@empresa.com.br"
+                className={inputClass}
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-1">
+                <Phone className="inline h-3.5 w-3.5 mr-1 text-muted-foreground/70" />
+                WhatsApp
+                <span className="ml-1 text-xs text-muted-foreground font-normal">(DDD + número; internacional com +DDI)</span>
+              </label>
+              <PhoneInput
+                value={recipPhone}
+                onChange={setRecipPhone}
+                placeholder="(11) 99999-0000"
+                className={inputClass}
+              />
+            </div>
+
+            <p className="text-xs text-muted-foreground">Informe ao menos e-mail ou WhatsApp.</p>
+          </div>
+
           {error && (
-            <p className="text-sm text-red-600 dark:text-red-300 bg-red-50 border border-red-200 rounded-md px-3 py-2">
+            <p className="text-sm text-red-600 dark:text-red-300 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-md px-3 py-2">
               {error}
             </p>
           )}
@@ -141,15 +226,16 @@ function NewClientModal({ onClose, onCreated }: NewClientModalProps) {
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 rounded-md border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+              className="flex-1 rounded-md border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/50 transition-colors"
             >
               Cancelar
             </button>
             <button
               type="submit"
               disabled={mutation.isPending}
-              className="flex-1 rounded-md bg-cyan-700 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-800 disabled:opacity-50 transition-colors"
+              className="flex-1 rounded-md bg-cyan-700 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-800 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
             >
+              {mutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               {mutation.isPending ? 'Salvando...' : 'Criar Cliente'}
             </button>
           </div>
@@ -206,51 +292,60 @@ export default function ClientsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto w-full max-w-6xl space-y-6">
       {/* Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-foreground">Clientes</h1>
-          <p className="text-sm text-slate-500 mt-0.5">
-            Gestão de tenants — empresas monitoradas na plataforma
-          </p>
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-cyan-500/10">
+            <Building2 className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
+          </div>
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight text-foreground">Clientes</h1>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Gestão de tenants — empresas monitoradas na plataforma
+            </p>
+          </div>
         </div>
         <button
           onClick={() => setModalOpen(true)}
-          className="flex items-center gap-2 h-9 px-4 text-sm rounded-md font-medium bg-cyan-700 text-white hover:bg-cyan-800 transition-colors self-start"
+          className="inline-flex shrink-0 items-center gap-2 self-start rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-cyan-700 sm:self-auto"
         >
           <Plus className="h-4 w-4" />
           Novo Cliente
         </button>
-      </div>
+      </header>
 
       {/* Loading */}
       {isLoading && (
         <div className="space-y-3">
           {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="h-20 rounded-lg bg-slate-100 animate-pulse" />
+            <div key={i} className="h-20 rounded-lg bg-muted/40 animate-pulse" />
           ))}
         </div>
       )}
 
       {/* Error */}
       {isError && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:text-red-300">
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
           Erro ao carregar clientes: {(error as Error).message}
         </div>
       )}
 
       {/* Empty */}
       {!isLoading && !isError && tenants?.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-20 text-center">
-          <Building2 className="h-12 w-12 text-slate-300 mb-4" />
-          <h3 className="text-base font-medium text-foreground mb-1">Nenhum cliente cadastrado</h3>
-          <p className="text-sm text-slate-500 mb-5">
-            Adicione o primeiro cliente para começar a monitorar.
-          </p>
+        <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-border bg-card px-6 py-16 text-center shadow-sm">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-cyan-500/10">
+            <Building2 className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
+          </div>
+          <div className="space-y-1">
+            <h3 className="text-sm font-medium text-foreground">Nenhum cliente cadastrado</h3>
+            <p className="mx-auto max-w-sm text-xs text-muted-foreground">
+              Adicione o primeiro cliente para começar a monitorar.
+            </p>
+          </div>
           <button
             onClick={() => setModalOpen(true)}
-            className="flex items-center gap-2 h-9 px-4 text-sm rounded-md font-medium bg-cyan-700 text-white hover:bg-cyan-800 transition-colors"
+            className="inline-flex items-center gap-2 rounded-lg border border-dashed border-cyan-400 px-4 py-2 text-sm font-medium text-cyan-600 transition-colors hover:bg-cyan-50 dark:text-cyan-400 dark:hover:bg-cyan-950/40"
           >
             <Plus className="h-4 w-4" />
             Novo Cliente
@@ -260,39 +355,40 @@ export default function ClientsPage() {
 
       {/* Table */}
       {!isLoading && !isError && tenants && tenants.length > 0 && (
-        <div className="border border-slate-200 rounded-xl overflow-x-auto">
+        <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm transition-shadow duration-200 hover:shadow-md">
+          <div className="overflow-x-auto">
           <table className="w-full min-w-[640px] text-sm">
             <thead>
-              <tr className="bg-slate-50 border-b border-slate-200">
-                <th className="text-left px-4 py-3 font-medium text-slate-600">Cliente</th>
-                <th className="text-left px-4 py-3 font-medium text-slate-600">Status</th>
-                <th className="text-left px-4 py-3 font-medium text-slate-600 hidden sm:table-cell">Slug</th>
-                <th className="text-center px-4 py-3 font-medium text-slate-600 hidden md:table-cell">Sites</th>
-                <th className="text-left px-4 py-3 font-medium text-slate-600 hidden lg:table-cell">Criado em</th>
-                <th className="text-right px-4 py-3 font-medium text-slate-600">Ações</th>
+              <tr className="bg-muted/30 border-b border-border">
+                <th className="text-left px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Cliente</th>
+                <th className="text-left px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Status</th>
+                <th className="text-left px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hidden sm:table-cell">Slug</th>
+                <th className="text-center px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hidden md:table-cell">Sites</th>
+                <th className="text-left px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hidden lg:table-cell">Criado em</th>
+                <th className="text-right px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Ações</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-border">
               {tenants.map((tenant) => (
-                <tr key={tenant.id} className="hover:bg-slate-50 transition-colors">
-                  <td className="px-4 py-3">
+                <tr key={tenant.id} className="transition-colors duration-150 hover:bg-muted/30">
+                  <td className="px-5 py-3.5">
                     <div className="flex items-center gap-3">
                       {tenant.logoUrl ? (
-                        <div className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0 overflow-hidden bg-white ring-1 ring-slate-200">
+                        <div className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0 overflow-hidden bg-white ring-1 ring-border">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img src={resolveTenantLogoUrl(tenant.logoUrl) ?? ''} alt="" className="h-full w-full object-contain p-0.5" />
                         </div>
                       ) : (
-                        <div className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 ${tenant.active === false ? 'bg-slate-100 dark:bg-slate-700' : 'bg-cyan-100'}`}>
-                          <Building2 className={`h-4 w-4 ${tenant.active === false ? 'text-slate-400' : 'text-cyan-700 dark:text-cyan-300'}`} />
+                        <div className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 ${tenant.active === false ? 'bg-muted' : 'bg-cyan-500/10'}`}>
+                          <Building2 className={`h-4 w-4 ${tenant.active === false ? 'text-muted-foreground/60' : 'text-cyan-600 dark:text-cyan-400'}`} />
                         </div>
                       )}
-                      <span className={`font-medium ${tenant.active === false ? 'text-slate-400 dark:text-slate-500' : 'text-foreground'}`}>{tenant.name}</span>
+                      <span className={`font-medium ${tenant.active === false ? 'text-muted-foreground/70' : 'text-foreground'}`}>{tenant.name}</span>
                     </div>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-3.5">
                     {tenant.active === false ? (
-                      <span className="inline-flex items-center rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                      <span className="inline-flex items-center rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
                         Inativo
                       </span>
                     ) : (
@@ -301,24 +397,24 @@ export default function ClientsPage() {
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3 hidden sm:table-cell">
-                    <span className="font-mono text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
+                  <td className="px-4 py-3.5 hidden sm:table-cell">
+                    <span className="font-mono text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded">
                       {tenant.slug}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-center hidden md:table-cell">
+                  <td className="px-4 py-3.5 text-center hidden md:table-cell">
                     <div className="flex items-center justify-center gap-1 text-foreground">
-                      <Server className="h-3.5 w-3.5 text-slate-400" />
+                      <Server className="h-3.5 w-3.5 text-muted-foreground/70" />
                       {tenant.siteCount ?? 0}
                     </div>
                   </td>
-                  <td className="px-4 py-3 hidden lg:table-cell">
-                    <div className="flex items-center gap-1.5 text-slate-500">
+                  <td className="px-4 py-3.5 hidden lg:table-cell">
+                    <div className="flex items-center gap-1.5 text-muted-foreground">
                       <Calendar className="h-3.5 w-3.5" />
                       {formatDate(tenant.createdAt)}
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3.5 text-right">
                     <div className="flex items-center justify-end gap-2">
                       <button
                         onClick={() => router.push(`/admin/sites?tenantId=${tenant.id}`)}
@@ -340,7 +436,7 @@ export default function ClientsPage() {
                         title={tenant.active === false ? 'Reativar cliente' : 'Inativar cliente'}
                         className={`inline-flex items-center justify-center h-7 w-7 rounded-md transition-colors disabled:opacity-50 ${
                           tenant.active === false
-                            ? 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'
+                            ? 'text-muted-foreground/70 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40'
                             : 'text-muted-foreground hover:text-amber-600 hover:bg-amber-50'
                         }`}
                       >
@@ -363,14 +459,11 @@ export default function ClientsPage() {
               ))}
             </tbody>
           </table>
+          </div>
+          <div className="border-t border-border bg-muted/20 px-5 py-2.5 text-xs text-muted-foreground">
+            {tenants.length} cliente{tenants.length !== 1 ? 's' : ''} cadastrado{tenants.length !== 1 ? 's' : ''}
+          </div>
         </div>
-      )}
-
-      {/* Summary */}
-      {tenants && tenants.length > 0 && (
-        <p className="text-xs text-slate-400">
-          {tenants.length} cliente{tenants.length !== 1 ? 's' : ''} cadastrado{tenants.length !== 1 ? 's' : ''}
-        </p>
       )}
 
       {/* Modal criar */}
@@ -393,9 +486,9 @@ export default function ClientsPage() {
       {confirmDeactivate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/40" onClick={() => { setConfirmDeactivate(null); statusMutation.reset(); }} />
-          <div className="relative bg-card rounded-xl shadow-xl w-full max-w-md border border-slate-200 p-6">
+          <div className="relative bg-card rounded-xl shadow-xl w-full max-w-md border border-border p-6">
             <h2 className="text-base font-semibold text-foreground">Inativar cliente?</h2>
-            <p className="mt-2 text-sm text-slate-600">
+            <p className="mt-2 text-sm text-muted-foreground">
               Os usuários de <span className="font-medium">{confirmDeactivate.name}</span> perderão o acesso
               imediatamente e as notificações de alarme serão silenciadas. Os dados e o histórico
               são preservados e o cliente pode ser reativado a qualquer momento.
@@ -409,7 +502,7 @@ export default function ClientsPage() {
               <button
                 type="button"
                 onClick={() => { setConfirmDeactivate(null); statusMutation.reset(); }}
-                className="flex-1 rounded-md border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+                className="flex-1 rounded-md border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/50 transition-colors"
               >
                 Cancelar
               </button>

@@ -160,7 +160,14 @@ export class DeviceConfigPublisherService implements OnApplicationBootstrap {
   ) {}
 
   /** Ao subir, republica a config atual de todos os gateways com dispositivos. */
-  async onApplicationBootstrap(): Promise<void> {
+  onApplicationBootstrap(): void {
+    // Não bloqueia o boot: com o broker MQTT fora do ar, os publishes ficam
+    // enfileirados pelo mqtt.js e o await jamais resolveria — o backend nunca
+    // abriria a porta HTTP. Roda em background e loga o resultado.
+    void this.publishAllOnBoot();
+  }
+
+  private async publishAllOnBoot(): Promise<void> {
     try {
       const groups = await this.prisma.device.groupBy({
         by: ['tenantId', 'gatewayId'],
@@ -221,7 +228,17 @@ export class DeviceConfigPublisherService implements OnApplicationBootstrap {
    * (BacnetPolling / ModbusPolling / MqttBridge).
    */
   private buildDeviceBlock(
-    device: { id: string; name: string; protocol: string; ip: string; port: number; config: unknown; points: Array<{ tag: string; objectType: string; instance: number; unit: string | null; binding: unknown }> },
+    device: {
+      id: string;
+      name: string;
+      protocol: string;
+      ip: string;
+      port: number;
+      config: unknown;
+      /** Tipo do dispositivo monitorado — publicado para o motor de perfis do gateway. */
+      monitoredDeviceType?: string | null;
+      points: Array<{ tag: string; objectType: string; instance: number; unit: string | null; binding: unknown }>;
+    },
   ): Record<string, unknown> {
     if (device.protocol === 'modbus') {
       const cfg = (device.config ?? {}) as ModbusDeviceConfig;
@@ -294,7 +311,18 @@ export class DeviceConfigPublisherService implements OnApplicationBootstrap {
       // e deriva o ponto 'status' da alcançabilidade (sem resposta = offline).
       const cfg = (device.config ?? {}) as SnmpDeviceConfig;
       const points = device.points.map((p) => {
-        const b = (p.binding ?? {}) as SnmpBinding;
+        const b = (p.binding ?? {}) as SnmpBinding & {
+          ifIndex?: number;
+          /** Índice de slot de disco NVR (mesma semântica de ifIndex no gateway). */
+          slotIndex?: number;
+          /** Índice de canal NVR (mesma semântica de ifIndex no gateway). */
+          channelIndex?: number;
+          collectionType?: 'scalar' | 'table';
+          scale?: number;
+        };
+        // SWITCH usa ifIndex (IF-MIB); NVR usa slotIndex (disco) ou channelIndex (canal).
+        // O gateway recebe o campo como `ifIndex` em todos os casos.
+        const tableIndex = b.ifIndex ?? b.slotIndex ?? b.channelIndex;
         return {
           tag: p.tag,
           metric: b.metric ?? 'custom',
@@ -304,12 +332,19 @@ export class DeviceConfigPublisherService implements OnApplicationBootstrap {
           // OID marcado como não suportado sai do GET em lote do gateway —
           // em SNMP v1, um único OID inválido derruba a requisição inteira.
           ...(b.unsupported ? { unsupported: true } : {}),
+          // Pontos de tabela (SWITCH via IF-MIB ou NVR via slot/canal): ifIndex canônico.
+          ...(b.collectionType === 'table' && tableIndex !== undefined
+            ? { ifIndex: tableIndex, collectionType: 'table' as const }
+            : {}),
         };
       });
       return {
         deviceId: device.id,
         name: device.name,
         protocol: 'snmp',
+        // Tipo de dispositivo monitorado — usado pelo motor de perfis do gateway
+        // para selecionar o catálogo de métricas correto (CAMERA/ACCESS_CONTROLLER/…).
+        monitoredDeviceType: device.monitoredDeviceType ?? 'CAMERA',
         ip: device.ip,
         port: device.port || DEFAULT_SNMP_PORT,
         snmpVersion: cfg.snmpVersion ?? '2c',
@@ -318,6 +353,9 @@ export class DeviceConfigPublisherService implements OnApplicationBootstrap {
         // Fabricante manual do cadastro — precedência máxima na identificação
         // de provider do gateway (Hikvision/Dahua/Intelbras…).
         manufacturer: cfg.manufacturer ?? null,
+        // Perfil manual e overrides de OID por métrica (Device.config).
+        profileId: (cfg as { profileId?: string | null }).profileId ?? null,
+        profileOverrides: (cfg as { profileOverrides?: Record<string, unknown> | null }).profileOverrides ?? null,
         // Fallback HTTP proprietário (ISAPI) quando credenciais foram salvas.
         ...(cfg.isapi?.username
           ? {

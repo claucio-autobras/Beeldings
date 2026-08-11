@@ -15,6 +15,7 @@ import { AuditService } from '../../../audit/audit.service.js';
 import * as bcrypt from 'bcryptjs';
 import { randomUUID } from 'node:crypto';
 import { LoginDto } from '../dtos/login.dto.js';
+import { TurnstileService } from './turnstile.service.js';
 import { RegisterDto } from '../dtos/register.dto.js';
 import { UpdateProfileDto } from '../dtos/update-profile.dto.js';
 import { ChangePasswordDto } from '../dtos/change-password.dto.js';
@@ -56,6 +57,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly audit: AuditService,
+    private readonly turnstile: TurnstileService,
   ) {}
 
   // ─── Login ───────────────────────────────────────────────────────────────────
@@ -64,6 +66,10 @@ export class AuthService {
     dto: LoginDto,
     context?: { ip?: string | null; userAgent?: string | null },
   ): Promise<LoginResult> {
+    // 0. Anti-robô (Cloudflare Turnstile) — antes de tocar no banco. Só é
+    //    exigido quando as chaves estão configuradas no servidor.
+    await this.turnstile.assertValid(dto.turnstileToken, context?.ip ?? null);
+
     // 1. Busca o usuário no Postgres pelo e-mail
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },

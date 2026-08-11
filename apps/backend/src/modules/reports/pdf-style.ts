@@ -160,7 +160,7 @@ export function drawPdfFooters(doc: jsPDF, g: PdfPageGeom, title: string): void 
     doc.setFontSize(8);
     doc.setFont(PDF_FONT, 'normal');
     setText(doc, PDF_COLOR.muted);
-    doc.text(`BlueBee IoT · ${title}`, g.margin, y);
+    doc.text(`Beeldings · ${title}`, g.margin, y);
     const page = `Página ${p} de ${total}`;
     doc.text(page, g.pageW - g.margin - doc.getTextWidth(page), y);
   }

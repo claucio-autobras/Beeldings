@@ -73,10 +73,18 @@ describe('MqttWriteService', () => {
       expect(() => JSON.parse(payload)).not.toThrow();
     });
 
-    it('boolean aceita 1/0 e number rende número', () => {
-      expect(service.renderPayload('{{value}}', 1, 'boolean').payload).toBe('true');
-      expect(service.renderPayload('{{value}}', 0, 'boolean').payload).toBe('false');
+    it('template só {{value}} = valor puro (boolean → 1/0, number cru)', () => {
+      // Canal set/ do Aeris: payload cru, sem envelope JSON — boolean vira 0/1.
+      expect(service.renderPayload('{{value}}', 1, 'boolean').payload).toBe('1');
+      expect(service.renderPayload('{{value}}', true, 'boolean').payload).toBe('1');
+      expect(service.renderPayload('{{value}}', 0, 'boolean').payload).toBe('0');
       expect(service.renderPayload('{{value}}', 21.5, 'number').payload).toBe('21.5');
+      expect(service.renderPayload('{{value}}', 22, 'number').payload).toBe('22');
+    });
+
+    it('template JSON mantém boolean como true/false', () => {
+      expect(service.renderPayload('{"on":{{value}}}', 1, 'boolean').payload).toBe('{"on":true}');
+      expect(service.renderPayload('{"on":{{value}}}', 0, 'boolean').payload).toBe('{"on":false}');
     });
 
     it('sem {{id}} no template → rpcId null', () => {

@@ -200,9 +200,13 @@ export class OtaUpdateService implements OnModuleInit {
         if (fs.existsSync(resultPath)) {
           const info = this.readJson(resultPath);
           fs.rmSync(resultPath, { force: true });
+          // O launcher grava status 'failed' quando o rollback não encontrou
+          // um previous/ válido (instalação mantida como está); nos demais
+          // casos o resultado é o rollback clássico ('rolled_back').
+          const stage: OtaStage = info.status === 'failed' ? 'failed' : 'rolled_back';
           this.publishProgress(
             this.commandFromInfo(info),
-            'rolled_back',
+            stage,
             String(info.previousVersion ?? resolveGatewayVersion()),
             {
               version: String(info.version ?? ''),
@@ -212,7 +216,11 @@ export class OtaUpdateService implements OnModuleInit {
               ),
             },
           );
-          this.logger.warn('OTA revertida: versão anterior restaurada pelo launcher');
+          if (stage === 'failed') {
+            this.logger.error('OTA falhou sem rollback: previous/ inválido — instalação mantida');
+          } else {
+            this.logger.warn('OTA revertida: versão anterior restaurada pelo launcher');
+          }
         }
       } catch (err) {
         clearInterval(timer);

@@ -172,6 +172,209 @@ async function readOidsIndividually(
   return values;
 }
 
+/** Limite de entradas por coluna no walk de tabela (proteção contra loops). */
+const TABLE_WALK_MAX_ENTRIES = 2048;
+
+/** Timeout por sessão de walk de tabela (ms). */
+const TABLE_WALK_TIMEOUT_MS = 20_000;
+
+/**
+ * Entrada de tabela SNMP lida no walk de uma coluna.
+ * ifIndex é o último componente numérico do OID (ex.: .1.3.6.1.2.1.2.2.1.8.3 → ifIndex=3).
+ *
+ * counterType é preenchido a partir do campo `type` do varbind retornado pelo
+ * agente SNMP. Counter32 (type=65/0x41) e Counter64 (type=70/0x46) são os
+ * relevantes para cálculo de taxa B/s; demais tipos ficam como undefined.
+ */
+export interface SnmpTableEntry {
+  oid: string;
+  ifIndex: number;
+  value: number | null;
+  /** 'counter32' | 'counter64' quando o varbind reportou o tipo explicitamente. */
+  counterType?: 'counter32' | 'counter64';
+}
+
+/**
+ * Lê uma coluna de tabela SNMP (subtree walk) a partir do OID-prefixo da
+ * coluna (sem o índice final). Retorna:
+ *   - Array de entradas { oid, ifIndex, value } quando o equipamento respondeu
+ *     (mesmo que vazio — tabela sem entradas ≠ sem resposta);
+ *   - null quando o equipamento NÃO respondeu (timeout/rede).
+ *
+ * Usa `session.subtree()` do net-snmp que envia GETBULK em v2c e GETNEXT em
+ * v1 internamente — mesma API, comportamento otimizado por versão.
+ *
+ * split-on-error preservado: varbinds com erro de OID são ignorados e o walk
+ * continua. Um erro fatal de sessão (timeout) retorna null.
+ *
+ * Limite de entradas por coluna: TABLE_WALK_MAX_ENTRIES (proteção contra
+ * loops em equipamentos com tabelas gigantes).
+ */
+export function readSnmpTable(
+  target: SnmpTarget,
+  columnOidPrefix: string,
+): Promise<SnmpTableEntry[] | null> {
+  return new Promise((resolve) => {
+    const session = snmp.createSession(target.ip, target.community || 'public', {
+      port: target.port || 161,
+      version: target.snmpVersion === '1' ? snmp.Version1 : snmp.Version2c,
+      timeout: SNMP_TIMEOUT_MS,
+      retries: 1,
+    });
+
+    const entries: SnmpTableEntry[] = [];
+    let finished = false;
+    let reachable = false;
+
+    const timeoutHandle = setTimeout(() => {
+      if (finished) return;
+      finished = true;
+      try { session.close(); } catch { /* best-effort */ }
+      // Se ao menos uma entrada chegou, o host respondeu — retorna o parcial.
+      resolve(reachable ? entries : null);
+    }, TABLE_WALK_TIMEOUT_MS);
+
+    const done = (result: SnmpTableEntry[] | null) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeoutHandle);
+      try { session.close(); } catch { /* best-effort */ }
+      resolve(result);
+    };
+
+    (session as unknown as {
+      subtree: (
+        oid: string,
+        maxRepetitions: number,
+        feedCb: (varbinds: snmp.VarBind[]) => void,
+        doneCb: (error?: Error | null) => void,
+      ) => void;
+    }).subtree(
+      columnOidPrefix,
+      20,
+      (varbinds: snmp.VarBind[]) => {
+        for (const vb of varbinds) {
+          // Varbind com erro de OID: ignora (split-on-error) — walk continua.
+          if (snmp.isVarbindError(vb)) continue;
+
+          reachable = true;
+
+          // Extrai o ifIndex: último componente numérico do OID.
+          const oidStr = String(vb.oid);
+          const suffix = oidStr.startsWith(columnOidPrefix)
+            ? oidStr.slice(columnOidPrefix.length).replace(/^\./, '')
+            : '';
+          const ifIndex = /^\d+$/.test(suffix) ? Number(suffix) : null;
+          if (ifIndex === null) continue;
+
+          // Classifica o tipo de contador a partir do campo type do varbind.
+          // 65 = Counter32 (0x41), 70 = Counter64 (0x46) — RFC 1902 / net-snmp ObjectType.
+          const counterType: SnmpTableEntry['counterType'] =
+            vb.type === 65 ? 'counter32' : vb.type === 70 ? 'counter64' : undefined;
+
+          entries.push({
+            oid: oidStr,
+            ifIndex,
+            value: parseSnmpNumber(vb.value),
+            counterType,
+          });
+
+          if (entries.length >= TABLE_WALK_MAX_ENTRIES) {
+            // Truncamento: para o walk e retorna o que coletou.
+            done(entries);
+            return;
+          }
+        }
+      },
+      (error?: Error | null) => {
+        if (error) {
+          // Erro no final do walk: se ao menos uma entrada chegou, o host
+          // respondeu. Erros de "endOfMibView" são normais (fim da coluna).
+          done(reachable ? entries : null);
+          return;
+        }
+        done(reachable ? entries : (entries.length === 0 && !reachable ? null : entries));
+      },
+    );
+
+    session.on('error', () => done(reachable ? entries : null));
+  });
+}
+
+/**
+ * Lê uma coluna de tabela SNMP como strings (ifDescr, ifAlias, etc.).
+ * Mesmo contrato de readSnmpTable mas retorna string | null em vez de number.
+ */
+export interface SnmpTableStringEntry {
+  oid: string;
+  ifIndex: number;
+  value: string | null;
+}
+
+export function readSnmpTableStrings(
+  target: SnmpTarget,
+  columnOidPrefix: string,
+): Promise<SnmpTableStringEntry[] | null> {
+  return new Promise((resolve) => {
+    const session = snmp.createSession(target.ip, target.community || 'public', {
+      port: target.port || 161,
+      version: target.snmpVersion === '1' ? snmp.Version1 : snmp.Version2c,
+      timeout: SNMP_TIMEOUT_MS,
+      retries: 1,
+    });
+
+    const entries: SnmpTableStringEntry[] = [];
+    let finished = false;
+    let reachable = false;
+
+    const timeoutHandle = setTimeout(() => {
+      if (finished) return;
+      finished = true;
+      try { session.close(); } catch { /* best-effort */ }
+      resolve(reachable ? entries : null);
+    }, TABLE_WALK_TIMEOUT_MS);
+
+    const done = (result: SnmpTableStringEntry[] | null) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeoutHandle);
+      try { session.close(); } catch { /* best-effort */ }
+      resolve(result);
+    };
+
+    (session as unknown as {
+      subtree: (
+        oid: string,
+        maxRepetitions: number,
+        feedCb: (varbinds: snmp.VarBind[]) => void,
+        doneCb: (error?: Error | null) => void,
+      ) => void;
+    }).subtree(
+      columnOidPrefix,
+      20,
+      (varbinds: snmp.VarBind[]) => {
+        for (const vb of varbinds) {
+          if (snmp.isVarbindError(vb)) continue;
+          reachable = true;
+          const oidStr = String(vb.oid);
+          const suffix = oidStr.startsWith(columnOidPrefix)
+            ? oidStr.slice(columnOidPrefix.length).replace(/^\./, '')
+            : '';
+          const ifIndex = /^\d+$/.test(suffix) ? Number(suffix) : null;
+          if (ifIndex === null) continue;
+          entries.push({ oid: oidStr, ifIndex, value: parseSnmpString(vb.value) });
+          if (entries.length >= TABLE_WALK_MAX_ENTRIES) { done(entries); return; }
+        }
+      },
+      (error?: Error | null) => {
+        done(error ? (reachable ? entries : null) : (reachable ? entries : null));
+      },
+    );
+
+    session.on('error', () => done(reachable ? entries : null));
+  });
+}
+
 /**
  * Consulta OIDs numa sessão SNMP efêmera. Retorna:
  *   - array de valores (null nas posições com erro de OID) quando o host respondeu;

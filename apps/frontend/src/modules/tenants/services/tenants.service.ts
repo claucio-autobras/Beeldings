@@ -37,9 +37,18 @@ export async function updateTenantBranding(
   return apiPatch(`/tenants/${id}/branding`, dto);
 }
 
+export interface InitialRecipientDto {
+  name: string;
+  email?: string;
+  phone?: string;
+  emailEnabled?: boolean;
+  whatsappEnabled?: boolean;
+}
+
 export interface CreateTenantDto {
   name: string;
   slug: string;
+  initialRecipient: InitialRecipientDto;
 }
 
 export async function getTenants(): Promise<TenantItem[]> {

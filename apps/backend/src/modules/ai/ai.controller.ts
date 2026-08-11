@@ -97,12 +97,15 @@ export class AiController {
         ? body.conversationId
         : null;
 
-    return this.ai.chat(
-      user.id,
-      user.tenantId ?? null,
-      conversationId,
-      content.slice(0, MAX_CONTENT),
-    );
+    // Contexto factual ao vivo (diagnóstico/offline/tempo em falha) só com
+    // escopo seguro: usuário com tenant OU papel global. Um cliente sem tenant
+    // (inconsistência) nunca ganha visão global dos dados por acidente.
+    const tenantId = user.tenantId ?? null;
+    const liveData = tenantId !== null || GLOBAL_ROLES.has(user.role);
+
+    return this.ai.chat(user.id, tenantId, conversationId, content.slice(0, MAX_CONTENT), {
+      liveData,
+    });
   }
 
   // POST /ai/suggest — sugere ações para um equipamento do próprio tenant.

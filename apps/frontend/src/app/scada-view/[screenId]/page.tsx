@@ -1,6 +1,6 @@
 import ScadaViewerPage from '@/modules/scada/pages/scada-viewer.page';
 
-export const metadata = { title: 'SCADA Viewer — BlueBee IoT' };
+export const metadata = { title: 'SCADA Viewer — Beeldings' };
 
 interface Props {
   params: Promise<{ screenId: string }>;

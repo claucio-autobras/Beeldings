@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { ExternalLink } from 'lucide-react';
 import type { HotspotWidget } from '@/mocks/data/scada.mock';
 import { ScadaNavGlyph } from './scadaIcons';
+import { isGradientColor } from '../../types/scada.types';
 
 const WEIGHT_MAP = { normal: '400', medium: '500', semibold: '600', bold: '700' };
 
@@ -28,7 +29,12 @@ export function HotspotWidgetView({ widget, onNavigate, isEditor = false }: Prop
       : `${widget.borderRadius}px`;
 
   const bgAlpha = `${Math.round(widget.fillOpacity * 255).toString(16).padStart(2, '0')}`;
-  const fillColor = widget.fillColor === 'transparent' ? 'transparent' : `${widget.fillColor}${bgAlpha}`;
+  // Gradiente: usar a string como está (sem concatenar alpha hex, que corromperia o CSS).
+  const fillColor = widget.fillColor === 'transparent'
+    ? 'transparent'
+    : isGradientColor(widget.fillColor)
+      ? widget.fillColor
+      : `${widget.fillColor}${bgAlpha}`;
   const hoverFill = hovered ? widget.hoverFillColor : fillColor;
   const hoverBorder = hovered ? widget.hoverBorderColor : widget.borderColor;
   const scale = hovered ? widget.hoverScale : 1;
@@ -104,7 +110,7 @@ export function HotspotWidgetView({ widget, onNavigate, isEditor = false }: Prop
       style={{
         width: '100%',
         height: '100%',
-        backgroundColor: isInvisible ? 'transparent' : hoverFill,
+        background: isInvisible ? 'transparent' : hoverFill,
         border: isInvisible ? 'none' : `${widget.borderWidth}px ${widget.borderStyle} ${hoverBorder}`,
         borderRadius,
         cursor,

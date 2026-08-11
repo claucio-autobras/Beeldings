@@ -9,8 +9,11 @@ import { MqttSampleCommand, MqttWriteCommand } from '../mqtt-bridge/mqtt-bridge.
 import { SnmpDiagnoseCommand } from '../snmp/snmp-diagnose.service';
 import { SnmpScanCommand } from '../snmp/snmp-scan.service';
 import { SnmpTestCommand } from '../snmp/snmp-test.service';
+import { SwitchDiscoverPortsCommand } from '../snmp/snmp-switch-ports.service';
+import type { NvrDiscoverTablesCommand } from '../snmp/snmp-nvr-tables.service';
 import { OnvifProbeCommand } from '../onvif/onvif-probe.service';
 import { OnvifScanCommand } from '../onvif/onvif-discovery.service';
+import { OnvifLiveViewCommand } from '../onvif/onvif-live-view.service';
 import { OtaUpdateCommand } from '../ota/ota-update.service';
 
 /**
@@ -221,6 +224,81 @@ export class CommandDispatcherService {
       return;
     }
 
+    if (command.action === 'discover_ports') {
+      const gatewayId = command.gateway_id ?? this.extractGatewayId(topic);
+      const discoverCommand: SwitchDiscoverPortsCommand = {
+        command_id: command.command_id,
+        tenant_id: command.tenant_id,
+        gateway_id: gatewayId,
+        ip: String(command.params.ip ?? ''),
+        port: Number(command.params.port ?? 161),
+        snmpVersion: command.params.snmpVersion === '1' ? '1' : '2c',
+        community: String(command.params.community ?? 'public'),
+      };
+      if (!discoverCommand.ip) {
+        this.logger.error(
+          `Comando snmp.discover_ports sem IP — command_id=${command.command_id}`,
+        );
+        return;
+      }
+      this.eventEmitter.emit('command.snmp.discover_ports', discoverCommand);
+      return;
+    }
+
+    if (command.action === 'discover_nvr_tables') {
+      const gatewayId = command.gateway_id ?? this.extractGatewayId(topic);
+      const parseDiskOids = (raw: unknown): { status?: string; capacityGb?: string; usedGb?: string; freeGb?: string; statusMap?: Record<number, number> } => {
+        if (!raw || typeof raw !== 'object') return {};
+        const o = raw as Record<string, unknown>;
+        // statusMap: normaliza disk_status raw → canônico (Dahua/Intelbras).
+        // Espera objeto Record<number, number>; chaves JSON são sempre string,
+        // então convertemos as chaves para number antes de usar no handler.
+        const parseStatusMap = (sm: unknown): Record<number, number> | undefined => {
+          if (!sm || typeof sm !== 'object' || Array.isArray(sm)) return undefined;
+          const result: Record<number, number> = {};
+          for (const [k, v] of Object.entries(sm as Record<string, unknown>)) {
+            const key = Number(k);
+            const val = Number(v);
+            if (Number.isFinite(key) && Number.isFinite(val)) result[key] = val;
+          }
+          return Object.keys(result).length > 0 ? result : undefined;
+        };
+        return {
+          ...(typeof o.status     === 'string' && o.status     ? { status:     o.status }     : {}),
+          ...(typeof o.capacityGb === 'string' && o.capacityGb ? { capacityGb: o.capacityGb } : {}),
+          ...(typeof o.usedGb     === 'string' && o.usedGb     ? { usedGb:     o.usedGb }     : {}),
+          // freeGb = espaço LIVRE — Hikvision hikHddFreeSpace (col 3); ausente em Dahua/Intelbras.
+          ...(typeof o.freeGb     === 'string' && o.freeGb     ? { freeGb:     o.freeGb }     : {}),
+          // statusMap: mapa de normalização de enum de disco (Dahua/Intelbras).
+          ...(o.statusMap !== undefined ? { statusMap: parseStatusMap(o.statusMap) } : {}),
+        };
+      };
+      const parseChanOids = (raw: unknown): { status?: string } => {
+        if (!raw || typeof raw !== 'object') return {};
+        const o = raw as Record<string, unknown>;
+        return typeof o.status === 'string' && o.status ? { status: o.status } : {};
+      };
+      const nvrCommand: NvrDiscoverTablesCommand = {
+        command_id: command.command_id,
+        tenant_id: command.tenant_id,
+        gateway_id: gatewayId,
+        ip: String(command.params.ip ?? ''),
+        port: Number(command.params.port ?? 161),
+        snmpVersion: command.params.snmpVersion === '1' ? '1' : '2c',
+        community: String(command.params.community ?? 'public'),
+        diskTableOids:    parseDiskOids(command.params.diskTableOids),
+        channelTableOids: parseChanOids(command.params.channelTableOids),
+      };
+      if (!nvrCommand.ip) {
+        this.logger.error(
+          `Comando snmp.discover_nvr_tables sem IP — command_id=${command.command_id}`,
+        );
+        return;
+      }
+      this.eventEmitter.emit('command.snmp.discover_nvr_tables', nvrCommand);
+      return;
+    }
+
     this.logger.warn(`Action SNMP desconhecida: ${command.action}`);
   }
 
@@ -261,6 +339,54 @@ export class CommandDispatcherService {
       return;
     }
 
+    if (
+      command.action === 'live_start' ||
+      command.action === 'live_keepalive' ||
+      command.action === 'live_stop'
+    ) {
+      const gatewayId = command.gateway_id ?? this.extractGatewayId(topic);
+      const sessionId = String(command.params.sessionId ?? '');
+      if (!sessionId) {
+        this.logger.error(
+          `Comando onvif.${command.action} sem sessionId — command_id=${command.command_id}`,
+        );
+        return;
+      }
+      const liveCommand: OnvifLiveViewCommand = {
+        command_id: command.command_id,
+        tenant_id: command.tenant_id,
+        gateway_id: gatewayId,
+        device_id: command.device_id,
+        session_id: sessionId,
+        action: command.action,
+        ...(command.action === 'live_start'
+          ? {
+              ip: String(command.params.ip ?? ''),
+              port: Number(command.params.port ?? 80),
+              username: String(command.params.username ?? ''),
+              password: String(command.params.password ?? ''),
+              rtspUrl:
+                typeof command.params.rtspUrl === 'string' && command.params.rtspUrl
+                  ? command.params.rtspUrl
+                  : null,
+            }
+          : {}),
+      };
+      // Sem usuário ONVIF a sessão ainda vale em modo RTSP-only (câmera SNMP
+      // com URL RTSP manual) — precisa de IP e de uma das duas fontes.
+      if (
+        command.action === 'live_start' &&
+        (!liveCommand.ip || (!liveCommand.username && !liveCommand.rtspUrl))
+      ) {
+        this.logger.error(
+          `Comando onvif.live_start sem IP/usuário/RTSP — command_id=${command.command_id}`,
+        );
+        return;
+      }
+      this.eventEmitter.emit('command.onvif.live_view', liveCommand);
+      return;
+    }
+
     this.logger.warn(`Action ONVIF desconhecida: ${command.action}`);
   }
 
@@ -296,6 +422,10 @@ export class CommandDispatcherService {
         matchId:
           command.params.matchId !== undefined && command.params.matchId !== null
             ? Number(command.params.matchId)
+            : null,
+        matchValue:
+          command.params.matchValue !== undefined && command.params.matchValue !== null
+            ? Number(command.params.matchValue)
             : null,
         confirm: this.parseWriteConfirm(command.params.confirm),
       };

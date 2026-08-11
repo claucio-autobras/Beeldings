@@ -33,7 +33,34 @@ export interface OnvifCam {
   removeAllListeners(event?: string): void;
   getDeviceInformation(cb: (err: Error | null, info?: any) => void): void;
   getStreamUri(options: any, cb: (err: Error | null, stream?: { uri?: string }) => void): void;
+  getSnapshotUri(options: any, cb: (err: Error | null, res?: { uri?: string }) => void): void;
   capabilities?: { events?: unknown };
+}
+
+/** GetSnapshotUri → URI HTTP do snapshot JPEG (null quando a câmera não expõe). */
+export function getSnapshotUri(cam: OnvifCam): Promise<string | null> {
+  return new Promise((resolve) => {
+    try {
+      cam.getSnapshotUri({}, (err, res) => {
+        resolve(!err && res?.uri ? res.uri : null);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+/** GetStreamUri (RTSP) → URI do stream (null quando indisponível). */
+export function getRtspStreamUri(cam: OnvifCam): Promise<string | null> {
+  return new Promise((resolve) => {
+    try {
+      cam.getStreamUri({ protocol: 'RTSP' }, (err, stream) => {
+        resolve(!err && stream?.uri ? stream.uri : null);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
 }
 
 /** Classifica o erro cru da lib onvif num código acionável (sem vazar credenciais). */

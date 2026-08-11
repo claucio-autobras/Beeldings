@@ -163,7 +163,7 @@ describe('CFTV: comandos/scans não aceitam gateway de terceiro', () => {
   const nil = null as never;
   const controller = new CftvController(
     fakePrisma as never,
-    nil, nil, nil, nil, nil, nil, nil,
+    nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
   );
   const cliente = makeUser(UserRole.CLIENTE, 'tenant-a');
   const body = { tenantId: 'tenant-a', gatewayId: 'gw-de-outro-tenant' };
@@ -183,6 +183,49 @@ describe('CFTV: comandos/scans não aceitam gateway de terceiro', () => {
   it('scan ONVIF com gateway de terceiro é negado', async () => {
     await expect(
       controller.scanOnvif(cliente, body as never),
+    ).rejects.toThrow(ForbiddenException);
+  });
+});
+
+describe('CFTV Switches: gateway de terceiro é rejeitado em create e update', () => {
+  // gateway.findFirst retorna null → assertGatewayInTenant lança ForbiddenException.
+  const fakeSwitchInTenantA = {
+    id: 'sw-1',
+    tenantId: 'tenant-a',
+    monitoredDeviceType: 'SWITCH',
+    config: {},
+  };
+  const fakePrisma = {
+    device: { findFirst: async () => fakeSwitchInTenantA },
+    gateway: { findFirst: async () => null },
+  };
+  const nil = null as never;
+  const controller = new CftvController(
+    fakePrisma as never,
+    nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil,
+  );
+  // ADMIN global: passa assertCanEdit; também testa caminho de papel não-cliente.
+  const admin = makeUser(UserRole.ADMIN, null);
+  const crossTenantGwId = 'gw-de-outro-tenant';
+
+  it('createSwitch com gateway de outro tenant é negado', async () => {
+    await expect(
+      controller.createSwitch(admin, {
+        name: 'Switch Teste',
+        ip: '192.168.1.1',
+        gatewayId: crossTenantGwId,
+        tenantId: 'tenant-a',
+        snmpVersion: '2c',
+        community: 'public',
+      } as never),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it('updateSwitch com gatewayId de outro tenant é negado', async () => {
+    await expect(
+      controller.updateSwitch(admin, 'sw-1', {
+        gatewayId: crossTenantGwId,
+      } as never),
     ).rejects.toThrow(ForbiddenException);
   });
 });

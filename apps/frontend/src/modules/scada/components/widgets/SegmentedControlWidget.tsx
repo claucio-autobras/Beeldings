@@ -12,13 +12,15 @@ interface Props {
   onCommand?: SendCommand;
   isEditor?: boolean;
   staticRender?: boolean;
+  /** Ponto sem comunicação (viewer): bloqueia o envio de comandos. */
+  commOffline?: boolean;
 }
 
 /**
  * Controle segmentado de escrita (ex.: Automático/Manual) — opções mapeadas a
  * valores, com o mesmo fluxo de comando otimista dos demais widgets de comando.
  */
-export function SegmentedControlWidgetView({ widget: w, getValue, onCommand, isEditor, staticRender }: Props) {
+export function SegmentedControlWidgetView({ widget: w, getValue, onCommand, isEditor, staticRender, commOffline }: Props) {
   const [draft, setDraft] = useState<number | null>(null);
   const [phase, setPhase] = useState<'idle' | 'sending' | 'error'>('idle');
   const [errMsg, setErrMsg] = useState<string | null>(null);
@@ -39,7 +41,8 @@ export function SegmentedControlWidgetView({ widget: w, getValue, onCommand, isE
       : (w.options.find((o) => Math.abs(o.value - current) < 1e-6)?.id ?? null);
 
   async function select(value: number): Promise<void> {
-    if (isEditor || staticRender || !onCommand || !bound) return;
+    // Ponto sem comunicação: não dispara comando sobre estado visual defasado.
+    if (isEditor || staticRender || !onCommand || !bound || commOffline) return;
     if (w.confirm && !window.confirm(`Enviar comando "${w.label}" = ${value}?`)) return;
     setDraft(value);
     setPhase('sending');
@@ -59,7 +62,7 @@ export function SegmentedControlWidgetView({ widget: w, getValue, onCommand, isE
 
   return (
     <div
-      title={errMsg ?? (bound ? w.tag : 'Vincule um ponto comandável')}
+      title={commOffline ? 'Sem comunicação — comando bloqueado' : (errMsg ?? (bound ? w.tag : 'Vincule um ponto comandável'))}
       style={{ ...dashCardStyle(w), padding: '10px 12px', gap: 8, justifyContent: 'center', opacity: bound || staticRender || isEditor ? 1 : 0.6 }}
     >
       {w.showLabel && w.label && (
@@ -77,13 +80,13 @@ export function SegmentedControlWidgetView({ widget: w, getValue, onCommand, isE
             <button
               key={o.id}
               type="button"
-              disabled={isEditor || staticRender || !bound}
+              disabled={isEditor || staticRender || !bound || commOffline}
               onClick={() => void select(o.value)}
               style={{
                 flex: 1, minWidth: 0, border: 'none', borderRadius: 999,
                 padding: '6px 8px', fontSize: w.fontSize, fontWeight: 600,
                 fontFamily: 'Inter, sans-serif', lineHeight: 1.1,
-                cursor: isEditor || staticRender || !bound ? 'default' : 'pointer',
+                cursor: isEditor || staticRender || !bound || commOffline ? 'default' : 'pointer',
                 backgroundColor: active ? (phase === 'error' ? '#EF4444' : w.activeColor) : 'transparent',
                 color: active ? w.activeTextColor : w.mutedColor,
                 boxShadow: active ? '0 1px 2px rgba(15,23,42,0.18)' : 'none',

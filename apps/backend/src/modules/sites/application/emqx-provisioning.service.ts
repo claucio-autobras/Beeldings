@@ -158,6 +158,13 @@ export class EmqxProvisioningService {
     const rules = [
       { topic: rootTopic, permission: 'allow', action: 'publish' },
       { topic: `${rootTopic}/#`, permission: 'allow', action: 'publish' },
+      // Subscribe liberado em TODO o namespace raiz do próprio equipamento.
+      // Firmwares reais (ex.: Aeris) assinam filtros curinga como `{root}/set/#`
+      // ou `{root}/#` — permitir só os tópicos de comando exatos fazia o EMQX
+      // negar o SUBACK em silêncio (qos 128) e o equipamento ficava conectado
+      // porém SURDO: comandos publicados nunca eram entregues.
+      { topic: rootTopic, permission: 'allow', action: 'subscribe' },
+      { topic: `${rootTopic}/#`, permission: 'allow', action: 'subscribe' },
       ...uniqueSubs.map((topic) => ({ topic, permission: 'allow', action: 'subscribe' })),
       { topic: '#', permission: 'deny', action: 'all' },
     ];

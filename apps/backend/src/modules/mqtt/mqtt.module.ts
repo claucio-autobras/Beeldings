@@ -9,6 +9,7 @@ import { DeviceHeartbeatService } from './device-heartbeat.service.js';
 import { GatewayOtaService } from './gateway-ota.service.js';
 import { IngestionMetricsService } from './ingestion-metrics.service.js';
 import { CameraLastValueService } from './camera-last-value.service.js';
+import { MqttLastValueService } from './mqtt-last-value.service.js';
 import { AvailabilityRecorderService } from './availability-recorder.service.js';
 import { TrendsModule } from '../trends/trends.module.js';
 import { AlarmsModule } from '../alarms/alarms.module.js';
@@ -28,6 +29,7 @@ import { AuthModule } from '../auth/auth.module.js';
     GatewayOtaService,
     IngestionMetricsService,
     CameraLastValueService,
+    MqttLastValueService,
     AvailabilityRecorderService,
   ],
   exports: [

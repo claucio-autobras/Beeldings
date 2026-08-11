@@ -13,10 +13,13 @@ import {
   rawString,
   stateBadgeClass,
 } from '../infraspeak.format';
+import { InfraspeakAnalysisPanel } from './InfraspeakAnalysisPanel';
 
 interface Props {
   item: InfraspeakRequestItem;
   onClose: () => void;
+  /** Abre outro chamado (referência citada pela análise de IA), quando disponível. */
+  onOpenReference?: (failureId: number) => void;
 }
 
 /** Formata duração em minutos (ex.: manpower_duration) como "2h 30min". */
@@ -48,7 +51,7 @@ function Field({ label, value, className }: { label: string; value: React.ReactN
  * mapeados (InfraspeakRequestItem) e campos adicionais confirmados do payload
  * bruto (SLA percentual, custos e duração de mão de obra, mensagens).
  */
-export function InfraspeakRequestDetail({ item, onClose }: Props) {
+export function InfraspeakRequestDetail({ item, onClose, onOpenReference }: Props) {
   const t = useT();
 
   useEffect(() => {
@@ -127,6 +130,15 @@ export function InfraspeakRequestDetail({ item, onClose }: Props) {
         </div>
 
         <div className="space-y-5 px-5 py-4">
+          {/* Analista de IA — recomendação baseada no histórico de chamados */}
+          {item.id !== null && (
+            <InfraspeakAnalysisPanel
+              key={item.id}
+              input={{ failureId: item.id }}
+              onOpenReference={onOpenReference}
+            />
+          )}
+
           {/* Descrição e observações */}
           <section>
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">

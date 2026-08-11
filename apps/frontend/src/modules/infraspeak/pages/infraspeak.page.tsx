@@ -1,11 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import { CheckCircle2, ClipboardList, Clock, RefreshCw, TriangleAlert, Wrench } from 'lucide-react';
+import { CheckCircle2, ClipboardList, Clock, Plus, RefreshCw, TriangleAlert, Wrench } from 'lucide-react';
 import { ApiError } from '@/lib/api-client';
 import { useT } from '@/lib/i18n';
 import { useInfraspeakRequests } from '../hooks/useInfraspeakRequests';
 import { InfraspeakRequestsTable } from '../components/InfraspeakRequestsTable';
+import { CreateInfraspeakRequestModal } from '../components/CreateInfraspeakRequestModal';
 import { PRIORITY_FILTER_OPTIONS, STATE_FILTER_OPTIONS } from '../infraspeak.labels';
 
 type StateFilter = string | 'all';
@@ -55,6 +56,7 @@ export default function InfraspeakPage() {
   const t = useT();
   const [stateFilter, setStateFilter] = useState<StateFilter>('all');
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('all');
+  const [showCreateModal, setShowCreateModal] = useState(false);
 
   const { data, isLoading, isFetching, error, refetch } = useInfraspeakRequests({
     state: stateFilter === 'all' ? undefined : stateFilter,
@@ -90,16 +92,33 @@ export default function InfraspeakPage() {
             {t('Chamados de manutenção sincronizados da Infraspeak')}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => void refetch()}
-          disabled={isFetching}
-          className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 disabled:opacity-50"
-        >
-          <RefreshCw size={13} className={isFetching ? 'animate-spin' : undefined} />
-          {t('Atualizar')}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void refetch()}
+            disabled={isFetching}
+            className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 disabled:opacity-50"
+          >
+            <RefreshCw size={13} className={isFetching ? 'animate-spin' : undefined} />
+            {t('Atualizar')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowCreateModal(true)}
+            className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+          >
+            <Plus size={13} />
+            {t('Abrir chamado')}
+          </button>
+        </div>
       </div>
+
+      {showCreateModal && (
+        <CreateInfraspeakRequestModal
+          onClose={() => setShowCreateModal(false)}
+          onCreated={() => void refetch()}
+        />
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">

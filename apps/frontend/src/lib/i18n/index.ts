@@ -14,6 +14,9 @@ import { DICT_ALARMS } from './dictionary.alarms';
 import { DICT_INFRASPEAK } from './dictionary.infraspeak';
 import { DICT_REPORTS } from './dictionary.reports';
 import { DICT_DEVICES } from './dictionary.devices';
+import { DICT_CFTV } from './dictionary.cftv';
+import { DICT_SETTINGS } from './dictionary.settings';
+import { DICT_SCA } from './dictionary.sca';
 
 const EN: Record<string, string> = {
   ...DICT_CORE,
@@ -22,6 +25,9 @@ const EN: Record<string, string> = {
   ...DICT_INFRASPEAK,
   ...DICT_REPORTS,
   ...DICT_DEVICES,
+  ...DICT_CFTV,
+  ...DICT_SETTINGS,
+  ...DICT_SCA,
 };
 
 /** Traduz uma frase pt-BR para o idioma dado (fallback: a própria frase). */

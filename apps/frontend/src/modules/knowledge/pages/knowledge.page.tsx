@@ -271,7 +271,7 @@ export default function KnowledgePage() {
             Base de Conhecimento
           </h1>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            Manuais, procedimentos e playbooks que alimentam o Chat IA. Apenas documentos
+            Manuais, procedimentos e playbooks que alimentam o Bluebee. Apenas documentos
             aprovados são usados nas respostas.
           </p>
         </div>
@@ -418,7 +418,7 @@ export default function KnowledgePage() {
             />
           </label>
           <p className="text-xs text-muted-foreground">
-            O documento entra como rascunho e só passa a ser usado pelo Chat IA após ser aprovado.
+            O documento entra como rascunho e só passa a ser usado pelo Bluebee após ser aprovado.
             O conteúdo é dividido e indexado automaticamente para a busca semântica.
           </p>
           <div className="flex justify-end gap-2">
@@ -458,7 +458,7 @@ export default function KnowledgePage() {
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <FileText className="mb-3 h-12 w-12 text-muted-foreground/25" />
           <p className="text-sm text-muted-foreground">
-            Nenhum documento ainda. Adicione manuais e playbooks para o Chat IA aprender.
+            Nenhum documento ainda. Adicione manuais e playbooks para o Bluebee aprender.
           </p>
         </div>
       ) : (

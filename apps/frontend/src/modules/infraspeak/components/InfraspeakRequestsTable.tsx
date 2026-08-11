@@ -115,7 +115,15 @@ export function InfraspeakRequestsTable({ items }: Props) {
       </div>
 
       {selected && (
-        <InfraspeakRequestDetail item={selected} onClose={() => setSelected(null)} />
+        <InfraspeakRequestDetail
+          item={selected}
+          onClose={() => setSelected(null)}
+          onOpenReference={(failureId) => {
+            // Abre o chamado de referência citado pela análise, se estiver na lista atual.
+            const ref = items.find((i) => i.id === failureId);
+            if (ref) setSelected(ref);
+          }}
+        />
       )}
     </>
   );

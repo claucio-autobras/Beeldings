@@ -100,14 +100,25 @@ export class AvailabilityRecorderService implements OnModuleInit, OnModuleDestro
     });
   }
 
-  /** Valor do ponto STATUS de uma câmera CFTV (1 = online, 0 = offline). */
-  noteCameraStatus(deviceId: string, value: number, at: Date): void {
+  /**
+   * Valor do ponto STATUS de um dispositivo monitorado (câmera CFTV ou
+   * controladora de acesso). 1 = online, 0 = offline.
+   *
+   * @param entityType - 'camera' para dispositivos CFTV, 'device' para
+   *   controladoras de acesso (ACCESS_CONTROLLER) e outros tipos monitorados.
+   */
+  noteCameraStatus(
+    deviceId: string,
+    value: number,
+    at: Date,
+    entityType: StatusEntityType = 'camera',
+  ): void {
     this.cameraStatusValue.set(deviceId, value);
     if (!this.cluster.isLeader()) return;
     this.enqueue(deviceId, async () => {
       const tenantId = await this.resolveDeviceTenant(deviceId);
       if (!tenantId) return;
-      await this.record('camera', deviceId, tenantId, value === 1 ? 'online' : 'offline', at);
+      await this.record(entityType, deviceId, tenantId, value === 1 ? 'online' : 'offline', at);
     });
   }
 
@@ -124,7 +135,7 @@ export class AvailabilityRecorderService implements OnModuleInit, OnModuleDestro
         this.prisma.gateway.findMany({ select: { id: true, tenantId: true } }),
         this.prisma.device.findMany({
           where: { protocol: { not: VIRTUAL_PROTOCOL } },
-          select: { id: true, tenantId: true, protocol: true },
+          select: { id: true, tenantId: true, protocol: true, monitoredDeviceType: true },
         }),
       ]);
 
@@ -134,12 +145,18 @@ export class AvailabilityRecorderService implements OnModuleInit, OnModuleDestro
         this.enqueue(g.id, () => this.record('gateway', g.id, g.tenantId, status, now));
       }
       for (const d of devices) {
-        if (CFTV_PROTOCOLS.has(d.protocol)) {
+        const isAccessController = d.monitoredDeviceType === 'ACCESS_CONTROLLER';
+        if (CFTV_PROTOCOLS.has(d.protocol) && !isAccessController) {
+          // Câmera CFTV: status derivado do ponto STATUS + silêncio de gateway.
           const status = this.cameraLiveStatus(d.id);
           this.enqueue(d.id, () => this.record('camera', d.id, d.tenantId, status, now));
         } else {
-          const status = this.deviceStatus.getStatus(d.id);
-          this.enqueue(d.id, () => this.record('device', d.id, d.tenantId, status, now));
+          // BMS, access controller ou protocolo desconhecido: recência de telemetria.
+          const status = isAccessController
+            ? this.cameraLiveStatus(d.id) // AC: usa ponto STATUS (mesma lógica de câmera)
+            : this.deviceStatus.getStatus(d.id);
+          const entityType: StatusEntityType = isAccessController ? 'device' : 'device';
+          this.enqueue(d.id, () => this.record(entityType, d.id, d.tenantId, status, now));
         }
       }
 

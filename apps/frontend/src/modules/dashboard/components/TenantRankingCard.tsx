@@ -13,14 +13,16 @@ interface TenantRankingCardProps {
 }
 
 /**
- * "Atenção por Cliente" (visão Admin): clientes com mais alarmes ativos e
- * dispositivos offline AGORA. Clicar escopa o filtro global de cliente e
- * permanece no dashboard (visão do cliente).
+ * "Atenção por Cliente" (visão Admin): ranking por score composto — ativos
+ * críticos em falha, gateways offline, alarmes ativos, dispositivos offline e
+ * backlog de ACK. Os fatores que puxaram a posição aparecem como chips.
+ * Clicar escopa o filtro global de cliente e permanece no dashboard.
  */
 export function TenantRankingCard({ ranking, isLoading }: TenantRankingCardProps) {
   const t = useT();
   const router = useRouter();
   const rows = ranking ?? [];
+  const isEn = getCurrentLanguage() === 'en';
 
   const openTenant = (tenantId: string) => {
     setGlobalTenant(tenantId);
@@ -31,7 +33,9 @@ export function TenantRankingCard({ ranking, isLoading }: TenantRankingCardProps
     <div className="flex h-[400px] flex-col rounded-lg border border-border bg-card shadow-sm">
       <div className="border-b border-border/60 p-4 pb-3">
         <h2 className="text-sm font-medium text-foreground">{t('Atenção por Cliente')}</h2>
-        <p className="mt-0.5 text-xs text-muted-foreground">{t('Clientes com mais anomalias ativas')}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {t('Ordenado por críticos em falha, gateways offline, alarmes e backlog de ACK')}
+        </p>
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
@@ -68,17 +72,42 @@ export function TenantRankingCard({ ranking, isLoading }: TenantRankingCardProps
                     className="shrink-0 text-muted-foreground/40 opacity-0 transition-opacity group-hover:opacity-100"
                   />
                 </div>
-                <div className="flex gap-4 text-xs">
-                  <span className="flex items-center gap-1.5">
-                    <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
-                    <span className="tabular-nums font-medium text-foreground">{t.activeAlarms}</span>
-                    <span className="text-muted-foreground">{getCurrentLanguage() === 'en' ? 'alarms' : 'alarmes'}</span>
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="h-1.5 w-1.5 rounded-full bg-orange-500" />
-                    <span className="tabular-nums font-medium text-foreground">{t.offlineDevices}</span>
-                    <span className="text-muted-foreground">offline</span>
-                  </span>
+                <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                  {t.criticalFaults > 0 && (
+                    <span className="flex items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-red-600" />
+                      <span className="tabular-nums font-medium text-foreground">{t.criticalFaults}</span>
+                      <span className="text-muted-foreground">{isEn ? 'critical in fault' : 'críticos em falha'}</span>
+                    </span>
+                  )}
+                  {t.offlineGateways > 0 && (
+                    <span className="flex items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-slate-500" />
+                      <span className="tabular-nums font-medium text-foreground">{t.offlineGateways}</span>
+                      <span className="text-muted-foreground">{isEn ? 'gateways offline' : 'gateways offline'}</span>
+                    </span>
+                  )}
+                  {t.activeAlarms > 0 && (
+                    <span className="flex items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+                      <span className="tabular-nums font-medium text-foreground">{t.activeAlarms}</span>
+                      <span className="text-muted-foreground">{isEn ? 'alarms' : 'alarmes'}</span>
+                    </span>
+                  )}
+                  {t.offlineDevices > 0 && (
+                    <span className="flex items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-orange-500" />
+                      <span className="tabular-nums font-medium text-foreground">{t.offlineDevices}</span>
+                      <span className="text-muted-foreground">{isEn ? 'devices offline' : 'disp. offline'}</span>
+                    </span>
+                  )}
+                  {t.pendingAck > 0 && (
+                    <span className="flex items-center gap-1.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                      <span className="tabular-nums font-medium text-foreground">{t.pendingAck}</span>
+                      <span className="text-muted-foreground">{isEn ? 'awaiting ACK' : 'aguard. ACK'}</span>
+                    </span>
+                  )}
                 </div>
               </button>
             ))}

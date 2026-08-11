@@ -8,9 +8,9 @@ const p = (path: string) => `${BASE_PATH}${path}`;
 export default function manifest(): MetadataRoute.Manifest {
   return {
     id: p('/'),
-    name: 'BlueBee IoT — Plataforma Supervisória',
-    short_name: 'BlueBee',
-    description: 'Monitoramento remoto de sistemas BMS — Autobras BlueBee',
+    name: 'Beeldings - Plataforma Supervisória',
+    short_name: 'Beeldings',
+    description: 'Monitoramento remoto de sistemas BMS — Autobras Beeldings',
     start_url: p('/'),
     scope: p('/'),
     display: 'standalone',

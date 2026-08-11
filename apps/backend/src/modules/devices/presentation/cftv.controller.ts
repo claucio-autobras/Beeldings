@@ -54,7 +54,26 @@ import {
   type DiagnoseOidProbe,
   type SnmpDiagnoseProgress,
 } from '../application/snmp-diagnose.service.js';
+import {
+  CapabilityProbeService,
+  resolveProfileLabel,
+} from '../application/capability-probe.service.js';
+import {
+  SwitchPortSyncService,
+} from '../application/switch-port-sync.service.js';
+import {
+  NvrTableSyncService,
+} from '../application/nvr-table-sync.service.js';
+import {
+  NVR_TABLE_OIDS,
+  detectNvrProfile,
+  resolveNvrProfileLabel,
+  type NvrDiskTableOids,
+  type NvrChannelTableOids,
+  type NvrTableOids,
+} from '../application/nvr-oid-profiles.js';
 import { DeviceStatusService } from '../../mqtt/device-status.service.js';
+import { CameraLiveViewService } from '../application/camera-live-view.service.js';
 import { JwtAuthGuard } from '../../auth/presentation/guards/jwt-auth.guard.js';
 import { SensitiveActionGuard } from '../../auth/presentation/guards/sensitive-action.guard.js';
 import { CurrentUser } from '../../auth/presentation/decorators/current-user.decorator.js';
@@ -141,6 +160,134 @@ const DEFAULT_CAMERA_POINTS = [
     unit: '%',
   },
 ];
+
+/**
+ * Pontos padrão de saúde de um switch gerenciável (SNMP MIB-II / HOST-RESOURCES-MIB).
+ * Pontos de porta (if_oper_status, if_in_octets, if_out_octets) são criados
+ * depois pelo endpoint sync-ports, one per port, objectType 'sw-state'/'sw-in'/'sw-out'.
+ */
+const DEFAULT_SWITCH_POINTS = [
+  {
+    tag: 'STATUS',
+    objectName: 'Status (online/offline)',
+    metric: 'status',
+    oid: null as string | null,
+    scale: 1,
+    unit: '',
+  },
+  {
+    tag: 'UPTIME',
+    objectName: 'Tempo ligado',
+    metric: 'uptime',
+    // sysUpTime (centésimos de segundo) → segundos via scale 0.01
+    oid: '1.3.6.1.2.1.1.3.0',
+    scale: 0.01,
+    unit: 's',
+  },
+  {
+    tag: 'CPU',
+    objectName: 'Uso de CPU',
+    metric: 'cpu',
+    // hrProcessorLoad da 1ª CPU (HOST-RESOURCES-MIB) — % de uso
+    oid: '1.3.6.1.2.1.25.3.3.1.2.1',
+    scale: 1,
+    unit: '%',
+  },
+];
+
+/** Where-cláusula Prisma para filtrar somente switches gerenciáveis. */
+const ONLY_SWITCH_DEVICES = { monitoredDeviceType: 'SWITCH' } as const;
+
+/** Where-cláusula Prisma para filtrar somente NVRs/DVRs monitorados. */
+const ONLY_NVR_DEVICES = { monitoredDeviceType: 'NVR' } as const;
+
+/**
+ * Pontos padrão de um NVR/DVR (SNMP MIB-II + enterprise NVR-MIBs).
+ * Pontos de disco (nvr-disk/nvr-disk-cap/nvr-disk-used) e canais (nvr-chan)
+ * são criados no endpoint sync-disks, indexados por slotIndex/channelIndex.
+ */
+const DEFAULT_NVR_POINTS = [
+  {
+    tag: 'STATUS',
+    objectName: 'Status (online/offline)',
+    metric: 'status',
+    oid: null as string | null,
+    scale: 1,
+    unit: '',
+  },
+  {
+    tag: 'UPTIME',
+    objectName: 'Tempo ligado',
+    metric: 'uptime',
+    oid: '1.3.6.1.2.1.1.3.0',
+    scale: 0.01,
+    unit: 's',
+  },
+  {
+    tag: 'CPU',
+    objectName: 'Uso de CPU',
+    metric: 'cpu',
+    // OID omitido intencionalmente: o gateway resolve pelo perfil vendor detectado
+    // (Hikvision: .1.7.0, Dahua: 2.1.3.1.1.1, base: hrProcessorLoad).
+    // OID concreto no binding daria precedência sobre o perfil e tornaria
+    // os perfis vendor inefetivos sem edição manual.
+    oid: null as string | null,
+    scale: 1,
+    unit: '%',
+  },
+  {
+    tag: 'MEMORIA',
+    objectName: 'Memória (uso de RAM)',
+    metric: 'memory',
+    // OID omitido — idem CPU. Vendor profile decide o OID certo por fabricante.
+    // Todos os perfis vendor NVR (Hikvision/Dahua/Intelbras) expõem memória como
+    // percentual de uso sob metricKey 'memory'. O perfil base usa UCD memAvailReal.
+    oid: null as string | null,
+    scale: 1,
+    unit: '%',
+  },
+  {
+    tag: 'TEMPERATURA',
+    objectName: 'Temperatura',
+    metric: 'temperature',
+    // OID omitido — idem CPU. Base fallback: UCD lm-sensors (.2021.13.16.2.1.3.1).
+    oid: null as string | null,
+    scale: 0.001,
+    unit: '°C',
+  },
+];
+
+/** Corpo do request para criar/editar um NVR/DVR. */
+interface NvrBody {
+  name?: string;
+  siteId?: string;
+  tenantId?: string;
+  gatewayId?: string;
+  ip?: string;
+  port?: number;
+  snmpVersion?: '1' | '2c';
+  community?: string;
+  pollingInterval?: number;
+  manufacturer?: string | null;
+  profileId?: string | null;
+  profileOverrides?: Record<string, string> | null;
+}
+
+/** Corpo do request para criar/editar um switch. */
+interface SwitchBody {
+  name?: string;
+  siteId?: string;
+  tenantId?: string;
+  gatewayId?: string;
+  ip?: string;
+  port?: number;
+  snmpVersion?: '1' | '2c';
+  community?: string;
+  pollingInterval?: number;
+  manufacturer?: string | null;
+  profileId?: string | null;
+  profileOverrides?: Record<string, string> | null;
+}
 
 /** Métricas do canal de saúde (ordem estável de criação dos pontos). */
 const HEALTH_METRICS: HealthMetric[] = [
@@ -307,8 +454,15 @@ interface SnmpHealthBody {
 
 interface CameraBody {
   monitoringProtocol?: 'snmp' | 'onvif';
+  /**
+   * Credenciais ONVIF. Na câmera ONVIF são obrigatórias (monitoramento).
+   * Na câmera SNMP são o canal OPCIONAL de "Vídeo ao vivo": username vazio
+   * limpa as credenciais; senha vazia na edição mantém a atual.
+   */
   onvifUsername?: string;
   onvifPassword?: string;
+  /** SNMP: porta do serviço ONVIF/vídeo (a porta principal é a do SNMP). */
+  onvifPort?: number;
   name?: string;
   siteId?: string;
   tenantId?: string;
@@ -333,6 +487,18 @@ interface CameraBody {
    * precedência máxima na identificação de provider do gateway.
    */
   manufacturer?: string | null;
+  /**
+   * ID do perfil de monitoramento selecionado manualmente (override do
+   * auto-detected). null = limpar override e usar detecção automática.
+   * Valores válidos: 'hikvision', 'dahua', 'intelbras', 'axis', 'generic'.
+   */
+  profileId?: string | null;
+  /**
+   * Overrides de OID por métrica definidos pelo operador.
+   * Ex.: { "cpu": "1.3.6.1.4.1.39165.1.7.0" }
+   * null = limpar todos os overrides.
+   */
+  profileOverrides?: Record<string, string> | null;
 }
 
 type CameraWithRelations = Prisma.DeviceGetPayload<{
@@ -359,8 +525,54 @@ export class CftvController {
     private readonly onvifScan: OnvifNetworkScanService,
     private readonly snmpHealthTest: SnmpHealthTestService,
     private readonly snmpDiagnose: SnmpDiagnoseService,
+    private readonly capabilityProbe: CapabilityProbeService,
     private readonly deviceStatus: DeviceStatusService,
+    private readonly liveView: CameraLiveViewService,
+    private readonly switchPortSync: SwitchPortSyncService,
+    private readonly nvrTableSync: NvrTableSyncService,
   ) {}
+
+  /**
+   * POST /cftv/cameras/:id/live-view — inicia uma sessão de visualização ao
+   * vivo (frames JPEG via socket /telemetry, evento `camera:frame`).
+   * UMA sessão por operador: um segundo start substitui a anterior.
+   */
+  @Post('cameras/:id/live-view')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  async startLiveView(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() body: { tenantId?: string },
+  ) {
+    return this.liveView.start(
+      { id: user.id, tenantId: user.tenantId },
+      id,
+      body?.tenantId,
+    );
+  }
+
+  /** POST /cftv/live-view/:sessionId/keepalive — renova a sessão (espectador presente). */
+  @Post('live-view/:sessionId/keepalive')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  async keepAliveLiveView(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('sessionId') sessionId: string,
+  ) {
+    return this.liveView.keepAlive({ id: user.id, tenantId: user.tenantId }, sessionId);
+  }
+
+  /** DELETE /cftv/live-view/:sessionId — encerra a sessão explicitamente. */
+  @Delete('live-view/:sessionId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(JwtAuthGuard)
+  async stopLiveView(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('sessionId') sessionId: string,
+  ): Promise<void> {
+    await this.liveView.stop({ id: user.id, tenantId: user.tenantId }, sessionId);
+  }
 
   /** Garante que o gateway informado pertence ao tenant efetivo do usuário. */
   private async assertGatewayInTenant(gatewayId: string, tenantId: string): Promise<void> {
@@ -382,6 +594,87 @@ export class CftvController {
       label: p.label,
       oids: p.oids,
     }));
+  }
+
+  /**
+   * GET /cftv/profiles?deviceType=CAMERA — catálogo de perfis de monitoramento
+   * para um tipo de dispositivo. Retorna perfis selecionáveis manualmente.
+   * deviceType padrão: 'CAMERA'.
+   */
+  @Get('profiles')
+  @UseGuards(JwtAuthGuard)
+  getMonitoringProfiles(@Query('deviceType') deviceType = 'CAMERA') {
+    if (deviceType !== 'CAMERA') return [];
+    return CAMERA_OID_PROFILES.map((p) => ({
+      id: p.id,
+      label: p.label,
+      metrics: Object.entries(p.oids).map(([metricKey, entry]) => ({
+        metricKey,
+        oid: entry?.oid ?? null,
+        scale: entry?.scale ?? 1,
+        unit: entry?.unit ?? '',
+      })),
+    }));
+  }
+
+  /**
+   * GET /cftv/cameras/:id/capabilities — lê o mapa de capacidades da câmera
+   * (resultado do último probe periódico ou manual).
+   */
+  @Get('cameras/:id/capabilities')
+  @UseGuards(JwtAuthGuard)
+  async getCameraCapabilities(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    const camera = await this.findCameraOrThrow(id);
+    this.assertCanEdit(user, camera.tenantId);
+    return this.capabilityProbe.getCapabilities(id);
+  }
+
+  /**
+   * POST /cftv/cameras/:id/probe-capabilities — executa o probe de capacidades
+   * da câmera via gateway (identifica equipamento, testa métricas, persiste).
+   * Mesmo mecanismo de diagnóstico SNMP — aguarda o resultado.
+   */
+  @Post('cameras/:id/probe-capabilities')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  async probeCameraCapabilities(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    const camera = await this.findCameraOrThrow(id);
+    this.assertCanEdit(user, camera.tenantId);
+
+    if (!camera.gatewayId) {
+      throw new BadRequestException('Câmera sem gateway associado');
+    }
+    if (this.deviceStatus.getStatus(camera.gatewayId) === 'offline') {
+      throw new BadRequestException(
+        'Gateway offline — o probe precisa do gateway para falar com a câmera.',
+      );
+    }
+
+    const result = await this.capabilityProbe.probeDevice(id);
+    if (!result.success) {
+      return { success: false as const, error: result.error };
+    }
+
+    this.logger.log(
+      `Probe de capacidades da câmera ${id} por ${user.email}: ` +
+        `perfil=${result.detectedProfileId}, reachable=${result.reachable}`,
+    );
+
+    return {
+      success: true as const,
+      reachable: result.reachable,
+      cause: result.cause,
+      sysDescr: result.sysDescr,
+      detectedProfileId: result.detectedProfileId,
+      detectedProfileLabel: result.detectedProfileLabel,
+      capabilities: result.capabilities,
+    };
   }
 
   /**
@@ -488,6 +781,7 @@ export class CftvController {
       data: {
         name,
         protocol: SNMP_PROTOCOL,
+        monitoredDeviceType: 'CAMERA',
         ip,
         port: body.port || DEFAULT_SNMP_PORT,
         status: 'offline',
@@ -501,6 +795,15 @@ export class CftvController {
           pollingIntervalMs: (body.pollingInterval ?? DEFAULT_POLLING_S) * 1000,
           // Fabricante manual — identifica o provider de telemetria no gateway.
           manufacturer: body.manufacturer?.trim() || null,
+          // "Vídeo ao vivo" opcional: credenciais ONVIF só para o live view
+          // (senha cifrada como nas câmeras ONVIF; nunca retorna na API).
+          ...(body.onvifUsername?.trim() && body.onvifPassword
+            ? {
+                onvifUsername: body.onvifUsername.trim(),
+                onvifPasswordEnc: encryptCameraSecret(body.onvifPassword),
+                onvifPort: Number(body.onvifPort) || DEFAULT_ONVIF_PORT,
+              }
+            : {}),
         },
         points: {
           create: DEFAULT_CAMERA_POINTS.map((p, i) => ({
@@ -574,6 +877,7 @@ export class CftvController {
       data: {
         name: ctx.name,
         protocol: ONVIF_PROTOCOL,
+        monitoredDeviceType: 'CAMERA',
         ip: ctx.ip,
         port: effectivePort,
         status: 'offline',
@@ -677,6 +981,32 @@ export class CftvController {
           ? { manufacturer: body.manufacturer?.trim() || null }
           : {}),
       };
+      // "Vídeo ao vivo" opcional da câmera SNMP: username vazio limpa as
+      // credenciais; senha vazia mantém a atual; undefined = não mexe.
+      if (body.onvifUsername !== undefined) {
+        const videoUser = body.onvifUsername.trim();
+        if (!videoUser) {
+          const { onvifUsername: _u, onvifPasswordEnc: _p, onvifPort: _pt, ...rest } =
+            newConfig;
+          newConfig = rest;
+        } else {
+          newConfig = {
+            ...newConfig,
+            onvifUsername: videoUser,
+            ...(body.onvifPassword
+              ? { onvifPasswordEnc: encryptCameraSecret(body.onvifPassword) }
+              : {}),
+          };
+          if (!newConfig.onvifPasswordEnc) {
+            throw new BadRequestException(
+              'Informe a senha ONVIF do vídeo ao vivo',
+            );
+          }
+        }
+      }
+      if (body.onvifPort !== undefined && newConfig.onvifUsername) {
+        newConfig = { ...newConfig, onvifPort: Number(body.onvifPort) || DEFAULT_ONVIF_PORT };
+      }
     } else {
       const newUsername = body.onvifUsername?.trim();
       const newPassword = body.onvifPassword; // vazio/undefined = manter a atual
@@ -791,6 +1121,46 @@ export class CftvController {
             },
           });
         }
+      }
+    }
+
+    // Perfil de monitoramento: troca manual (profileId) ou overrides por métrica.
+    // 'profileId' presente no body → atualiza o perfil e marca a fonte como manual.
+    // null explícito → limpa a seleção manual e volta ao auto-detectado.
+    if (body.profileId !== undefined) {
+      // 'generic' explícito ou null → volta ao auto-detectado (mesma semântica).
+      // Permite que o dropdown da UI ofereça "Genérico (MIB padrão)" como opção
+      // de reset sem causar erro — GET /cftv/profiles inclui 'generic', o PATCH
+      // deve aceitá-lo.
+      const rawProfileId = body.profileId;
+      const newProfileId =
+        rawProfileId === null || rawProfileId === GENERIC_PROFILE.id ? null : rawProfileId;
+
+      // Valida IDs desconhecidos (nem null/generic nem perfil do catálogo).
+      if (newProfileId !== null) {
+        const known = CAMERA_OID_PROFILES.find((p) => p.id === newProfileId);
+        if (!known) {
+          throw new BadRequestException(
+            `ID de perfil desconhecido: "${newProfileId}". ` +
+              `Perfis válidos: ${CAMERA_OID_PROFILES.map((p) => p.id).join(', ')} (ou null para detecção automática).`,
+          );
+        }
+      }
+      newConfig = {
+        ...newConfig,
+        profileId: newProfileId,
+        profileSource: newProfileId ? 'manual' : 'generic',
+      };
+    }
+    // 'profileOverrides' presente → substitui os overrides de métrica.
+    // null explícito → limpa todos os overrides.
+    if (body.profileOverrides !== undefined) {
+      const overrides = body.profileOverrides;
+      if (!overrides || Object.keys(overrides).length === 0) {
+        const { profileOverrides: _po, ...rest } = newConfig;
+        newConfig = rest;
+      } else {
+        newConfig = { ...newConfig, profileOverrides: overrides };
       }
     }
 
@@ -1300,6 +1670,1287 @@ export class CftvController {
     }
   }
 
+  // ══════════════════════════════════════════════════════════════════════════════
+  // Switches gerenciáveis — CRUD + sync de portas
+  // ══════════════════════════════════════════════════════════════════════════════
+
+  /** GET /cftv/switches — lista switches do tenant. */
+  @Get('switches')
+  @UseGuards(JwtAuthGuard)
+  async listSwitches(@CurrentUser() user: AuthenticatedUser, @Query('tenantId') tenantId?: string) {
+    const scopeTenantId = resolveTenantScope(user, tenantId);
+    const switches = await this.prisma.device.findMany({
+      where: { ...(scopeTenantId ? { tenantId: scopeTenantId } : {}), ...ONLY_SWITCH_DEVICES },
+      include: { points: true, site: true },
+      orderBy: { name: 'asc' },
+    });
+    const lastSeenMap = await this.deviceStatus.resolveLastSeenMany(switches.map((s) => s.id));
+    return switches.map((sw) => this.mapSwitch(sw as Parameters<typeof this.mapSwitch>[0], lastSeenMap.get(sw.id) ?? null));
+  }
+
+  /** POST /cftv/switches — cadastra um switch. */
+  @Post('switches')
+  @HttpCode(HttpStatus.CREATED)
+  @UseGuards(JwtAuthGuard)
+  async createSwitch(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() body: SwitchBody,
+  ) {
+    const name = body.name?.trim();
+    const ip = body.ip?.trim();
+    if (!name) throw new BadRequestException('name é obrigatório');
+    if (!ip) throw new BadRequestException('ip é obrigatório');
+    if (!body.gatewayId) throw new BadRequestException('gatewayId é obrigatório');
+
+    const tenantId = resolveBodyTenantScope(user, body.tenantId);
+    if (!tenantId) throw new BadRequestException('tenantId é obrigatório');
+
+    // Garante que o gateway pertence ao tenant antes de qualquer I/O.
+    await this.assertGatewayInTenant(body.gatewayId, tenantId);
+
+    // Teste de alcançabilidade via SNMP antes de salvar.
+    const testResult = await this.snmpHealthTest.test({
+      tenantId,
+      gatewayId: body.gatewayId,
+      ip,
+      port: body.port || DEFAULT_SNMP_PORT,
+      snmpVersion: body.snmpVersion ?? '2c',
+      community: body.community?.trim() || 'public',
+      oids: { uptime: '1.3.6.1.2.1.1.3.0' }, // sysUpTime — probe universal
+    });
+    if (!testResult.success || !testResult.reachable) {
+      throw new BadRequestException({
+        message: testResult.success ? 'Switch não respondeu ao SNMP' : testResult.error,
+        code: 'SWITCH_UNREACHABLE',
+      });
+    }
+
+    const sw = await this.prisma.device.create({
+      data: {
+        name,
+        protocol: SNMP_PROTOCOL,
+        monitoredDeviceType: 'SWITCH',
+        ip,
+        port: body.port || DEFAULT_SNMP_PORT,
+        status: 'offline',
+        tenantId,
+        siteId: body.siteId || null,
+        gatewayId: body.gatewayId,
+        config: {
+          snmpVersion: body.snmpVersion ?? '2c',
+          community: body.community?.trim() || 'public',
+          pollingIntervalMs: (body.pollingInterval ?? DEFAULT_POLLING_S) * 1000,
+          manufacturer: body.manufacturer?.trim() || null,
+          ...(body.profileId !== undefined ? { profileId: body.profileId } : {}),
+          ...(body.profileOverrides !== undefined ? { profileOverrides: body.profileOverrides } : {}),
+        },
+        points: {
+          create: DEFAULT_SWITCH_POINTS.map((p, i) => ({
+            tag: p.tag,
+            objectName: p.objectName,
+            objectType: 'snmp',
+            instance: i,
+            unit: p.unit,
+            binding: { metric: p.metric, oid: p.oid, scale: p.scale },
+          })),
+        },
+      },
+      include: { points: true, site: true },
+    });
+
+    await this.configPublisher.publishForDevice(sw.id);
+    this.logger.log(`Switch cadastrado: ${sw.id} (${ip}) por ${user.email}`);
+    return this.mapSwitch(sw as Parameters<typeof this.mapSwitch>[0], null);
+  }
+
+  /** GET /cftv/switches/:id — detalhe de um switch com pontos e health. */
+  @Get('switches/:id')
+  @UseGuards(JwtAuthGuard)
+  async getSwitch(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    const sw = await this.findSwitchOrThrow(id);
+    const tenantScope = resolveTenantScope(user, sw.tenantId);
+    if (tenantScope && tenantScope !== sw.tenantId) {
+      throw new NotFoundException('Switch não encontrado');
+    }
+    const withPoints = await this.prisma.device.findUniqueOrThrow({
+      where: { id },
+      include: { points: true, site: true },
+    });
+    const lastCommunication = await this.deviceStatus.resolveLastSeen(id);
+    return this.mapSwitch(withPoints as Parameters<typeof this.mapSwitch>[0], lastCommunication);
+  }
+
+  /** PATCH /cftv/switches/:id — edita nome/site/rede/config SNMP e republica a config. */
+  @Patch('switches/:id')
+  @UseGuards(JwtAuthGuard)
+  async updateSwitch(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() body: SwitchBody,
+  ) {
+    const sw = await this.findSwitchOrThrow(id);
+    this.assertCanEdit(user, sw.tenantId);
+
+    // Se o corpo traz um novo gateway, valida que ele pertence ao mesmo tenant.
+    if (body.gatewayId) {
+      await this.assertGatewayInTenant(body.gatewayId, sw.tenantId);
+    }
+
+    const cfg = (sw.config ?? {}) as Record<string, unknown>;
+    const updatedConfig = {
+      ...cfg,
+      ...(body.snmpVersion !== undefined ? { snmpVersion: body.snmpVersion } : {}),
+      ...(body.community !== undefined ? { community: body.community?.trim() || 'public' } : {}),
+      ...(body.pollingInterval !== undefined ? { pollingIntervalMs: body.pollingInterval * 1000 } : {}),
+      ...(body.manufacturer !== undefined ? { manufacturer: body.manufacturer?.trim() || null } : {}),
+      ...(body.profileId !== undefined ? { profileId: body.profileId } : {}),
+      ...(body.profileOverrides !== undefined ? { profileOverrides: body.profileOverrides } : {}),
+    };
+
+    const updated = await this.prisma.device.update({
+      where: { id },
+      data: {
+        ...(body.name ? { name: body.name.trim() } : {}),
+        ...(body.siteId !== undefined ? { siteId: body.siteId || null } : {}),
+        ...(body.gatewayId ? { gatewayId: body.gatewayId } : {}),
+        ...(body.ip ? { ip: body.ip.trim() } : {}),
+        ...(body.port !== undefined ? { port: body.port || DEFAULT_SNMP_PORT } : {}),
+        config: updatedConfig as Prisma.InputJsonValue,
+      },
+      include: { points: true, site: true },
+    });
+
+    await this.configPublisher.publishForDevice(id);
+    return this.mapSwitch(updated as Parameters<typeof this.mapSwitch>[0], await this.deviceStatus.resolveLastSeen(id));
+  }
+
+  /** DELETE /cftv/switches/:id — remove o switch e todos os seus pontos. */
+  @Delete('switches/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(JwtAuthGuard, SensitiveActionGuard)
+  async deleteSwitch(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    const sw = await this.findSwitchOrThrow(id);
+    this.assertCanEdit(user, sw.tenantId);
+    await this.prisma.device.delete({ where: { id } });
+    this.logger.log(`Switch removido: ${id} por ${user.email}`);
+  }
+
+  /**
+   * POST /cftv/switches/:id/sync-ports — descobre portas do switch via IF-MIB e
+   * sincroniza os DevicePoint do banco:
+   *   - Portas novas: cria 3 pontos (sw-state, sw-in, sw-out).
+   *   - Portas existentes com alias/nome alterados: atualiza objectName.
+   *   - Portas não encontradas: retornadas em `removed` (NÃO deletadas).
+   *   - Para cada nova porta de sw-state (if_oper_status): cria trend default.
+   *
+   * Retorna { added, updated, removed, sysDescr, ports }.
+   */
+  @Post('switches/:id/sync-ports')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  async syncPorts(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    const sw = await this.findSwitchOrThrow(id);
+    this.assertCanEdit(user, sw.tenantId);
+
+    if (!sw.gatewayId) {
+      throw new BadRequestException('Switch sem gateway associado');
+    }
+
+    const gwOnline = this.deviceStatus.getStatus(sw.gatewayId) === 'online';
+    if (!gwOnline) {
+      throw new BadRequestException('Gateway offline — não é possível descobrir portas agora');
+    }
+
+    const cfg = (sw.config ?? {}) as { snmpVersion?: string; community?: string; pollingIntervalMs?: number };
+
+    const discoverResult = await this.switchPortSync.discoverPorts({
+      tenantId: sw.tenantId,
+      gatewayId: sw.gatewayId as string,
+      ip: sw.ip as string,
+      port: sw.port ?? DEFAULT_SNMP_PORT,
+      snmpVersion: cfg.snmpVersion === '1' ? '1' : '2c',
+      community: String(cfg.community ?? 'public'),
+    });
+
+    if (!discoverResult.success) {
+      throw new BadRequestException({
+        message: discoverResult.error ?? 'Falha na descoberta de portas',
+        code: 'SWITCH_PORT_DISCOVER_FAILED',
+      });
+    }
+
+    const { ports, sysDescr } = discoverResult;
+
+    // Carrega pontos de porta existentes (sw-state, sw-in, sw-out).
+    const existingPortPoints = await this.prisma.devicePoint.findMany({
+      where: {
+        deviceId: id,
+        objectType: { in: ['sw-state', 'sw-in', 'sw-out'] },
+      },
+    });
+
+    // Mapeia ifIndex → pontos existentes.
+    const existingByIndex = new Map<number, Array<typeof existingPortPoints[0]>>();
+    for (const p of existingPortPoints) {
+      const ifIndex = p.instance;
+      if (ifIndex === null) continue;
+      const arr = existingByIndex.get(ifIndex) ?? [];
+      arr.push(p);
+      existingByIndex.set(ifIndex, arr);
+    }
+
+    const discoveredIndexes = new Set(ports.map((p) => p.ifIndex));
+    const existingIndexes = new Set(existingByIndex.keys());
+
+    const toAdd = ports.filter((p) => !existingIndexes.has(p.ifIndex));
+    const toCheck = ports.filter((p) => existingIndexes.has(p.ifIndex));
+    const removed = [...existingIndexes].filter((idx) => !discoveredIndexes.has(idx));
+
+    let added = 0;
+    let updated = 0;
+
+    // Cria 3 pontos para cada nova porta descoberta.
+    for (const port of toAdd) {
+      const portLabel = port.ifAlias?.trim() || port.ifDescr?.trim() || `Porta ${port.ifIndex}`;
+      const speedLabel = port.ifHighSpeed ? ` ${port.ifHighSpeed}Mbps` : '';
+      const speedSuffix = speedLabel ? ` (${port.ifHighSpeed}Mbps)` : '';
+
+      await this.prisma.device.update({
+        where: { id },
+        data: {
+          points: {
+            create: [
+              {
+                tag: `PORT_${port.ifIndex}_STATUS`,
+                objectName: `${portLabel}${speedSuffix} — Status`,
+                objectType: 'sw-state',
+                instance: port.ifIndex,
+                unit: '',
+                binding: {
+                  metric: 'if_oper_status',
+                  collectionType: 'table',
+                  ifIndex: port.ifIndex,
+                },
+              },
+              {
+                tag: `PORT_${port.ifIndex}_IN`,
+                objectName: `${portLabel}${speedSuffix} — Tráfego entrada`,
+                objectType: 'sw-in',
+                instance: port.ifIndex,
+                unit: 'B/s',
+                binding: {
+                  metric: 'if_in_octets',
+                  collectionType: 'table',
+                  ifIndex: port.ifIndex,
+                },
+              },
+              {
+                tag: `PORT_${port.ifIndex}_OUT`,
+                objectName: `${portLabel}${speedSuffix} — Tráfego saída`,
+                objectType: 'sw-out',
+                instance: port.ifIndex,
+                unit: 'B/s',
+                binding: {
+                  metric: 'if_out_octets',
+                  collectionType: 'table',
+                  ifIndex: port.ifIndex,
+                },
+              },
+            ],
+          },
+        },
+      });
+
+      // Trend default para if_oper_status (histórico de estado da porta).
+      // Auto-trends para if_in_octets / if_out_octets: NÃO (política de volume).
+      const statusPoint = await this.prisma.devicePoint.findFirst({
+        where: { deviceId: id, objectType: 'sw-state', instance: port.ifIndex },
+      });
+      if (statusPoint) {
+        const existingTrend = await this.prisma.trend.findFirst({
+          where: { pointId: statusPoint.id },
+        });
+        if (!existingTrend) {
+          await this.prisma.trend.create({
+            data: {
+              pointId: statusPoint.id,
+              tenantId: sw.tenantId,
+              name: `${portLabel} — Status`,
+              mode: 'ON_CHANGE',
+              retentionDays: 90,
+            },
+          });
+        }
+      }
+
+      added++;
+    }
+
+    // Atualiza objectName de portas existentes com alias/nome alterados.
+    for (const port of toCheck) {
+      const portLabel = port.ifAlias?.trim() || port.ifDescr?.trim() || `Porta ${port.ifIndex}`;
+      const speedSuffix = port.ifHighSpeed ? ` (${port.ifHighSpeed}Mbps)` : '';
+      const existingPoints = existingByIndex.get(port.ifIndex) ?? [];
+
+      for (const p of existingPoints) {
+        let expectedName: string;
+        if (p.objectType === 'sw-state') expectedName = `${portLabel}${speedSuffix} — Status`;
+        else if (p.objectType === 'sw-in') expectedName = `${portLabel}${speedSuffix} — Tráfego entrada`;
+        else expectedName = `${portLabel}${speedSuffix} — Tráfego saída`;
+
+        if (p.objectName !== expectedName) {
+          await this.prisma.devicePoint.update({
+            where: { id: p.id },
+            data: { objectName: expectedName },
+          });
+          updated++;
+        }
+      }
+    }
+
+    // Republica a config do switch para o gateway (pontos novos/atualizados).
+    await this.configPublisher.publishForDevice(id);
+
+    this.logger.log(
+      `Switch ${id} sync-ports: +${added} portas, ${updated} atualizadas, ` +
+        `${removed.length} a remover`,
+    );
+
+    return {
+      success: true as const,
+      added,
+      updated,
+      removed,
+      sysDescr,
+      ports: ports.map((p) => ({
+        ifIndex: p.ifIndex,
+        ifDescr: p.ifDescr,
+        ifAlias: p.ifAlias,
+        ifType: p.ifType,
+        ifHighSpeed: p.ifHighSpeed,
+        ifOperStatus: p.ifOperStatus,
+        existsInDb: existingIndexes.has(p.ifIndex),
+      })),
+    };
+  }
+
+  /**
+   * DELETE /cftv/switches/:id/ports/:ifIndex — remove todos os pontos de uma
+   * porta específica (sw-state, sw-in, sw-out) após confirmação de senha.
+   */
+  @Delete('switches/:id/ports/:ifIndex')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(JwtAuthGuard, SensitiveActionGuard)
+  async deletePort(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Param('ifIndex') ifIndexStr: string,
+  ) {
+    const ifIndex = Number(ifIndexStr);
+    if (!Number.isFinite(ifIndex) || ifIndex <= 0) {
+      throw new BadRequestException('ifIndex inválido');
+    }
+    const sw = await this.findSwitchOrThrow(id);
+    this.assertCanEdit(user, sw.tenantId);
+
+    await this.prisma.devicePoint.deleteMany({
+      where: {
+        deviceId: id,
+        objectType: { in: ['sw-state', 'sw-in', 'sw-out'] },
+        instance: ifIndex,
+      },
+    });
+
+    await this.configPublisher.publishForDevice(id);
+    this.logger.log(`Switch ${id} porta ifIndex=${ifIndex} removida por ${user.email}`);
+  }
+
+  /** POST /cftv/switches/:id/probe-capabilities — executa probe de capacidades. */
+  @Post('switches/:id/probe-capabilities')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  async probeSwitchCapabilities(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    const sw = await this.findSwitchOrThrow(id);
+    this.assertCanEdit(user, sw.tenantId);
+    return this.capabilityProbe.probeDevice(id);
+  }
+
+  /** GET /cftv/switches/:id/capabilities — lê capacidades salvas do switch. */
+  @Get('switches/:id/capabilities')
+  @UseGuards(JwtAuthGuard)
+  async getSwitchCapabilities(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    const sw = await this.findSwitchOrThrow(id);
+    this.assertCanEdit(user, sw.tenantId);
+    const maps = await this.prisma.deviceCapabilityMap.findMany({
+      where: { deviceId: id },
+      orderBy: { metricKey: 'asc' },
+    });
+    return maps.map((m) => ({
+      metricKey: m.metricKey,
+      state: m.state,
+      probeValue: m.probeValue ?? null,
+      profileId: m.profileId ?? null,
+      lastProbeAt: m.lastProbeAt?.toISOString() ?? null,
+    }));
+  }
+
+  // ─── NVRs/DVRs gerenciáveis (SNMP) ─────────────────────────────────────────
+
+  /** GET /cftv/nvrs — lista NVRs/DVRs do tenant. */
+  @Get('nvrs')
+  @UseGuards(JwtAuthGuard)
+  async listNvrs(@CurrentUser() user: AuthenticatedUser, @Query('tenantId') tenantId?: string) {
+    const scopeTenantId = resolveTenantScope(user, tenantId);
+    const nvrs = await this.prisma.device.findMany({
+      where: { ...(scopeTenantId ? { tenantId: scopeTenantId } : {}), ...ONLY_NVR_DEVICES },
+      include: { points: true, site: true },
+      orderBy: { name: 'asc' },
+    });
+    const lastSeenMap = await this.deviceStatus.resolveLastSeenMany(nvrs.map((n) => n.id));
+    return nvrs.map((nvr) => this.mapNvr(nvr as Parameters<typeof this.mapNvr>[0], lastSeenMap.get(nvr.id) ?? null));
+  }
+
+  /** POST /cftv/nvrs — cadastra um NVR/DVR. */
+  @Post('nvrs')
+  @HttpCode(HttpStatus.CREATED)
+  @UseGuards(JwtAuthGuard)
+  async createNvr(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() body: NvrBody,
+  ) {
+    const name = body.name?.trim();
+    const ip = body.ip?.trim();
+    if (!name) throw new BadRequestException('name é obrigatório');
+    if (!ip) throw new BadRequestException('ip é obrigatório');
+    if (!body.gatewayId) throw new BadRequestException('gatewayId é obrigatório');
+
+    const tenantId = resolveBodyTenantScope(user, body.tenantId);
+    if (!tenantId) throw new BadRequestException('tenantId é obrigatório');
+
+    await this.assertGatewayInTenant(body.gatewayId, tenantId);
+
+    // Teste de alcançabilidade via SNMP antes de salvar.
+    const testResult = await this.snmpHealthTest.test({
+      tenantId,
+      gatewayId: body.gatewayId,
+      ip,
+      port: body.port || DEFAULT_SNMP_PORT,
+      snmpVersion: body.snmpVersion ?? '2c',
+      community: body.community?.trim() || 'public',
+      oids: { uptime: '1.3.6.1.2.1.1.3.0' },
+    });
+    if (!testResult.success || !testResult.reachable) {
+      throw new BadRequestException({
+        message: testResult.success ? 'NVR não respondeu ao SNMP' : testResult.error,
+        code: 'NVR_UNREACHABLE',
+      });
+    }
+
+    const nvr = await this.prisma.device.create({
+      data: {
+        name,
+        protocol: SNMP_PROTOCOL,
+        monitoredDeviceType: 'NVR',
+        ip,
+        port: body.port || DEFAULT_SNMP_PORT,
+        status: 'offline',
+        tenantId,
+        siteId: body.siteId || null,
+        gatewayId: body.gatewayId,
+        config: {
+          snmpVersion: body.snmpVersion ?? '2c',
+          community: body.community?.trim() || 'public',
+          pollingIntervalMs: (body.pollingInterval ?? DEFAULT_POLLING_S) * 1000,
+          manufacturer: body.manufacturer?.trim() || null,
+          ...(body.profileId !== undefined ? { profileId: body.profileId } : {}),
+          ...(body.profileOverrides !== undefined ? { profileOverrides: body.profileOverrides } : {}),
+        },
+        points: {
+          create: DEFAULT_NVR_POINTS.map((p, i) => ({
+            tag: p.tag,
+            objectName: p.objectName,
+            objectType: 'snmp',
+            instance: i,
+            unit: p.unit,
+            binding: { metric: p.metric, oid: p.oid, scale: p.scale },
+          })),
+        },
+      },
+      include: { points: true, site: true },
+    });
+
+    await this.configPublisher.publishForDevice(nvr.id);
+    this.logger.log(`NVR cadastrado: ${nvr.id} (${ip}) por ${user.email}`);
+    return this.mapNvr(nvr as Parameters<typeof this.mapNvr>[0], null);
+  }
+
+  /** GET /cftv/nvrs/:id — detalhe de um NVR com pontos e health. */
+  @Get('nvrs/:id')
+  @UseGuards(JwtAuthGuard)
+  async getNvr(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    const nvr = await this.findNvrOrThrow(id);
+    const tenantScope = resolveTenantScope(user, nvr.tenantId);
+    if (tenantScope && tenantScope !== nvr.tenantId) {
+      throw new NotFoundException('NVR não encontrado');
+    }
+    const withPoints = await this.prisma.device.findUniqueOrThrow({
+      where: { id },
+      include: { points: true, site: true },
+    });
+    const lastCommunication = await this.deviceStatus.resolveLastSeen(id);
+    return this.mapNvr(withPoints as Parameters<typeof this.mapNvr>[0], lastCommunication);
+  }
+
+  /** PATCH /cftv/nvrs/:id — edita nome/site/rede/config SNMP. */
+  @Patch('nvrs/:id')
+  @UseGuards(JwtAuthGuard)
+  async updateNvr(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() body: NvrBody,
+  ) {
+    const nvr = await this.findNvrOrThrow(id);
+    this.assertCanEdit(user, nvr.tenantId);
+
+    if (body.gatewayId) {
+      await this.assertGatewayInTenant(body.gatewayId, nvr.tenantId);
+    }
+
+    const cfg = (nvr.config ?? {}) as Record<string, unknown>;
+    const updatedConfig = {
+      ...cfg,
+      ...(body.snmpVersion !== undefined ? { snmpVersion: body.snmpVersion } : {}),
+      ...(body.community !== undefined ? { community: body.community?.trim() || 'public' } : {}),
+      ...(body.pollingInterval !== undefined ? { pollingIntervalMs: body.pollingInterval * 1000 } : {}),
+      ...(body.manufacturer !== undefined ? { manufacturer: body.manufacturer?.trim() || null } : {}),
+      ...(body.profileId !== undefined ? { profileId: body.profileId } : {}),
+      ...(body.profileOverrides !== undefined ? { profileOverrides: body.profileOverrides } : {}),
+    };
+
+    const updated = await this.prisma.device.update({
+      where: { id },
+      data: {
+        ...(body.name ? { name: body.name.trim() } : {}),
+        ...(body.siteId !== undefined ? { siteId: body.siteId || null } : {}),
+        ...(body.gatewayId ? { gatewayId: body.gatewayId } : {}),
+        ...(body.ip ? { ip: body.ip.trim() } : {}),
+        ...(body.port !== undefined ? { port: body.port || DEFAULT_SNMP_PORT } : {}),
+        config: updatedConfig as Prisma.InputJsonValue,
+      },
+      include: { points: true, site: true },
+    });
+
+    await this.configPublisher.publishForDevice(id);
+    return this.mapNvr(updated as Parameters<typeof this.mapNvr>[0], await this.deviceStatus.resolveLastSeen(id));
+  }
+
+  /** DELETE /cftv/nvrs/:id — remove o NVR e todos os seus pontos. */
+  @Delete('nvrs/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(JwtAuthGuard, SensitiveActionGuard)
+  async deleteNvr(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    const nvr = await this.findNvrOrThrow(id);
+    this.assertCanEdit(user, nvr.tenantId);
+    await this.prisma.device.delete({ where: { id } });
+    this.logger.log(`NVR removido: ${id} por ${user.email}`);
+  }
+
+  /**
+   * POST /cftv/nvrs/:id/sync-disks — descobre discos e canais via SNMP e
+   * sincroniza os DevicePoint do banco:
+   *   - Disco novo: cria 3 pontos por slot (nvr-disk, nvr-disk-cap, nvr-disk-used).
+   *   - Canal novo: cria 1 ponto por canal (nvr-chan).
+   *   - Pontos existentes: atualiza objectName e lastValue/lastValueAt.
+   *   - Para cada novo ponto nvr-disk (disk_status): cria trend default.
+   *
+   * Normalização Hikvision: disk_used = capacity - freeValue (nunca expõe freeGb à UI).
+   *
+   * Retorna { added, updatedDisks, updatedChannels, sysDescr, disks, channels }.
+   */
+  @Post('nvrs/:id/sync-disks')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  async syncNvrDisks(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    const nvr = await this.findNvrOrThrow(id);
+    this.assertCanEdit(user, nvr.tenantId);
+
+    if (!nvr.gatewayId) {
+      throw new BadRequestException('NVR sem gateway associado');
+    }
+
+    const gwOnline = this.deviceStatus.getStatus(nvr.gatewayId) === 'online';
+    if (!gwOnline) {
+      throw new BadRequestException('Gateway offline — não é possível descobrir discos agora');
+    }
+
+    const cfg = (nvr.config ?? {}) as {
+      snmpVersion?: string;
+      community?: string;
+      manufacturer?: string | null;
+      profileId?: string | null;
+      profileSource?: string;
+    };
+
+    // ── Resolução do perfil vendor ────────────────────────────────────────────
+    //
+    // Só perfis com entradas em NVR_TABLE_OIDS são considerados "vendor" para fins
+    // de tabela. 'base-nvr' (GENERIC_NVR_PROFILE.id) NÃO está nessa tabela — seria
+    // tratado como "sem perfil", causando OIDs vazios e descoberta silenciosa vazia.
+    //
+    // Estratégia em duas etapas:
+    //   1. Se há profileId vendor no config (definido manualmente ou por probe
+    //      anterior) → usa diretamente com os OIDs corretos em uma só chamada.
+    //   2. Se não há → primeira chamada com OIDs vazios apenas para obter sysDescr.
+    //      Se o gateway retornar sysDescr que identifica um fabricante, faz uma
+    //      segunda chamada com os OIDs vendor corretos E persiste o profileId.
+    const hasVendorOids = (id: string | null | undefined): id is string =>
+      !!id && id in NVR_TABLE_OIDS;
+
+    const buildOids = (
+      profileId: string | null,
+    ): { disk: NvrDiskTableOids; channel: NvrChannelTableOids } => {
+      const entry = profileId ? NVR_TABLE_OIDS[profileId] : undefined;
+      return { disk: entry?.disk ?? {}, channel: entry?.channel ?? {} };
+    };
+
+    // Resolve profileId: config explícito > hint por manufacturer > nenhum.
+    let resolvedProfileId: string | null = hasVendorOids(cfg.profileId) ? cfg.profileId : null;
+    if (!resolvedProfileId && cfg.manufacturer) {
+      const byMfr = detectNvrProfile(null, null, cfg.manufacturer);
+      if (hasVendorOids(byMfr.id)) resolvedProfileId = byMfr.id;
+    }
+
+    // Parâmetros SNMP compartilhados entre as duas chamadas.
+    const snmpTarget = {
+      tenantId: nvr.tenantId,
+      gatewayId: nvr.gatewayId as string,
+      ip: nvr.ip as string,
+      port: nvr.port ?? DEFAULT_SNMP_PORT,
+      snmpVersion: (cfg.snmpVersion === '1' ? '1' : '2c') as '1' | '2c',
+      community: String(cfg.community ?? 'public'),
+    };
+
+    // Primeira chamada: com OIDs vendor se conhecidos, ou vazia (só sysDescr).
+    let tableOids = buildOids(resolvedProfileId);
+    let discoverResult = await this.nvrTableSync.discoverNvrTables({
+      ...snmpTarget,
+      diskTableOids: tableOids.disk,
+      channelTableOids: tableOids.channel,
+    });
+
+    if (!discoverResult.success) {
+      throw new BadRequestException({
+        message: discoverResult.error ?? 'Falha na descoberta de discos/canais',
+        code: 'NVR_DISK_DISCOVER_FAILED',
+      });
+    }
+
+    // ── Detecção via sysDescr (segunda chamada — só quando necessário) ────────
+    //
+    // Se não havia perfil vendor e o gateway retornou sysDescr útil:
+    // tenta identificar o fabricante e re-descobre com OIDs corretos.
+    // Persiste o profileId detectado para evitar re-detecção no próximo sync.
+    if (!resolvedProfileId && discoverResult.sysDescr) {
+      const detected = detectNvrProfile(discoverResult.sysDescr, null, cfg.manufacturer ?? null);
+      if (hasVendorOids(detected.id)) {
+        resolvedProfileId = detected.id;
+        tableOids = buildOids(resolvedProfileId);
+
+        // Segunda chamada com OIDs vendor corretos.
+        const rediscoverResult = await this.nvrTableSync.discoverNvrTables({
+          ...snmpTarget,
+          diskTableOids: tableOids.disk,
+          channelTableOids: tableOids.channel,
+        });
+        if (rediscoverResult.success) {
+          discoverResult = rediscoverResult;
+        }
+
+        // Persiste profileId detectado (não sobrescreve seleção manual).
+        if (cfg.profileSource !== 'manual') {
+          await this.prisma.device.update({
+            where: { id },
+            data: {
+              config: {
+                ...(nvr.config as Record<string, unknown> ?? {}),
+                profileId: resolvedProfileId,
+                profileSource: 'detected',
+              } as Prisma.InputJsonValue,
+            },
+          });
+        }
+      }
+    }
+
+    const { disks: discoveredDisks, channels: discoveredChannels, sysDescr } = discoverResult;
+
+    // diskScale resolvido aqui para que a resposta imediata use os mesmos valores GB
+    // que foram persistidos — Dahua/Intelbras enviam MB (scale 0.001 → GB).
+    const diskScaleForResponse: number = tableOids.disk.diskScale ?? 1;
+
+    // Carrega pontos de disco/canal existentes.
+    const existingDiskPoints = await this.prisma.devicePoint.findMany({
+      where: { deviceId: id, objectType: { in: ['nvr-disk', 'nvr-disk-cap', 'nvr-disk-used'] } },
+    });
+    const existingChanPoints = await this.prisma.devicePoint.findMany({
+      where: { deviceId: id, objectType: 'nvr-chan' },
+    });
+
+    // Mapeia slotIndex → pontos existentes.
+    const diskBySlot = new Map<number, { status?: typeof existingDiskPoints[0]; cap?: typeof existingDiskPoints[0]; used?: typeof existingDiskPoints[0] }>();
+    for (const p of existingDiskPoints) {
+      const slot = p.instance;
+      if (slot === null) continue;
+      const entry = diskBySlot.get(slot) ?? {};
+      if (p.objectType === 'nvr-disk') entry.status = p;
+      else if (p.objectType === 'nvr-disk-cap') entry.cap = p;
+      else if (p.objectType === 'nvr-disk-used') entry.used = p;
+      diskBySlot.set(slot, entry);
+    }
+
+    const chanByIdx = new Map<number, typeof existingChanPoints[0]>();
+    for (const p of existingChanPoints) {
+      if (p.instance !== null) chanByIdx.set(p.instance, p);
+    }
+
+    let added = 0;
+    let updatedDisks = 0;
+    let updatedChannels = 0;
+
+    const now = new Date();
+
+    // diskScale: fator de conversão de unidade para disco (padrão 1 = GB nativo).
+    // Dahua/Intelbras reportam MB → 0.001; Hikvision reporta GB → 1.
+    const diskScale: number = tableOids.disk.diskScale ?? 1;
+
+    for (const disk of discoveredDisks) {
+      const { slotIndex, status, capacityValue, usedValue, freeValue } = disk;
+
+      // Aplica scale nos valores brutos ANTES de persistir.
+      // O gateway receberá o `scale` no binding e também o aplicará na telemetria.
+      const scaledCapacity: number | null = capacityValue !== null ? capacityValue * diskScale : null;
+      const scaledFree: number | null     = freeValue    !== null ? freeValue    * diskScale : null;
+      const scaledUsed: number | null     = usedValue    !== null ? usedValue    * diskScale : null;
+
+      // Normaliza espaço usado: Hikvision usa freeValue, outros usedValue.
+      // disk_used = capacity - free (Hikvision); disk_used = used (outros).
+      // Ambos os lados já estão em GB (após a aplicação do diskScale).
+      const normalizedUsed: number | null =
+        scaledFree !== null && scaledCapacity !== null
+          ? scaledCapacity - scaledFree
+          : scaledUsed;
+
+      const existing = diskBySlot.get(slotIndex);
+
+      if (!existing) {
+        // Cria 3 pontos novos.
+        // `scale` no binding é lido pelo config-publisher e enviado ao gateway;
+        // o driver usa-o na telemetria contínua para converter MB→GB.
+        await this.prisma.device.update({
+          where: { id },
+          data: {
+            points: {
+              create: [
+                {
+                  tag: `DISCO_${slotIndex}_STATUS`,
+                  objectName: `Disco ${slotIndex} — Status`,
+                  objectType: 'nvr-disk',
+                  instance: slotIndex,
+                  unit: '',
+                  binding: {
+                    metric: 'disk_status',
+                    collectionType: 'table',
+                    slotIndex,
+                    tableOidPrefix: tableOids.disk.status ?? null,
+                    // Status não tem scale (é enumeração).
+                  },
+                  ...(status !== null ? { lastValue: status, lastValueAt: now } : {}),
+                },
+                {
+                  tag: `DISCO_${slotIndex}_CAP`,
+                  objectName: `Disco ${slotIndex} — Capacidade`,
+                  objectType: 'nvr-disk-cap',
+                  instance: slotIndex,
+                  unit: 'GB',
+                  binding: {
+                    metric: 'disk_capacity',
+                    collectionType: 'table',
+                    slotIndex,
+                    tableOidPrefix: tableOids.disk.capacityGb ?? null,
+                    // scale permite ao gateway converter MB→GB na telemetria contínua.
+                    ...(diskScale !== 1 ? { scale: diskScale } : {}),
+                  },
+                  ...(scaledCapacity !== null ? { lastValue: scaledCapacity, lastValueAt: now } : {}),
+                },
+                {
+                  tag: `DISCO_${slotIndex}_USADO`,
+                  objectName: `Disco ${slotIndex} — Espaço usado`,
+                  objectType: 'nvr-disk-used',
+                  instance: slotIndex,
+                  unit: 'GB',
+                  binding: {
+                    metric: 'disk_used',
+                    collectionType: 'table',
+                    slotIndex,
+                    // disk_used não tem OID próprio na Hikvision (derivado no driver):
+                    // tableOidPrefix só presente para Dahua/Intelbras.
+                    tableOidPrefix: tableOids.disk.usedGb ?? null,
+                    ...(diskScale !== 1 ? { scale: diskScale } : {}),
+                  },
+                  ...(normalizedUsed !== null ? { lastValue: normalizedUsed, lastValueAt: now } : {}),
+                },
+              ],
+            },
+          },
+        });
+
+        // Trend default para disk_status (histórico de estado).
+        const statusPoint = await this.prisma.devicePoint.findFirst({
+          where: { deviceId: id, objectType: 'nvr-disk', instance: slotIndex },
+        });
+        if (statusPoint) {
+          const existing = await this.prisma.trend.findFirst({ where: { pointId: statusPoint.id } });
+          if (!existing) {
+            await this.prisma.trend.create({
+              data: {
+                pointId: statusPoint.id,
+                tenantId: nvr.tenantId,
+                name: `Disco ${slotIndex} — Status`,
+                mode: 'ON_CHANGE',
+                retentionDays: 90,
+              },
+            });
+          }
+        }
+
+        added++;
+      } else {
+        // Atualiza lastValue dos pontos existentes (valores já em GB após diskScale).
+        if (existing.status && status !== null) {
+          await this.prisma.devicePoint.update({
+            where: { id: existing.status.id },
+            data: { lastValue: status, lastValueAt: now },
+          });
+        }
+        if (existing.cap && scaledCapacity !== null) {
+          await this.prisma.devicePoint.update({
+            where: { id: existing.cap.id },
+            data: { lastValue: scaledCapacity, lastValueAt: now },
+          });
+        }
+        if (existing.used && normalizedUsed !== null) {
+          await this.prisma.devicePoint.update({
+            where: { id: existing.used.id },
+            data: { lastValue: normalizedUsed, lastValueAt: now },
+          });
+        }
+        updatedDisks++;
+      }
+    }
+
+    // Canais de gravação.
+    for (const chan of discoveredChannels) {
+      const { channelIndex, status } = chan;
+      const existingChan = chanByIdx.get(channelIndex);
+
+      if (!existingChan) {
+        await this.prisma.device.update({
+          where: { id },
+          data: {
+            points: {
+              create: [
+                {
+                  tag: `CANAL_${channelIndex}_STATUS`,
+                  objectName: `Canal ${channelIndex} — Status`,
+                  objectType: 'nvr-chan',
+                  instance: channelIndex,
+                  unit: '',
+                  binding: {
+                    metric: 'channel_status',
+                    collectionType: 'table',
+                    channelIndex,
+                    tableOidPrefix: tableOids.channel.status ?? null,
+                  },
+                  ...(status !== null ? { lastValue: status, lastValueAt: now } : {}),
+                },
+              ],
+            },
+          },
+        });
+        added++;
+      } else {
+        if (status !== null) {
+          await this.prisma.devicePoint.update({
+            where: { id: existingChan.id },
+            data: { lastValue: status, lastValueAt: now },
+          });
+          updatedChannels++;
+        }
+      }
+    }
+
+    // Republica a config para o gateway (novos pontos/bindings).
+    await this.configPublisher.publishForDevice(id);
+
+    this.logger.log(
+      `NVR ${id} sync-disks: +${added} pontos, ${updatedDisks} discos atualizados, ` +
+        `${updatedChannels} canais atualizados`,
+    );
+
+    const diskStatusLabels: Record<number, string> = {
+      0: 'sem disco',
+      1: 'normal',
+      2: 'erro',
+      3: 'não formatado',
+      4: 'inicializando',
+    };
+    const chanStatusLabels: Record<number, string> = {
+      0: 'offline',
+      1: 'idle',
+      2: 'gravando',
+      3: 'alarme',
+    };
+
+    return {
+      success: true as const,
+      added,
+      updatedDisks,
+      updatedChannels,
+      sysDescr: sysDescr ?? null,
+      disks: discoveredDisks.map((d) => {
+        // Normaliza uso: Hikvision fornece disk_free; Dahua/Intelbras fornecem disk_used.
+        const rawUsed: number | null =
+          d.freeValue !== null && d.capacityValue !== null
+            ? d.capacityValue - d.freeValue
+            : d.usedValue;
+        // Aplica diskScale para alinhar unidade da resposta com os pontos persistidos:
+        // Dahua/Intelbras reportam MB (diskScale=0.001), Hikvision reporta GB (=1).
+        const capacityGb = d.capacityValue !== null ? d.capacityValue * diskScaleForResponse : null;
+        const usedGb     = rawUsed          !== null ? rawUsed          * diskScaleForResponse : null;
+        return {
+          slotIndex: d.slotIndex,
+          status: d.status,
+          statusLabel: d.status !== null ? (diskStatusLabels[d.status] ?? String(d.status)) : null,
+          capacityGb,
+          usedGb,
+        };
+      }),
+      channels: discoveredChannels.map((c) => ({
+        channelIndex: c.channelIndex,
+        status: c.status,
+        statusLabel: c.status !== null ? (chanStatusLabels[c.status] ?? String(c.status)) : null,
+      })),
+    };
+  }
+
+  /** POST /cftv/nvrs/:id/probe-capabilities — executa probe de capacidades. */
+  @Post('nvrs/:id/probe-capabilities')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  async probeNvrCapabilities(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    const nvr = await this.findNvrOrThrow(id);
+    this.assertCanEdit(user, nvr.tenantId);
+    return this.capabilityProbe.probeDevice(id);
+  }
+
+  /** GET /cftv/nvrs/:id/capabilities — lê capacidades salvas do NVR. */
+  @Get('nvrs/:id/capabilities')
+  @UseGuards(JwtAuthGuard)
+  async getNvrCapabilities(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    const nvr = await this.findNvrOrThrow(id);
+    this.assertCanEdit(user, nvr.tenantId);
+    const maps = await this.prisma.deviceCapabilityMap.findMany({
+      where: { deviceId: id },
+      orderBy: { metricKey: 'asc' },
+    });
+    return maps.map((m) => ({
+      metricKey: m.metricKey,
+      state: m.state,
+      probeValue: m.probeValue ?? null,
+      profileId: m.profileId ?? null,
+      lastProbeAt: m.lastProbeAt?.toISOString() ?? null,
+    }));
+  }
+
+  // ── private helpers para NVRs ──────────────────────────────────────────────
+
+  private async findNvrOrThrow(id: string) {
+    const nvr = await this.prisma.device.findFirst({
+      where: { id, ...ONLY_NVR_DEVICES },
+    });
+    if (!nvr) throw new NotFoundException('NVR não encontrado');
+    return nvr;
+  }
+
+  private mapNvr(
+    nvr: Prisma.DeviceGetPayload<{ include: { points: true; site: true } }>,
+    lastCommunication: string | null,
+  ) {
+    const cfg = (nvr.config ?? {}) as {
+      snmpVersion?: string;
+      community?: string;
+      pollingIntervalMs?: number;
+      manufacturer?: string | null;
+      profileId?: string | null;
+      profileSource?: string;
+      profileOverrides?: Record<string, string> | null;
+    };
+
+    const gatewayOnline: boolean | null = nvr.gatewayId
+      ? this.deviceStatus.getStatus(nvr.gatewayId) === 'online'
+      : null;
+
+    const scalarPoints = nvr.points.filter(
+      (p) => !['nvr-disk', 'nvr-disk-cap', 'nvr-disk-used', 'nvr-chan'].includes(p.objectType ?? ''),
+    );
+    const diskPoints = nvr.points.filter((p) => ['nvr-disk', 'nvr-disk-cap', 'nvr-disk-used'].includes(p.objectType ?? ''));
+    const chanPoints = nvr.points.filter((p) => p.objectType === 'nvr-chan');
+
+    // Agrupa pontos de disco por slotIndex.
+    const diskBySlot = new Map<number, {
+      slotIndex: number;
+      statusPoint: typeof diskPoints[0] | null;
+      capPoint: typeof diskPoints[0] | null;
+      usedPoint: typeof diskPoints[0] | null;
+    }>();
+    for (const p of diskPoints) {
+      const slot = p.instance;
+      if (slot === null) continue;
+      const entry = diskBySlot.get(slot) ?? { slotIndex: slot, statusPoint: null, capPoint: null, usedPoint: null };
+      if (p.objectType === 'nvr-disk') entry.statusPoint = p;
+      else if (p.objectType === 'nvr-disk-cap') entry.capPoint = p;
+      else if (p.objectType === 'nvr-disk-used') entry.usedPoint = p;
+      diskBySlot.set(slot, entry);
+    }
+
+    const diskStatusLabels: Record<number, string> = {
+      0: 'sem disco', 1: 'normal', 2: 'erro', 3: 'não formatado', 4: 'inicializando',
+    };
+    const chanStatusLabels: Record<number, string> = {
+      0: 'offline', 1: 'idle', 2: 'gravando', 3: 'alarme',
+    };
+
+    return {
+      id: nvr.id,
+      name: nvr.name,
+      ip: nvr.ip,
+      port: nvr.port,
+      protocol: nvr.protocol,
+      monitoredDeviceType: 'NVR',
+      snmpVersion: cfg.snmpVersion ?? '2c',
+      community: cfg.community ?? 'public',
+      pollingInterval: cfg.pollingIntervalMs ? cfg.pollingIntervalMs / 1000 : DEFAULT_POLLING_S,
+      manufacturer: cfg.manufacturer ?? null,
+      profileId: cfg.profileId ?? null,
+      profileLabel: resolveNvrProfileLabel(cfg.profileId ?? null),
+      profileSource: cfg.profileSource ?? 'generic',
+      profileOverrides: cfg.profileOverrides ?? null,
+      site: nvr.site?.name ?? '',
+      siteId: nvr.siteId,
+      tenantId: nvr.tenantId,
+      gatewayId: nvr.gatewayId,
+      gatewayOnline,
+      status: this.deviceStatus.getStatus(nvr.id),
+      critical: nvr.critical,
+      lastCommunication,
+      // Pontos escalares (STATUS, UPTIME, CPU, MEMORIA, TEMPERATURA).
+      points: scalarPoints.map((p) => {
+        const b = (p.binding ?? {}) as { metric?: string; oid?: string | null; unsupported?: boolean };
+        return {
+          id: p.id,
+          tag: p.tag,
+          objectName: p.objectName,
+          metric: b.metric ?? 'custom',
+          oid: b.oid ?? null,
+          unsupported: Boolean(b.unsupported),
+          unit: p.unit ?? '',
+          critical: p.critical,
+          lastValue: p.lastValue ?? null,
+          lastValueAt: p.lastValueAt ? p.lastValueAt.toISOString() : null,
+          lastValueState: p.lastValueState ?? null,
+        };
+      }),
+      // Discos sincronizados (agrupados por slotIndex).
+      disks: [...diskBySlot.values()]
+        .sort((a, b) => a.slotIndex - b.slotIndex)
+        .map((entry) => ({
+          slotIndex: entry.slotIndex,
+          statusPoint: entry.statusPoint ? {
+            id: entry.statusPoint.id,
+            tag: entry.statusPoint.tag,
+            lastValue: entry.statusPoint.lastValue ?? null,
+            statusLabel: entry.statusPoint.lastValue !== null
+              ? (diskStatusLabels[Number(entry.statusPoint.lastValue)] ?? String(entry.statusPoint.lastValue))
+              : null,
+          } : null,
+          capPoint: entry.capPoint ? {
+            id: entry.capPoint.id,
+            tag: entry.capPoint.tag,
+            lastValue: entry.capPoint.lastValue ?? null,
+          } : null,
+          usedPoint: entry.usedPoint ? {
+            id: entry.usedPoint.id,
+            tag: entry.usedPoint.tag,
+            lastValue: entry.usedPoint.lastValue ?? null,
+          } : null,
+        })),
+      // Canais de gravação sincronizados.
+      channels: chanPoints
+        .filter((p) => p.instance !== null)
+        .sort((a, b) => (a.instance ?? 0) - (b.instance ?? 0))
+        .map((p) => ({
+          channelIndex: p.instance!,
+          pointId: p.id,
+          lastValue: p.lastValue ?? null,
+          statusLabel: p.lastValue !== null
+            ? (chanStatusLabels[Number(p.lastValue)] ?? String(p.lastValue))
+            : null,
+        })),
+    };
+  }
+
+  // ── private helpers para switches ─────────────────────────────────────────
+
+  private async findSwitchOrThrow(id: string) {
+    const sw = await this.prisma.device.findFirst({
+      where: { id, ...ONLY_SWITCH_DEVICES },
+    });
+    if (!sw) throw new NotFoundException('Switch não encontrado');
+    return sw;
+  }
+
+  private mapSwitch(
+    sw: Prisma.DeviceGetPayload<{ include: { points: true; site: true } }>,
+    lastCommunication: string | null,
+  ) {
+    const cfg = (sw.config ?? {}) as {
+      snmpVersion?: string;
+      community?: string;
+      pollingIntervalMs?: number;
+      manufacturer?: string | null;
+      profileId?: string | null;
+      profileSource?: string;
+      profileOverrides?: Record<string, string> | null;
+    };
+
+    const gatewayOnline: boolean | null = sw.gatewayId
+      ? this.deviceStatus.getStatus(sw.gatewayId) === 'online'
+      : null;
+
+    const scalarPoints = sw.points.filter((p) => !['sw-state', 'sw-in', 'sw-out'].includes(p.objectType ?? ''));
+    const portPoints = sw.points.filter((p) => ['sw-state', 'sw-in', 'sw-out'].includes(p.objectType ?? ''));
+
+    // Agrupa pontos de porta por ifIndex.
+    const portsByIndex = new Map<number, {
+      ifIndex: number;
+      statePoint: typeof portPoints[0] | null;
+      inPoint: typeof portPoints[0] | null;
+      outPoint: typeof portPoints[0] | null;
+    }>();
+    for (const p of portPoints) {
+      const ifIndex = p.instance;
+      if (ifIndex === null) continue;
+      const entry = portsByIndex.get(ifIndex) ?? { ifIndex, statePoint: null, inPoint: null, outPoint: null };
+      if (p.objectType === 'sw-state') entry.statePoint = p;
+      else if (p.objectType === 'sw-in') entry.inPoint = p;
+      else if (p.objectType === 'sw-out') entry.outPoint = p;
+      portsByIndex.set(ifIndex, entry);
+    }
+
+    return {
+      id: sw.id,
+      name: sw.name,
+      ip: sw.ip,
+      port: sw.port,
+      protocol: sw.protocol,
+      monitoredDeviceType: 'SWITCH',
+      snmpVersion: cfg.snmpVersion ?? '2c',
+      community: cfg.community ?? 'public',
+      pollingInterval: cfg.pollingIntervalMs ? cfg.pollingIntervalMs / 1000 : DEFAULT_POLLING_S,
+      manufacturer: cfg.manufacturer ?? null,
+      profileId: cfg.profileId ?? null,
+      profileLabel: resolveProfileLabel(cfg.profileId ?? null),
+      profileSource: cfg.profileSource ?? 'generic',
+      profileOverrides: cfg.profileOverrides ?? null,
+      site: sw.site?.name ?? '',
+      siteId: sw.siteId,
+      tenantId: sw.tenantId,
+      gatewayId: sw.gatewayId,
+      gatewayOnline,
+      status: this.deviceStatus.getStatus(sw.id),
+      critical: sw.critical,
+      lastCommunication,
+      // Pontos escalares (STATUS, UPTIME, CPU).
+      points: scalarPoints.map((p) => {
+        const b = (p.binding ?? {}) as { metric?: string; oid?: string | null; unsupported?: boolean };
+        return {
+          id: p.id,
+          tag: p.tag,
+          objectName: p.objectName,
+          metric: b.metric ?? 'custom',
+          oid: b.oid ?? null,
+          unsupported: Boolean(b.unsupported),
+          unit: p.unit ?? '',
+          critical: p.critical,
+          lastValue: p.lastValue ?? null,
+          lastValueAt: p.lastValueAt ? p.lastValueAt.toISOString() : null,
+          lastValueState: p.lastValueState ?? null,
+        };
+      }),
+      // Portas sincronizadas.
+      ports: [...portsByIndex.values()]
+        .sort((a, b) => a.ifIndex - b.ifIndex)
+        .map((entry) => ({
+          ifIndex: entry.ifIndex,
+          statePoint: entry.statePoint ? {
+            id: entry.statePoint.id,
+            tag: entry.statePoint.tag,
+            objectName: entry.statePoint.objectName,
+            lastValue: entry.statePoint.lastValue ?? null,
+            lastValueAt: entry.statePoint.lastValueAt?.toISOString() ?? null,
+          } : null,
+          inPoint: entry.inPoint ? {
+            id: entry.inPoint.id,
+            tag: entry.inPoint.tag,
+            objectName: entry.inPoint.objectName,
+            lastValue: entry.inPoint.lastValue ?? null,
+            lastValueAt: entry.inPoint.lastValueAt?.toISOString() ?? null,
+          } : null,
+          outPoint: entry.outPoint ? {
+            id: entry.outPoint.id,
+            tag: entry.outPoint.tag,
+            objectName: entry.outPoint.objectName,
+            lastValue: entry.outPoint.lastValue ?? null,
+            lastValueAt: entry.outPoint.lastValueAt?.toISOString() ?? null,
+          } : null,
+        })),
+    };
+  }
+
   private async findCameraOrThrow(id: string) {
     const camera = await this.prisma.device.findFirst({
       where: { id, ...ONLY_CFTV_DEVICES },
@@ -1431,10 +3082,14 @@ export class CftvController {
       pollingIntervalMs?: number;
       onvifUsername?: string;
       onvifPasswordEnc?: string;
+      onvifPort?: number;
       deviceInfo?: OnvifDeviceInfo;
       pendingValidation?: boolean;
       manufacturer?: string | null;
       availability?: { onlineSince?: string };
+      profileId?: string | null;
+      profileSource?: 'detected' | 'manual' | 'generic';
+      profileOverrides?: Record<string, string> | null;
       snmpHealth?: {
         enabled?: boolean;
         port?: number;
@@ -1461,14 +3116,32 @@ export class CftvController {
           oids: healthOids,
         }
       : null;
+
+    // Liveness do gateway responsável pela câmera: sinal explícito LWT/heartbeat
+    // mantido em memória pelo DeviceStatusService (sobrepõe recência de telemetria).
+    // null = câmera sem gatewayId cadastrado (caso patológico — não aplica regra).
+    // TODO(follow-up): emitir via socket 'gateway:status' para atualização em tempo
+    // real; por ora o frontend usa refetch periódico de 30s (useCameras hook).
+    const gatewayOnline: boolean | null = camera.gatewayId
+      ? this.deviceStatus.getStatus(camera.gatewayId) === 'online'
+      : null;
+
     return {
       id: camera.id,
       name: camera.name,
       protocol: camera.protocol,
       monitoringProtocol: isOnvif ? 'onvif' : 'snmp',
-      // ONVIF: credenciais nunca saem na API — só o usuário e a flag de senha.
-      onvifUsername: isOnvif ? (cfg.onvifUsername ?? null) : null,
-      hasOnvifPassword: isOnvif ? Boolean(cfg.onvifPasswordEnc) : false,
+      // Credenciais nunca saem na API — só o usuário e a flag de senha.
+      // Na câmera SNMP são as credenciais opcionais de "Vídeo ao vivo".
+      onvifUsername: cfg.onvifUsername ?? null,
+      hasOnvifPassword: Boolean(cfg.onvifPasswordEnc),
+      // SNMP: porta do serviço ONVIF/vídeo (a porta principal é a do SNMP).
+      onvifPort: isOnvif ? null : (cfg.onvifPort ?? DEFAULT_ONVIF_PORT),
+      // "Ver ao vivo" disponível: ONVIF sempre; SNMP quando houver credenciais
+      // de vídeo ONVIF ou URL RTSP no cadastro.
+      liveViewAvailable:
+        isOnvif ||
+        Boolean((cfg.onvifUsername && cfg.onvifPasswordEnc) || cfg.rtspUrl),
       deviceInfo: isOnvif ? (cfg.deviceInfo ?? null) : null,
       // ONVIF: cadastro salvo sem probe bem-sucedido (re-validado em background).
       pendingValidation: isOnvif ? cfg.pendingValidation === true : false,
@@ -1479,11 +3152,18 @@ export class CftvController {
       // "Online desde" estimado pelo backend (transições do ponto STATUS) —
       // usado na UI como "tempo online estimado" quando não há uptime real.
       estimatedOnlineSince: cfg.availability?.onlineSince ?? null,
+      // Perfil de monitoramento: detectado automaticamente pelo probe ou
+      // selecionado manualmente pelo operador. 'generic' = nenhum perfil específico.
+      profileId: cfg.profileId ?? null,
+      profileLabel: resolveProfileLabel(cfg.profileId),
+      profileSource: cfg.profileSource ?? 'generic',
+      profileOverrides: cfg.profileOverrides ?? null,
       snmpHealth,
       site: camera.site?.name ?? '',
       siteId: camera.siteId,
       tenantId: camera.tenantId,
       gatewayId: camera.gatewayId,
+      gatewayOnline,
       ip: camera.ip,
       port: camera.port,
       snmpVersion: cfg.snmpVersion ?? '2c',

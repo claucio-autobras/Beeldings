@@ -16,6 +16,8 @@ interface SiteItem {
   id: string;
   name: string;
   tenantId: string;
+  location?: string | null;
+  responsibleName?: string | null;
   createdAt: string;
   _count?: { projects: number };
 }
@@ -34,10 +36,13 @@ interface NewSiteModalProps {
 
 function NewSiteModal({ tenantId, onClose, onCreated }: NewSiteModalProps) {
   const [name, setName] = useState('');
+  const [location, setLocation] = useState('');
+  const [responsibleName, setResponsibleName] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const mutation = useMutation({
-    mutationFn: (dto: { name: string; tenantId: string }) => apiPost<SiteItem>('/sites', dto),
+    mutationFn: (dto: { name: string; tenantId: string; location?: string; responsibleName?: string }) =>
+      apiPost<SiteItem>('/sites', dto),
     onSuccess: () => { onCreated(); onClose(); },
     onError: (err: Error) => setError(err.message),
   });
@@ -47,7 +52,12 @@ function NewSiteModal({ tenantId, onClose, onCreated }: NewSiteModalProps) {
     setError(null);
     if (!name.trim()) { setError('Nome é obrigatório'); return; }
     if (!tenantId) { setError('Selecione um cliente antes de criar um site'); return; }
-    mutation.mutate({ name: name.trim(), tenantId });
+    mutation.mutate({
+      name: name.trim(),
+      tenantId,
+      location: location.trim() || undefined,
+      responsibleName: responsibleName.trim() || undefined,
+    });
   }
 
   return (
@@ -72,7 +82,27 @@ function NewSiteModal({ tenantId, onClose, onCreated }: NewSiteModalProps) {
               Uma localidade física do cliente. Os projetos (BMS, CFTV, Energia...) são criados dentro dela.
             </p>
           </div>
-          {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2">{error}</p>}
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-1">Endereço (opcional)</label>
+            <input
+              type="text"
+              value={location}
+              onChange={(e) => setLocation(e.target.value)}
+              placeholder="Rua das Flores, 100 — São Paulo/SP"
+              className="w-full rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-1">Contato técnico (opcional)</label>
+            <input
+              type="text"
+              value={responsibleName}
+              onChange={(e) => setResponsibleName(e.target.value)}
+              placeholder="João Silva — (11) 99999-9999"
+              className="w-full rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
+            />
+          </div>
+          {error && <p className="text-sm text-red-600 dark:text-red-300 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-md px-3 py-2">{error}</p>}
           <div className="flex gap-3 pt-1">
             <button type="button" onClick={onClose} className="flex-1 rounded-md border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/50 transition-colors">Cancelar</button>
             <button type="submit" disabled={mutation.isPending} className="flex-1 rounded-md bg-cyan-700 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-800 disabled:opacity-50 transition-colors flex items-center justify-center gap-2">
@@ -120,7 +150,7 @@ function SitesContent() {
   const tenantInactive = currentTenant?.active === false;
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto w-full max-w-6xl space-y-6">
       {/* Voltar */}
       <button
         onClick={() => router.push('/admin/clients')}
@@ -131,33 +161,38 @@ function SitesContent() {
       </button>
 
       {/* Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-foreground flex items-center gap-2 flex-wrap">
-            Sites {tenantName ? `— ${tenantName}` : ''}
-            {tenantInactive && (
-              <span className="rounded-full border border-slate-300 bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-300">
-                Inativo
-              </span>
-            )}
-          </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Localidades físicas do cliente. Clique em um site para ver seus projetos.
-          </p>
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-cyan-500/10">
+            <Network className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
+          </div>
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight text-foreground flex items-center gap-2 flex-wrap">
+              Sites {tenantName ? `— ${tenantName}` : ''}
+              {tenantInactive && (
+                <span className="inline-flex items-center rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                  Inativo
+                </span>
+              )}
+            </h1>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Localidades físicas do cliente. Clique em um site para ver seus projetos.
+            </p>
+          </div>
         </div>
         <button
           onClick={() => setModalOpen(true)}
           disabled={!tenantId}
           title={!tenantId ? 'Acesse a partir de um cliente para criar sites' : undefined}
-          className="flex items-center gap-2 h-9 px-4 text-sm rounded-md font-medium bg-cyan-700 text-white hover:bg-cyan-800 disabled:opacity-50 transition-colors self-start"
+          className="inline-flex shrink-0 items-center gap-2 self-start rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-cyan-700 disabled:opacity-50 sm:self-auto"
         >
           <Plus className="h-4 w-4" />
           Novo Site
         </button>
-      </div>
+      </header>
 
       {!tenantId && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
           Selecione um cliente em <button onClick={() => router.push('/admin/clients')} className="font-medium underline">Clientes</button> e clique em “Ver Sites” para gerenciar os sites daquele cliente.
         </div>
       )}
@@ -171,20 +206,27 @@ function SitesContent() {
 
       {/* Error */}
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
           Erro ao carregar sites: {(error as Error).message}
         </div>
       )}
 
       {/* Empty */}
       {!isLoading && !error && sites.length === 0 && tenantId && (
-        <div className="flex flex-col items-center justify-center py-20 text-center border border-dashed border-border rounded-xl">
-          <Network className="h-14 w-14 text-muted-foreground/25 mb-4" />
-          <h3 className="text-base font-medium text-foreground mb-1">Nenhum site cadastrado</h3>
-          <p className="text-sm text-muted-foreground mb-5 max-w-sm">
-            Crie o primeiro site (localidade física) deste cliente para começar.
-          </p>
-          <button onClick={() => setModalOpen(true)} className="flex items-center gap-2 h-9 px-4 text-sm rounded-md font-medium bg-cyan-700 text-white hover:bg-cyan-800 transition-colors">
+        <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-border bg-card px-6 py-16 text-center shadow-sm">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-cyan-500/10">
+            <Network className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
+          </div>
+          <div className="space-y-1">
+            <h3 className="text-sm font-medium text-foreground">Nenhum site cadastrado</h3>
+            <p className="mx-auto max-w-sm text-xs text-muted-foreground">
+              Crie o primeiro site (localidade física) deste cliente para começar.
+            </p>
+          </div>
+          <button
+            onClick={() => setModalOpen(true)}
+            className="inline-flex items-center gap-2 rounded-lg border border-dashed border-cyan-400 px-4 py-2 text-sm font-medium text-cyan-600 transition-colors hover:bg-cyan-50 dark:text-cyan-400 dark:hover:bg-cyan-950/40"
+          >
             <Plus className="h-4 w-4" />
             Criar Primeiro Site
           </button>
@@ -193,43 +235,55 @@ function SitesContent() {
 
       {/* List */}
       {!isLoading && !error && sites.length > 0 && (
-        <div className="border border-border rounded-xl overflow-x-auto">
+        <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm transition-shadow duration-200 hover:shadow-md">
+          <div className="overflow-x-auto">
           <table className="w-full min-w-[560px] text-sm">
             <thead>
               <tr className="bg-muted/30 border-b border-border">
-                <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">Site</th>
-                <th className="text-center px-4 py-3 text-xs font-medium text-muted-foreground hidden sm:table-cell">Projetos</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground hidden md:table-cell">Criado em</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground">Ações</th>
+                <th className="text-left px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Site</th>
+                <th className="text-left px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hidden lg:table-cell">Contato técnico</th>
+                <th className="text-center px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hidden sm:table-cell">Projetos</th>
+                <th className="text-left px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hidden md:table-cell">Criado em</th>
+                <th className="text-right px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {sites.map((site) => (
                 <tr
                   key={site.id}
-                  className="hover:bg-muted/20 transition-colors cursor-pointer"
+                  className="transition-colors duration-150 hover:bg-muted/30 cursor-pointer"
                   onClick={() => router.push(`/admin/projects?siteId=${site.id}&tenantId=${site.tenantId}`)}
                 >
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2.5">
-                      <Building2 className="h-4 w-4 text-slate-400 shrink-0" />
-                      <span className="font-medium text-foreground">{site.name}</span>
+                  <td className="px-5 py-3.5">
+                    <div className="flex items-center gap-3">
+                      <div className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0 bg-cyan-500/10">
+                        <Building2 className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />
+                      </div>
+                      <div className="min-w-0">
+                        <span className="font-medium text-foreground block">{site.name}</span>
+                        {site.location && (
+                          <span className="text-[11px] text-muted-foreground block truncate">{site.location}</span>
+                        )}
+                      </div>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-center hidden sm:table-cell">
-                    <span className="inline-flex items-center gap-1.5 text-slate-700">
-                      <FolderKanban className="h-3.5 w-3.5 text-slate-400" />
+                  <td className="px-4 py-3.5 hidden lg:table-cell text-muted-foreground">
+                    {site.responsibleName || '—'}
+                  </td>
+                  <td className="px-4 py-3.5 text-center hidden sm:table-cell">
+                    <span className="inline-flex items-center gap-1.5 text-foreground">
+                      <FolderKanban className="h-3.5 w-3.5 text-muted-foreground/70" />
                       {site._count?.projects ?? 0}
                     </span>
                   </td>
-                  <td className="px-4 py-3 hidden md:table-cell text-muted-foreground">
+                  <td className="px-4 py-3.5 hidden md:table-cell text-muted-foreground">
                     {formatDate(site.createdAt)}
                   </td>
-                  <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                  <td className="px-4 py-3.5 text-right" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-end gap-2">
                       <button
                         onClick={() => router.push(`/admin/projects?siteId=${site.id}&tenantId=${site.tenantId}`)}
-                        className="inline-flex items-center gap-1.5 text-xs font-medium text-cyan-700 hover:text-cyan-900 hover:underline transition-colors"
+                        className="inline-flex items-center gap-1.5 text-xs font-medium text-cyan-700 hover:text-cyan-900 dark:text-cyan-400 dark:hover:text-cyan-300 hover:underline transition-colors"
                       >
                         Ver Projetos
                         <ChevronRight className="h-3.5 w-3.5" />
@@ -247,6 +301,10 @@ function SitesContent() {
               ))}
             </tbody>
           </table>
+          </div>
+          <div className="border-t border-border bg-muted/20 px-5 py-2.5 text-xs text-muted-foreground">
+            {sites.length} site{sites.length !== 1 ? 's' : ''} cadastrado{sites.length !== 1 ? 's' : ''}
+          </div>
         </div>
       )}
 

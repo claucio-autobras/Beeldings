@@ -123,6 +123,48 @@ export interface TenantRankingEntry {
   tenantName: string;
   activeAlarms: number;
   offlineDevices: number;
+  /** Alarmes ativos em ativos marcados como críticos. */
+  criticalFaults: number;
+  offlineGateways: number;
+  /** Alarmes normalizados aguardando reconhecimento. */
+  pendingAck: number;
+  /** Score composto que ordena o ranking (críticos > gateways > alarmes...). */
+  score: number;
+}
+
+/** Disponibilidade real do período (mesma base do relatório — status_events). */
+export interface OverviewAvailability {
+  /** Média do uptime das entidades com dados; null = sem cobertura no período. */
+  avgUptimePct: number | null;
+  entityCount: number;
+  withDataCount: number;
+}
+
+/** Regra/equipamento com mais ativações de alarme no período (top ofensor). */
+export interface TopOffenderEntry {
+  ruleId: string;
+  ruleName: string;
+  severity: 'LOW' | 'MEDIUM' | 'HIGH';
+  deviceId: string;
+  deviceName: string;
+  pointName: string | null;
+  siteName: string | null;
+  count: number;
+  /** Evento mais recente da regra na janela (deep-link /alarms?highlight=). */
+  lastEventId: string;
+  lastActivatedAt: string;
+}
+
+/** Bucket da tendência do período (visão Admin global). */
+export interface TrendBucket {
+  start: string;
+  activated: number;
+  offlineTransitions: number;
+}
+
+export interface OverviewTrend {
+  bucketMs: number;
+  buckets: TrendBucket[];
 }
 
 export interface RecentAuditEntry {
@@ -142,8 +184,12 @@ export interface DashboardOverview {
   current: OverviewWindowStats;
   previous: OverviewWindowStats;
   tenants: { total: number; active: number };
+  /** Visão do cliente (tenant efetivo) apenas; null no global. */
+  availability: OverviewAvailability | null;
+  topOffenders: TopOffenderEntry[] | null;
   /** Visão global (Admin) apenas; null nas demais. */
   tenantRanking: TenantRankingEntry[] | null;
+  trend: OverviewTrend | null;
   recentAudit: RecentAuditEntry[] | null;
 }
 
@@ -214,6 +260,8 @@ export async function getCriticalAssets(
 
 // ─── Primeira ação sugerida por IA (ativo crítico em falha) ──────────────────
 
+import type { SimilarCaseView } from '@/modules/ai/components/SimilarCasesList';
+
 export interface FirstActionStep {
   text: string;
   /** Título do documento da base de conhecimento que fundamenta o passo. */
@@ -250,6 +298,8 @@ export interface FirstActionResult {
   suggestion: FirstActionSuggestion | null;
   aiError: boolean;
   sources: Array<{ docId: string; title: string; type: string; source: string | null }>;
+  /** Casos anônimos da memória operacional usados como contexto adicional. */
+  similarCases?: SimilarCaseView[];
 }
 
 export async function getFirstActionSuggestion(payload: {

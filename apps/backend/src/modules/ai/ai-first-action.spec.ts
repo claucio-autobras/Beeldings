@@ -14,6 +14,9 @@ const makeService = () => {
     {} as never,
     { search: jest.fn(async () => []) } as never,
     { record: jest.fn() } as never,
+    { findSimilar: jest.fn(async () => []) } as never,
+    { findAll: jest.fn(async () => []) } as never,
+    { getStatus: jest.fn(() => 'online'), resolveLastSeenMany: jest.fn(async () => new Map()) } as never,
   );
   return service as unknown as {
     complete(
@@ -73,6 +76,7 @@ const CAMERA = {
   id: 'cam-1',
   name: 'Camera NIS',
   protocol: 'snmp',
+  monitoredDeviceType: 'CAMERA',
   config: { manufacturer: 'Hikvision' },
   tenantId: 't1',
   points: [
@@ -116,13 +120,17 @@ const makeFirstActionService = (overrides?: {
       count: jest.fn(async () => 2),
     },
   };
+  const findSimilar = jest.fn(async (..._args: unknown[]) => []);
   const service = new AiService(
     prisma as never,
     { search: jest.fn(async () => []) } as never,
     { record: jest.fn() } as never,
+    { findSimilar } as never,
+    { findAll: jest.fn(async () => []) } as never,
+    { getStatus: jest.fn(() => 'online'), resolveLastSeenMany: jest.fn(async () => new Map()) } as never,
   );
   stubClient(service as unknown as AnyRecord);
-  return { service, prisma };
+  return { service, prisma, findSimilar };
 };
 
 describe('AiService.firstAction — câmeras CFTV', () => {
@@ -173,6 +181,30 @@ describe('AiService.firstAction — câmeras CFTV', () => {
     expect(prompt).toContain('Hikvision');
     expect(prompt).toContain('SNMP');
     expect(prompt).toMatch(/motion, tamper e video_loss/);
+  });
+
+  it('busca de casos semelhantes usa modo ESTRITO com o alvo do equipamento', async () => {
+    const { service, findSimilar } = makeFirstActionService();
+    await service.firstAction(USER, 't1', { deviceId: 'cam-1' });
+    expect(findSimilar).toHaveBeenCalledTimes(1);
+    const target = findSimilar.mock.calls[0][1] as AnyRecord;
+    expect(target).toMatchObject({
+      monitoredDeviceType: 'CAMERA',
+      protocol: 'snmp',
+      strict: true,
+    });
+  });
+
+  it('sugestão por equipamento também usa modo ESTRITO com o alvo do equipamento', async () => {
+    const { service, findSimilar } = makeFirstActionService();
+    await service.suggestForDevice('t1', 'cam-1');
+    expect(findSimilar).toHaveBeenCalledTimes(1);
+    const target = findSimilar.mock.calls[0][1] as AnyRecord;
+    expect(target).toMatchObject({
+      monitoredDeviceType: 'CAMERA',
+      protocol: 'snmp',
+      strict: true,
+    });
   });
 
   it('device virtual (Bancada) continua 404', async () => {

@@ -1,6 +1,7 @@
 'use client';
 
 import type { NavButtonWidget } from '@/mocks/data/scada.mock';
+import { scadaBackgroundStyle } from '../../types/scada.types';
 import { ScadaNavGlyph } from './scadaIcons';
 
 interface Props {
@@ -21,7 +22,7 @@ export function NavButtonWidgetView({ widget, onNavigate, isEditor }: Props) {
       style={{
         width: '100%', height: '100%',
         display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-        backgroundColor: widget.backgroundColor, color: widget.textColor,
+        ...scadaBackgroundStyle(widget.backgroundColor), color: widget.textColor,
         borderRadius: widget.borderRadius, fontSize: widget.fontSize,
         fontFamily: 'Inter, sans-serif', fontWeight: 500,
         cursor: isEditor ? 'default' : 'pointer',

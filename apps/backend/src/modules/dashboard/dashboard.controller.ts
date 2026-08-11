@@ -11,6 +11,9 @@ import type { AuthenticatedUser } from '../auth/domain/interfaces/auth.interface
 import { UserRole } from '../auth/domain/interfaces/auth.interface.js';
 import { resolveTenantScope } from '../auth/presentation/tenant-scope.util.js';
 import { CriticalAssetsService } from './critical-assets.service.js';
+import { DashboardInsightsService } from './dashboard-insights.service.js';
+import type { TopOffenderEntry, TenantAttentionEntry, AdminTrend } from './dashboard-insights.service.js';
+import { AvailabilityService } from '../reports/availability.service.js';
 
 /** Papéis com visão global (mesmo critério do frontend em dashboard.page). */
 const GLOBAL_ROLES = new Set(['ADMIN', 'CCO', 'SUPERVISOR']);
@@ -40,6 +43,8 @@ export class DashboardController {
     private readonly prisma: PrismaService,
     private readonly deviceStatus: DeviceStatusService,
     private readonly criticalAssets: CriticalAssetsService,
+    private readonly insights: DashboardInsightsService,
+    private readonly availability: AvailabilityService,
   ) {}
 
   /**
@@ -82,8 +87,7 @@ export class DashboardController {
   @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.CCO, UserRole.SUPERVISOR)
   async getAdminStats() {
-    const [totalTenants, devices, gatewaysRaw, activeAlarms, tenants, alarmsPerTenant, activeAutomations] = await Promise.all([
-      this.prisma.tenant.count(),
+    const [devices, gatewaysRaw, activeAlarms, tenants, alarmsPerTenant, activeAutomations] = await Promise.all([
       this.prisma.device.findMany({ where: EXCLUDE_NON_BMS_DEVICES, select: { id: true } }),
       this.prisma.gateway.findMany({
         select: { id: true, tenant: { select: { name: true } } },
@@ -118,11 +122,8 @@ export class DashboardController {
     }));
 
     return {
-      totalSites: totalTenants,
-      activeSites: totalTenants,
       totalDevices,
       onlineDevices,
-      pendingCommands: 0,
       devicesByStatus: {
         online: onlineDevices,
         offline: offlineDevices,
@@ -176,11 +177,15 @@ export class DashboardController {
    *
    * Retorna, para a janela atual e a anterior (mesma duração, imediatamente
    * antes): alarmes disparados, resolvidos (normalizados) e tempo médio até o
-   * ACK (ativação → reconhecimento). Na visão global (sem tenant), inclui o
-   * ranking de clientes por alarmes ativos + dispositivos offline e o feed
-   * de auditoria recente. Sempre kind='ALARM' (avisos de automação ficam de
-   * fora), clientes inativos excluídos do escopo global e dispositivos
-   * virtuais fora das contagens de equipamentos.
+   * ACK (ativação → reconhecimento). Na visão do cliente (tenant efetivo),
+   * inclui a disponibilidade real do período (mesma base do relatório de
+   * disponibilidade — status_events) e os top ofensores (regras com mais
+   * ativações). Na visão global (sem tenant), inclui o ranking de clientes
+   * por score composto (ativos críticos em falha, gateways offline, alarmes
+   * ativos, dispositivos offline, backlog de ACK), a tendência do período em
+   * buckets e o feed de auditoria recente. Sempre kind='ALARM' (avisos de
+   * automação ficam de fora), clientes inativos excluídos do escopo global e
+   * dispositivos virtuais fora das contagens de equipamentos.
    */
   @Get('overview')
   async getOverview(
@@ -195,7 +200,10 @@ export class DashboardController {
     const effectiveTenantId = resolveTenantScope(user, tenantId);
     const effectiveSiteId = effectiveTenantId ? (siteId || undefined) : undefined;
 
-    const windowMs = PERIOD_MS[period ?? '24h'] ?? PERIOD_MS['24h'];
+    // Normaliza o período uma vez: janela e granularidade de bucket sempre
+    // derivam do MESMO rótulo (período inválido cai em 24h por inteiro).
+    const effectivePeriod = PERIOD_MS[period ?? '24h'] ? (period ?? '24h') : '24h';
+    const windowMs = PERIOD_MS[effectivePeriod];
     const to = new Date();
     const from = new Date(to.getTime() - windowMs);
     const prevFrom = new Date(from.getTime() - windowMs);
@@ -258,13 +266,44 @@ export class DashboardController {
       this.prisma.tenant.count({ where: { active: true } }),
     ]);
 
+    // Extras da visão do cliente (tenant efetivo): disponibilidade real do
+    // período (mesma base do relatório — status_events) e top ofensores.
+    let availabilitySummary: {
+      avgUptimePct: number | null;
+      entityCount: number;
+      withDataCount: number;
+    } | null = null;
+    let topOffenders: TopOffenderEntry[] | null = null;
+
+    if (effectiveTenantId) {
+      const [avail, offenders] = await Promise.all([
+        this.availability.compute({
+          tenantId: effectiveTenantId,
+          siteId: effectiveSiteId,
+          from,
+          to,
+        }),
+        this.insights.topOffenders({
+          tenantId: effectiveTenantId,
+          siteId: effectiveSiteId,
+          from,
+          to,
+        }),
+      ]);
+      availabilitySummary = {
+        avgUptimePct:
+          avail.summary.avgUptimePct !== null
+            ? Math.round(avail.summary.avgUptimePct * 10) / 10
+            : null,
+        entityCount: avail.summary.entityCount,
+        withDataCount: avail.summary.withDataCount,
+      };
+      topOffenders = offenders;
+    }
+
     // Extras da visão global (Admin sem cliente selecionado).
-    let tenantRanking: Array<{
-      tenantId: string;
-      tenantName: string;
-      activeAlarms: number;
-      offlineDevices: number;
-    }> | null = null;
+    let tenantRanking: TenantAttentionEntry[] | null = null;
+    let trend: AdminTrend | null = null;
     let recentAudit: Array<{
       id: string;
       createdAt: string;
@@ -276,17 +315,13 @@ export class DashboardController {
     }> | null = null;
 
     if (isGlobal && !effectiveTenantId) {
-      const [tenants, activePerTenant, devices, auditLogs] = await Promise.all([
-        this.prisma.tenant.findMany({ where: { active: true }, select: { id: true, name: true } }),
-        this.prisma.alarmEvent.groupBy({
-          by: ['tenantId'],
-          where: { kind: 'ALARM', state: { in: ['ACTIVE', 'ACTIVE_ACK'] } },
-          _count: { _all: true },
-        }),
-        this.prisma.device.findMany({
-          where: EXCLUDE_NON_BMS_DEVICES,
-          select: { id: true, tenantId: true },
-        }),
+      const [ranking, adminTrend, auditLogs] = await Promise.all([
+        // Score composto: ativos críticos em falha, gateways offline, alarmes
+        // ativos, dispositivos offline e backlog de ACK.
+        this.insights.tenantAttention(),
+        // Evolução no período: ativações + transições offline por bucket,
+        // agregadas sobre clientes ativos (inativos excluídos).
+        this.insights.adminTrend({ from, to, period: effectivePeriod, excludeTenantIds: inactiveTenants }),
         this.prisma.auditLog.findMany({
           orderBy: { createdAt: 'desc' },
           take: 8,
@@ -297,24 +332,8 @@ export class DashboardController {
         }),
       ]);
 
-      const alarmsByTenant = new Map(activePerTenant.map((g) => [g.tenantId, g._count._all]));
-      const offlineByTenant = new Map<string, number>();
-      for (const d of devices) {
-        if (this.deviceStatus.getStatus(d.id) !== 'online') {
-          offlineByTenant.set(d.tenantId, (offlineByTenant.get(d.tenantId) ?? 0) + 1);
-        }
-      }
-
-      tenantRanking = tenants
-        .map((t) => ({
-          tenantId: t.id,
-          tenantName: t.name,
-          activeAlarms: alarmsByTenant.get(t.id) ?? 0,
-          offlineDevices: offlineByTenant.get(t.id) ?? 0,
-        }))
-        .filter((t) => t.activeAlarms > 0 || t.offlineDevices > 0)
-        .sort((a, b) => (b.activeAlarms - a.activeAlarms) || (b.offlineDevices - a.offlineDevices))
-        .slice(0, 8);
+      tenantRanking = ranking;
+      trend = adminTrend;
 
       recentAudit = auditLogs.map((l) => ({
         id: l.id,
@@ -328,13 +347,18 @@ export class DashboardController {
     }
 
     return {
-      period: PERIOD_MS[period ?? '24h'] ? (period ?? '24h') : '24h',
+      period: effectivePeriod,
       from: from.toISOString(),
       to: to.toISOString(),
       current,
       previous,
       tenants: { total: tenantsTotal, active: tenantsActive },
+      // Visão do cliente (tenant efetivo) apenas; null no global.
+      availability: availabilitySummary,
+      topOffenders,
+      // Visão global (Admin) apenas; null nas demais.
       tenantRanking,
+      trend,
       recentAudit,
     };
   }

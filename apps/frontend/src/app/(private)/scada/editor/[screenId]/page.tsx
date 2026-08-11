@@ -1,6 +1,6 @@
 import ScadaEditorPage from '@/modules/scada/pages/scada-editor.page';
 
-export const metadata = { title: 'Editor SCADA — BlueBee IoT' };
+export const metadata = { title: 'Editor SCADA — Beeldings' };
 
 interface Props {
   params: Promise<{ screenId: string }>;

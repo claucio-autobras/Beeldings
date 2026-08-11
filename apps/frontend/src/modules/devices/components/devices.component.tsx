@@ -11,5 +11,6 @@ export { default as ConnectionTestProgress }    from './ConnectionTestProgress';
 export { default as EditBACnetDeviceModal }     from './EditBACnetDeviceModal';
 export { default as EditModbusDeviceModal }     from './EditModbusDeviceModal';
 export { default as EditMqttDeviceModal }       from './EditMqttDeviceModal';
+export { default as FallbackDeviceDeleteDialog } from './FallbackDeviceDeleteDialog';
 
 export type { StatusFilter, ProtocolFilter } from './DeviceFilters';

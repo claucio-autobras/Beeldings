@@ -24,6 +24,12 @@ function isModbusWritableType(registerType: string | undefined): boolean {
 export interface SendCommandResult {
   ok: boolean;
   error?: string;
+  /**
+   * Aviso brando (não é falha): comando publicado mas sem confirmação do
+   * dispositivo (ex.: resposta RPC do Shelly não casou/atrasou). A telemetria
+   * de readback ou o TTL do pendente reconciliam o estado visual.
+   */
+  warning?: string;
 }
 
 export type SendCommand = (
@@ -117,7 +123,15 @@ export function useScreenCommand(devices: ScreenDevice[]): SendCommand {
           value: point.valueType === 'boolean' ? Boolean(value) : value,
           pointLabel: point.displayName || point.tag,
         });
-        if (!mqttResult.ok) clearPendingCommand(deviceId, tag);
+        if (!mqttResult.ok) {
+          clearPendingCommand(deviceId, tag);
+          return mqttResult;
+        }
+        // Sucesso "enviado, sem confirmação" (confirmed=false): não é falha —
+        // o pendente otimista segue até a telemetria confirmar ou o TTL expirar.
+        if (mqttResult.confirmed === false) {
+          return { ok: true, warning: 'Comando enviado — aguardando confirmação do dispositivo' };
+        }
         return mqttResult;
       }
 

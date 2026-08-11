@@ -19,7 +19,7 @@ jest.mock('./snmp-read.util', () => ({
 
 import { SnmpPollingService } from './snmp-polling.service';
 import { readSnmpOids } from './snmp-read.util';
-import { CameraTelemetryEngine } from '../cameras/camera-telemetry.engine';
+import { SnmpDriver } from '../drivers/snmp.driver';
 import { LAYER1_OIDS } from '../cameras/provider-registry';
 
 const readSnmpOidsMock = readSnmpOids as jest.Mock;
@@ -41,13 +41,13 @@ function buildService() {
   return { service, published };
 }
 
-/** Estado de poll com um motor cujas dependências de IO são mockadas. */
+/** Estado de poll com um driver cujas dependências de IO são mockadas. */
 function buildState() {
   return {
     polling: false,
-    engine: new CameraTelemetryEngine({
+    driver: new SnmpDriver({
       readNumbers: readSnmpOidsMock as any,
-      // Identificação: câmera respondeu mas sem sysDescr/sysObjectID úteis.
+      // Identificação: câmera respondeu mas sem sysDescr/sysObjectId úteis.
       readStrings: jest.fn().mockResolvedValue([null, null]),
       pingLoss: jest.fn().mockResolvedValue(null),
       isapiUptime: jest.fn().mockResolvedValue(null),

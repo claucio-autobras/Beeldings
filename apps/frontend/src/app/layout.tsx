@@ -1,30 +1,36 @@
 import type { Metadata, Viewport } from 'next';
-import { Fira_Code, Inter } from 'next/font/google';
+import localFont from 'next/font/local';
 import { Providers } from './providers';
 import { ServiceWorkerRegister } from '@/components/ServiceWorkerRegister';
 import './globals.css';
 
-const inter = Inter({
+// Fontes locais (woff2 variáveis, subset latin) — o build de produção do
+// deploy não tem acesso à rede do Google Fonts, então os arquivos vivem no
+// repositório em ./fonts e são servidos pelo próprio Next.
+const inter = localFont({
+  src: './fonts/inter-latin-var.woff2',
   variable: '--font-inter',
-  subsets: ['latin'],
+  weight: '100 900',
+  style: 'normal',
   display: 'swap',
 });
 
-const firaCode = Fira_Code({
+const firaCode = localFont({
+  src: './fonts/fira-code-latin-var.woff2',
   variable: '--font-fira-code',
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
+  weight: '400 700',
+  style: 'normal',
   display: 'swap',
 });
 
 export const metadata: Metadata = {
-  applicationName: 'BlueBee IoT',
-  title: 'BlueBee IoT — Plataforma Supervisória',
-  description: 'Monitoramento remoto de sistemas BMS — Autobras BlueBee',
+  applicationName: 'Beeldings',
+  title: 'Beeldings - Plataforma Supervisória',
+  description: 'Monitoramento remoto de sistemas BMS — Autobras Beeldings',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
-    title: 'BlueBee',
+    title: 'Beeldings',
   },
   icons: {
     icon: [

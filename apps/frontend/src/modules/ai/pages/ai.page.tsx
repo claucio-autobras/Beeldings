@@ -16,6 +16,10 @@ import {
 import { apiDelete, apiGet, apiPost } from '@/lib/api-client';
 import { getDevices } from '@/modules/devices/services/devices.service';
 import type { Device } from '@/modules/devices/types/device.types';
+import {
+  SimilarCasesList,
+  type SimilarCaseView,
+} from '../components/SimilarCasesList';
 
 interface ChatSource {
   docId: string;
@@ -28,6 +32,8 @@ interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   sources?: ChatSource[];
+  /** Casos anônimos da memória operacional usados como fonte pela IA. */
+  similarCases?: SimilarCaseView[];
 }
 
 interface ConversationSummary {
@@ -41,6 +47,7 @@ interface ChatResponse {
   conversationId: string;
   title: string;
   sources: ChatSource[];
+  similarCases?: SimilarCaseView[];
 }
 
 interface SuggestionAlarm {
@@ -57,13 +64,14 @@ interface SuggestionResponse {
   alarms: SuggestionAlarm[];
   suggestion: string;
   sources: ChatSource[];
+  similarCases?: SimilarCaseView[];
 }
 
 const SUGGESTIONS = [
-  'Como funciona o reconhecimento de alarmes no BlueBee?',
-  'O que é uma tendência (trend) e para que serve?',
-  'Como interpreto um dispositivo offline?',
-  'Quais boas práticas para configurar automações?',
+  'O que está offline agora?',
+  'Faça um diagnóstico do estado atual do sistema',
+  'Há algum alarme ativo? Há quanto tempo?',
+  'Como funciona o reconhecimento de alarmes na Beeldings?',
 ];
 
 export default function AiPage() {
@@ -177,6 +185,7 @@ export default function AiPage() {
           role: 'assistant',
           content: res.reply || '(sem resposta)',
           sources: res.sources ?? [],
+          similarCases: res.similarCases ?? [],
         },
       ]);
       if (!activeId) setActiveId(res.conversationId);
@@ -307,10 +316,10 @@ export default function AiPage() {
       <div>
         <h1 className="flex items-center gap-2 text-2xl font-semibold text-foreground">
           <Sparkles className="h-6 w-6 text-cyan-600" />
-          Chat IA
+          Bluebee
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Tire dúvidas sobre operação, alarmes, dispositivos e tendências do BlueBee.
+          Tire dúvidas sobre operação, alarmes, dispositivos e tendências da plataforma Beeldings.
         </p>
       </div>
 
@@ -447,6 +456,8 @@ export default function AiPage() {
                   ))}
                 </div>
               )}
+
+              <SimilarCasesList cases={suggestion.similarCases} />
             </div>
           )}
         </div>
@@ -511,13 +522,13 @@ export default function AiPage() {
                 <div className="flex h-16 w-16 items-center justify-center rounded-full bg-cyan-50">
                   <img
                     src="/bluebee-avatar.png"
-                    alt="Assistente BlueBee"
+                    alt="Assistente Bluebee"
                     className="h-14 w-14 object-contain"
                   />
                 </div>
                 <p className="max-w-md text-sm text-muted-foreground">
-                  Comece uma conversa com o assistente de IA do BlueBee. Você pode
-                  perguntar sobre conceitos da plataforma e boas práticas de operação.
+                  Comece uma conversa com o assistente Bluebee. Você pode
+                  perguntar sobre conceitos da plataforma Beeldings e boas práticas de operação.
                 </p>
                 <div className="grid w-full max-w-lg grid-cols-1 gap-2 sm:grid-cols-2">
                   {SUGGESTIONS.map((s) => (
@@ -551,7 +562,7 @@ export default function AiPage() {
                   ) : (
                     <img
                       src="/bluebee-avatar.png"
-                      alt="Assistente BlueBee"
+                      alt="Assistente Bluebee"
                       className="h-7 w-7 object-contain"
                     />
                   )}
@@ -583,6 +594,9 @@ export default function AiPage() {
                       ))}
                     </div>
                   )}
+                  {m.role === 'assistant' && (
+                    <SimilarCasesList cases={m.similarCases} />
+                  )}
                 </div>
               </div>
             ))}
@@ -592,7 +606,7 @@ export default function AiPage() {
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-foreground">
                   <img
                     src="/bluebee-avatar.png"
-                    alt="Assistente BlueBee"
+                    alt="Assistente Bluebee"
                     className="h-7 w-7 object-contain"
                   />
                 </div>

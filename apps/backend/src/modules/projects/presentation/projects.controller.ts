@@ -36,12 +36,28 @@ export class ProjectsController {
     private readonly config: ConfigService,
   ) {}
 
+  /**
+   * Endereço e contato técnico agora pertencem ao Site — payloads que ainda
+   * enviarem os campos legados do projeto são rejeitados com 400 para expor
+   * integrações desatualizadas em vez de descartar dados silenciosamente.
+   */
+  private rejectLegacyProjectFields(body: Record<string, unknown>): void {
+    for (const field of ['address', 'technicalContact']) {
+      if (field in body) {
+        throw new BadRequestException(
+          `O campo "${field}" não é mais aceito em projetos — cadastre endereço/contato no Site.`,
+        );
+      }
+    }
+  }
+
   @Post('/')
   @HttpCode(HttpStatus.CREATED)
   async create(
     @Body() body: CreateProjectDto,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<ProjectWithGateway> {
+    this.rejectLegacyProjectFields(body as unknown as Record<string, unknown>);
     const effectiveTenantId = isGlobalRole(user)
       ? (body.tenantId ?? user.tenantId ?? '')
       : resolveTenantScope(user)!;
@@ -171,6 +187,7 @@ export class ProjectsController {
     @Body() body: UpdateProjectDto,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<Project> {
+    this.rejectLegacyProjectFields(body as Record<string, unknown>);
     if (user.role !== 'ADMIN' && user.role !== 'CCO' && user.role !== 'SUPERVISOR') {
       throw new BadRequestException('Sem permissão para editar projetos');
     }

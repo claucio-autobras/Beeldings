@@ -23,15 +23,34 @@ export interface MqttWriteBinding {
   /** Tópico completo de comando — precisa estar sob .../sensors/ do gateway. */
   commandTopic: string;
   /**
-   * Template do payload. Placeholders: `{{value}}` (valor JSON conforme
-   * valueType) e `{{id}}` (id numérico de RPC, usado para casar a resposta).
+   * Template do payload. Placeholders suportados:
+   *   `{{value}}`  — valor JSON conforme valueType (obrigatório)
+   *   `{{id}}`     — id numérico de RPC gerado por requisição (Shelly/padrão RPC)
+   *   `{{ts}}`     — epoch UNIX em segundos (inteiro) no momento do envio
+   *   `{{sh}}`     — assinatura proprietária de 24 bits (Aeris); requer
+   *                  configuração de `signatureAlgorithm`/`signatureSecret` no
+   *                  device — veja a documentação do firmware Aeris para o
+   *                  algoritmo exato. Enquanto não configurado, o comando chega
+   *                  ao broker mas o firmware DESCARTA mensagens com sh inválido.
    */
   payloadTemplate: string;
   /**
    * Opcional — tópico completo onde a confirmação chega (ex.: resposta RPC do
    * Shelly). Quando ausente, o comando é "enviado sem confirmação".
+   *
+   * Para equipamentos Aeris: use o tópico de eco de valor (ex.:
+   * `008065/config/split/0/sp_val1`). A confirmação é casada pelo valor numérico
+   * (`parsed.value ≈ valor comandado`) em vez do campo `id` RPC — configure
+   * `matchByValue: true` para ativar esse modo.
    */
   responseTopic?: string | null;
+  /**
+   * Quando `true`, o gateway confirma o comando casando o campo `value` do JSON
+   * da resposta com o valor comandado (tolerância de 0,1%), em vez de casar
+   * pelo campo `id` RPC. Usar com equipamentos que ecoam o novo estado num
+   * tópico separado (ex.: Aeris sp_val1).
+   */
+  matchByValue?: boolean;
 }
 
 export interface MqttWriteSuccess {

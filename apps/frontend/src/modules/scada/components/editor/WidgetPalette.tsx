@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Bell, Boxes, ChevronDown, ChevronRight, Compass, Cpu, LayoutDashboard, Lightbulb, Radio, Shapes, SlidersHorizontal, Square, Trash2, Type } from 'lucide-react';
+import { Bell, Boxes, ChevronDown, ChevronRight, Compass, Cpu, LayoutDashboard, Lightbulb, Radio, Shapes, SlidersHorizontal, Square, Thermometer, Trash2, Type } from 'lucide-react';
 import type { Widget, WidgetType, SavedComponent } from '../../types/scada.types';
 import { useEditorStore } from '../../store/editor.store';
 import { SCADA_ICONS } from '../widgets/scadaIcons';
@@ -71,6 +71,15 @@ const CATEGORIES: PaletteCategory[] = [
       { type: 'point-table', label: 'Tabela de Pontos' },
       { type: 'segmented-control', label: 'Controle Segmentado' },
       { id: 'cmd-slider-card', type: 'command-slider', label: 'Slider com Rótulo (card)', overrides: { variant: 'card', label: 'Intensidade' }, size: { w: 260, h: 84 } },
+    ],
+  },
+  {
+    id: 'climate', label: 'Controle de Clima', icon: <Thermometer className="h-3.5 w-3.5" strokeWidth={1.5} />,
+    items: [
+      { type: 'value-stepper', label: 'Stepper de Valor (− / +)' },
+      { type: 'setpoint-ring', label: 'Anel de Setpoint' },
+      { type: 'equipment-card', label: 'Card Compacto de Equipamento' },
+      { type: 'climate-card', label: 'Card de Controle de Clima' },
     ],
   },
   {
@@ -192,6 +201,10 @@ const DEFAULT_SIZES: Partial<Record<WidgetType, { w: number; h: number }>> = {
   'event-feed': { w: 340, h: 260 },
   'point-table': { w: 360, h: 220 },
   'segmented-control': { w: 260, h: 88 },
+  'value-stepper': { w: 220, h: 64 },
+  'setpoint-ring': { w: 240, h: 260 },
+  'equipment-card': { w: 300, h: 340 },
+  'climate-card': { w: 320, h: 420 },
 };
 
 interface Props {
@@ -203,7 +216,7 @@ interface Props {
 
 export function WidgetPalette({ onDropWidget, components, onInsertComponent, onDeleteComponent }: Props) {
   const [open, setOpen] = useState<Record<string, boolean>>({
-    components: false, text: false, equipment: false, indicators: false, dashboard: false, alarm: false, nav: false, commands: false, icons: false, shapes: false, layout: false,
+    components: false, text: false, equipment: false, indicators: false, dashboard: false, climate: false, alarm: false, nav: false, commands: false, icons: false, shapes: false, layout: false,
   });
 
   function handleComponentDragStart(e: React.DragEvent, id: string) {

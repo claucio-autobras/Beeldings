@@ -2,9 +2,20 @@ import type { DeviceCounterWidget } from '../../types/scada.types';
 import { matchOperator, toScadaNumber } from '../../types/scada.types';
 import type { PointStatus } from '../../hooks/useScreenTelemetry';
 import { isCameraDevice, type ScreenDevice } from '../../types/virtual.types';
+import type { Camera } from '@/modules/cftv/services/cftv.service';
+import type { CameraHealth } from '@/modules/cftv/utils/telemetry-format';
 
 export type GetValue = (deviceId: string, tag: string) => number | boolean | string | null;
 export type GetTagStatus = (deviceId: string, tag: string) => PointStatus;
+
+/**
+ * Callback que devolve a saúde canônica de uma câmera (STATUS + liveness do
+ * gateway + frescor dos dados) — espelha cameraHealthInfo() da área CFTV.
+ * Quando fornecido ao countDevices, o modo 'connectivity' usa este critério
+ * para câmeras em vez de ler o ponto STATUS diretamente (que pode estar
+ * congelado com gateway offline).
+ */
+export type GetCameraHealth = (camera: Camera) => CameraHealth;
 
 /** Resultado da contagem: ligados / desligados / sem-dados / total elegível. */
 export interface DeviceCounterResult {
@@ -118,19 +129,26 @@ export function listCounterPoints(
 
 /**
  * Conta segundo o modo:
- * - connectivity: câmera = valor do ponto STATUS (semântica CFTV: ≥1 online,
- *   0 offline, sem valor = sem dados); demais = frescor da telemetria (algum
- *   ponto `live` → online; algum ponto já visto (`stale`) → offline; nada → sem dados).
+ * - connectivity: câmera = critério canônico CFTV via getCameraHealth (STATUS +
+ *   liveness do gateway + frescor); sem getCameraHealth cai no valor bruto do
+ *   STATUS (retrocompatibilidade). Demais = frescor da telemetria (algum ponto
+ *   `live` → online; algum ponto já visto (`stale`) → offline; nada → sem dados).
  * - point-value: valor do ponto `pointTag` por dispositivo comparado à condição.
  *   Dispositivo offline/sem valor → sem dados (nunca "desligado" silencioso).
  * - point-list: cada ponto selecionado (deviceId + tag) conta individualmente
  *   contra a mesma condição (ex.: 5/10 lâmpadas).
+ *
+ * @param getCameraHealth  Callback opcional que devolve a saúde canônica de uma
+ *   câmera (cameraHealthInfo da área CFTV: STATUS + gateway liveness + frescor).
+ *   Quando fornecido, o modo 'connectivity' usa-o em vez do STATUS bruto, evitando
+ *   que uma câmera seja contada como online quando o gateway está offline.
  */
 export function countDevices(
   w: DeviceCounterWidget,
   devices: ScreenDevice[],
   getValue: GetValue,
   getTagStatus?: GetTagStatus,
+  getCameraHealth?: GetCameraHealth,
 ): DeviceCounterResult {
   if (w.mode === 'point-list') return countPoints(w, devices, getValue, getTagStatus);
 
@@ -138,6 +156,14 @@ export function countDevices(
 
   function connectivityState(d: ScreenDevice): CountState {
     if (isCameraDevice(d)) {
+      if (getCameraHealth) {
+        const health = getCameraHealth(d);
+        if (health === 'online') return 'on';
+        if (health === 'offline') return 'off';
+        return 'no-data'; // 'unknown'
+      }
+      // Fallback (sem getCameraHealth): valor bruto do STATUS sem checagem de
+      // gateway/frescor — retrocompatibilidade quando o widget não tem getTagReading.
       const n = toScadaNumber(getValue(d.id, 'STATUS'));
       if (Number.isNaN(n)) return 'no-data';
       return n >= 1 ? 'on' : 'off';

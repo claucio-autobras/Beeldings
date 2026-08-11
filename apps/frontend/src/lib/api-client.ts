@@ -64,7 +64,11 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   if (!res.ok) {
     await throwApiError(res);
   }
-  return res.json() as Promise<T>;
+  // Respostas sem corpo (204 No Content ou body vazio) não passam por
+  // res.json() — senão o parse falha mesmo com a ação aplicada no backend.
+  if (res.status === 204) return undefined as T;
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 export async function apiPatch<T>(path: string, body?: unknown): Promise<T> {

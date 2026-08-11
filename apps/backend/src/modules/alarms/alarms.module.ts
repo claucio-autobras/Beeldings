@@ -11,6 +11,6 @@ import { AlarmEngineService } from './alarm-engine.service.js';
 @Module({
   controllers: [AlarmRulesController, AlarmEventsController, AlarmsLegacyController, AlarmGroupsController],
   providers: [AlarmEngineService, AlarmRulesService, AlarmEventsService, AlarmGroupsService],
-  exports: [AlarmEngineService],
+  exports: [AlarmEngineService, AlarmEventsService],
 })
 export class AlarmsModule {}

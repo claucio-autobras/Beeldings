@@ -13,16 +13,21 @@ import { OnvifPendingValidationService } from './application/onvif-pending-valid
 import { OnvifNetworkScanService } from './application/onvif-network-scan.service.js';
 import { SnmpHealthTestService } from './application/snmp-health-test.service.js';
 import { SnmpDiagnoseService } from './application/snmp-diagnose.service.js';
+import { SwitchPortSyncService } from './application/switch-port-sync.service.js';
+import { NvrTableSyncService } from './application/nvr-table-sync.service.js';
 import { CameraHealthBackfillService } from './application/camera-health-backfill.service.js';
+import { CameraLiveViewService } from './application/camera-live-view.service.js';
+import { CapabilityProbeService } from './application/capability-probe.service.js';
 import { EmqxProvisioningService } from '../sites/application/emqx-provisioning.service.js';
 import { DevicesController } from './presentation/devices.controller.js';
 import { CftvController } from './presentation/cftv.controller.js';
+import { ScaController } from './presentation/sca.controller.js';
 import { PrismaModule } from '../prisma/prisma.module.js';
 import { TrendsModule } from '../trends/trends.module.js';
 
 @Module({
   imports: [PrismaModule, TrendsModule],
-  controllers: [DevicesController, CftvController],
+  controllers: [DevicesController, CftvController, ScaController],
   providers: [
     BacnetDiscoveryService,
     BacnetNetworkDiscoveryService,
@@ -38,7 +43,11 @@ import { TrendsModule } from '../trends/trends.module.js';
     OnvifNetworkScanService,
     SnmpHealthTestService,
     SnmpDiagnoseService,
+    SwitchPortSyncService,
+    NvrTableSyncService,
     CameraHealthBackfillService,
+    CameraLiveViewService,
+    CapabilityProbeService,
     EmqxProvisioningService,
   ],
   exports: [BacnetWriteService, ModbusWriteService, MqttWriteService],

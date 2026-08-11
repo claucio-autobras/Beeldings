@@ -17,6 +17,8 @@ export interface AuthUser {
 export interface LoginCredentials {
   email: string;
   password: string;
+  /** Token do widget Cloudflare Turnstile (quando habilitado no servidor). */
+  turnstileToken?: string;
 }
 
 export interface LoginResponse {

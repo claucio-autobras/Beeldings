@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { AlertTriangle, Clock, CheckCircle2, Activity } from 'lucide-react';
 import { useT } from '@/lib/i18n';
+import type { OverviewAvailability } from '../services/dashboard.service';
 
 interface OperationalSummaryCardProps {
   /** Alarmes ativos de severidade alta AGORA. */
@@ -12,26 +13,28 @@ interface OperationalSummaryCardProps {
   /** Alarmes normalizados (resolvidos) no período selecionado; null enquanto carrega. */
   resolvedInPeriod: number | null;
   periodLabel: string;
-  /** Dispositivos online/total do escopo, para a disponibilidade. */
-  devicesOnline: number;
-  devicesTotal: number;
+  /**
+   * Disponibilidade REAL do período (mesma base do relatório de
+   * disponibilidade — status_events); undefined enquanto carrega, avgUptimePct
+   * null = sem cobertura de dados ("Sem dados", nunca 0%/100% fake).
+   */
+  availability: OverviewAvailability | null | undefined;
 }
 
 /**
  * "Resumo Operacional" (visão Cliente): críticos ativos, aguardando ACK,
- * resolvidos no período e disponibilidade (dispositivos online/total).
+ * resolvidos no período e disponibilidade real do período.
  */
 export function OperationalSummaryCard({
   criticalActive,
   pendingAck,
   resolvedInPeriod,
   periodLabel,
-  devicesOnline,
-  devicesTotal,
+  availability,
 }: OperationalSummaryCardProps) {
   const t = useT();
-  const availability =
-    devicesTotal > 0 ? Math.round((devicesOnline / devicesTotal) * 1000) / 10 : null;
+  const availabilityPct = availability?.avgUptimePct ?? null;
+  const availabilityLoading = availability === undefined;
 
   const rowCls =
     'flex items-center justify-between rounded-lg border border-border bg-muted/30 p-3 transition-colors hover:bg-muted/60';
@@ -63,20 +66,27 @@ export function OperationalSummaryCard({
             {resolvedInPeriod === null ? '—' : resolvedInPeriod}
           </span>
         </div>
-        <div className={rowCls} title={t('Dispositivos online / total do escopo')}>
+        <div
+          className={rowCls}
+          title={t('Disponibilidade média dos equipamentos no período (mesma base do relatório de disponibilidade)')}
+        >
           <span className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Activity size={15} className="text-cyan-500" /> {t('Disponibilidade')}
+            <Activity size={15} className="text-cyan-500" /> {t('Disponibilidade')} ({periodLabel})
           </span>
           <span
             className={`text-sm font-medium tabular-nums ${
-              availability === null
+              availabilityLoading || availabilityPct === null
                 ? 'text-muted-foreground'
-                : availability >= 99
+                : availabilityPct >= 99
                   ? 'text-emerald-600'
                   : 'text-foreground'
             }`}
           >
-            {availability === null ? '—' : `${availability}%`}
+            {availabilityLoading
+              ? '—'
+              : availabilityPct === null
+                ? t('Sem dados')
+                : `${availabilityPct}%`}
           </span>
         </div>
       </div>

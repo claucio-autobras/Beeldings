@@ -39,6 +39,19 @@ export function resolveMqttWriteTarget(
 
   const valueType = binding.valueType === 'boolean' ? 'boolean' : 'number';
 
+  // Confirmação por eco de valor sem responseTopic explícito: usa o próprio
+  // sourceTopic do ponto como tópico de resposta. Sem esse fallback, um binding
+  // com matchByValue e responseTopic vazio virava "enviado sem confirmação" —
+  // a UI mostrava sucesso otimista mesmo quando o equipamento não mudava.
+  const sourceTopic =
+    typeof (point.binding as { sourceTopic?: unknown } | null)?.sourceTopic === 'string'
+      ? ((point.binding as { sourceTopic?: string }).sourceTopic ?? '').trim()
+      : '';
+  const effectiveWrite: MqttWriteBinding =
+    write.matchByValue === true && !(write.responseTopic ?? '').trim() && sourceTopic
+      ? { ...write, responseTopic: sourceTopic }
+      : write;
+
   // Escopo permitido para comando/resposta: modo raiz usa `{rootTopic}/`,
   // senão o namespace de sensores do gateway (comportamento atual).
   const cfg = (device.config ?? {}) as { topicMode?: string; rootTopic?: string };
@@ -52,7 +65,7 @@ export function resolveMqttWriteTarget(
     tenantId: device.tenantId,
     gatewayId: device.gatewayId,
     deviceId: device.id,
-    write,
+    write: effectiveWrite,
     valueType,
     pointTag: point.tag,
     pointUnit: point.unit ?? null,

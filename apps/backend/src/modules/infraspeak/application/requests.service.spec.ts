@@ -1,5 +1,5 @@
-import { ServiceUnavailableException } from '@nestjs/common';
-import { RequestsService, mapFailure } from './requests.service.js';
+import { BadRequestException, ServiceUnavailableException } from '@nestjs/common';
+import { RequestsService, buildCreateFailurePayload, mapFailure } from './requests.service.js';
 import type { InfraspeakClient } from '../infrastructure/infraspeak.client.js';
 import type { ConfigService } from '@nestjs/config';
 
@@ -140,5 +140,268 @@ describe('RequestsService', () => {
     const client = { getAll: jest.fn().mockRejectedValue(boom) } as unknown as InfraspeakClient;
     const service = new RequestsService(client, makeConfig('failures'));
     await expect(service.findAll()).rejects.toBe(boom);
+  });
+
+  it('create envia o payload snake_case e devolve o chamado mapeado', async () => {
+    const client = {
+      post: jest.fn().mockResolvedValue({ data: REAL_FAILURE_ITEM }),
+    } as unknown as InfraspeakClient;
+    const service = new RequestsService(client, makeConfig('failures'));
+
+    const created = await service.create({
+      problemId: 28310,
+      localId: 387903,
+      description: 'Vazamento na bancada',
+      priority: 2,
+    });
+
+    expect((client as unknown as { post: jest.Mock }).post).toHaveBeenCalledWith('failures', {
+      problem_id: 28310,
+      local_id: 387903,
+      description: 'Vazamento na bancada',
+      priority: 2,
+    });
+    expect(created.id).toBe(709936);
+    expect(created.raw).toBe(REAL_FAILURE_ITEM);
+  });
+
+  it('getFormOptions monta problems folha com allClients/clientIds e locals com clientId', async () => {
+    const client = {
+      get: jest.fn().mockResolvedValue({
+        data: [
+          {
+            type: 'problem_area',
+            id: '28309',
+            attributes: { problem_id: 28309, name: '01. Hidráulica', all_clients: true },
+            relationships: { children: { data: [] }, clients: { data: [] } },
+          },
+        ],
+        included: [
+          {
+            type: 'problem_type',
+            id: '28310',
+            attributes: {
+              problem_id: 28310,
+              name: '01.01. Banheira',
+              full_name: '01. Hidráulica - 01.01. Banheira',
+              parent_id: 28309,
+            },
+          },
+        ],
+      }),
+      getAll: jest.fn().mockResolvedValue({
+        data: [
+          {
+            type: 'building',
+            id: '387902',
+            attributes: { local_id: 387902, name: 'Dummy', full_name: 'Dummy', client_id: 75472 },
+          },
+          {
+            type: 'location-folder',
+            id: '387999',
+            attributes: { local_id: 387999, name: 'Pasta', full_name: 'Dummy - Pasta' },
+          },
+          {
+            type: 'location',
+            id: '387903',
+            attributes: {
+              local_id: 387903,
+              name: 'Geral',
+              full_name: 'Dummy - Geral',
+              root_parent_id: 387902,
+            },
+          },
+        ],
+        pages: 1,
+      }),
+    } as unknown as InfraspeakClient;
+    const service = new RequestsService(client, makeConfig('failures'));
+
+    const options = await service.getFormOptions();
+
+    // Confirma expanded=children,clients (novo parâmetro).
+    expect((client as unknown as { get: jest.Mock }).get).toHaveBeenCalledWith('problems', {
+      query: { expanded: 'children,clients', limit: 400 },
+    });
+
+    // Problem: herda allClients/clientIds da área pai.
+    expect(options.problems).toEqual([
+      {
+        id: 28310,
+        name: '01.01. Banheira',
+        fullName: '01. Hidráulica - 01.01. Banheira',
+        areaId: 28309,
+        areaName: '01. Hidráulica',
+        allClients: true,
+        clientIds: [],
+      },
+    ]);
+
+    // Locals: apenas type=location; clientId resolvido via root_parent_id.
+    expect((client as unknown as { getAll: jest.Mock }).getAll).toHaveBeenCalledWith('locations');
+    expect(options.locals).toEqual([
+      { id: 387903, name: 'Geral', fullName: 'Dummy - Geral', clientId: 75472 },
+    ]);
+  });
+
+  it('getFormOptions: area com all_clients=false propaga clientIds restritos aos filhos', async () => {
+    const client = {
+      get: jest.fn().mockResolvedValue({
+        data: [
+          {
+            type: 'problem_area',
+            id: '28999',
+            attributes: { problem_id: 28999, name: 'TI', all_clients: false },
+            relationships: {
+              children: { data: [] },
+              clients: { data: [{ type: 'client', id: '75473' }] },
+            },
+          },
+        ],
+        included: [
+          {
+            type: 'problem_type',
+            id: '29000',
+            attributes: {
+              problem_id: 29000,
+              name: 'Falha de Sistema',
+              full_name: 'TI - Falha de Sistema',
+              parent_id: 28999,
+            },
+          },
+        ],
+      }),
+      getAll: jest.fn().mockResolvedValue({ data: [], pages: 1 }),
+    } as unknown as InfraspeakClient;
+    const service = new RequestsService(client, makeConfig('failures'));
+
+    const options = await service.getFormOptions();
+
+    expect(options.problems).toHaveLength(1);
+    const problem = options.problems[0];
+    expect(problem.allClients).toBe(false);
+    expect(problem.clientIds).toEqual([75473]);
+  });
+
+  it('getFormOptions: local sem root_parent_id no mapa de prédios recebe clientId=null', async () => {
+    const client = {
+      get: jest.fn().mockResolvedValue({ data: [], included: [] }),
+      getAll: jest.fn().mockResolvedValue({
+        data: [
+          // Nenhum building no payload — location não pode resolver o clientId.
+          {
+            type: 'location',
+            id: '387903',
+            attributes: {
+              local_id: 387903,
+              name: 'Geral',
+              full_name: 'Dummy - Geral',
+              root_parent_id: 999999, // building inexistente no payload
+            },
+          },
+        ],
+        pages: 1,
+      }),
+    } as unknown as InfraspeakClient;
+    const service = new RequestsService(client, makeConfig('failures'));
+
+    const options = await service.getFormOptions();
+
+    expect(options.locals).toEqual([
+      { id: 387903, name: 'Geral', fullName: 'Dummy - Geral', clientId: null },
+    ]);
+  });
+
+  it('getFormOptions: local sem root_parent_id (null/ausente) recebe clientId=null', async () => {
+    const client = {
+      get: jest.fn().mockResolvedValue({ data: [], included: [] }),
+      getAll: jest.fn().mockResolvedValue({
+        data: [
+          {
+            type: 'building',
+            id: '387902',
+            attributes: { local_id: 387902, name: 'B', full_name: 'B', client_id: 75472 },
+          },
+          {
+            type: 'location',
+            id: '387910',
+            attributes: {
+              local_id: 387910,
+              name: 'Sala',
+              full_name: 'Sala',
+              // root_parent_id ausente
+            },
+          },
+        ],
+        pages: 1,
+      }),
+    } as unknown as InfraspeakClient;
+    const service = new RequestsService(client, makeConfig('failures'));
+
+    const options = await service.getFormOptions();
+
+    expect(options.locals[0].clientId).toBeNull();
+  });
+
+  it('create exige recurso configurado', async () => {
+    const client = { post: jest.fn() } as unknown as InfraspeakClient;
+    const service = new RequestsService(client, makeConfig(undefined));
+    await expect(
+      service.create({ problemId: 1, localId: 1, description: 'x' }),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+});
+
+describe('buildCreateFailurePayload', () => {
+  it('monta o payload mínimo com local_id', () => {
+    expect(buildCreateFailurePayload({ problemId: 28310, localId: 387903, description: ' abc ' })).toEqual({
+      problem_id: 28310,
+      local_id: 387903,
+      description: 'abc',
+    });
+  });
+
+  it('aceita element_id como alternativa ao local_id', () => {
+    expect(buildCreateFailurePayload({ problemId: 1, elementId: 42, description: 'x' })).toEqual({
+      problem_id: 1,
+      element_id: 42,
+      description: 'x',
+    });
+  });
+
+  it('rejeita quando local e elemento vêm preenchidos ao mesmo tempo (XOR)', () => {
+    expect(() =>
+      buildCreateFailurePayload({ problemId: 1, localId: 2, elementId: 3, description: 'x' }),
+    ).toThrow(BadRequestException);
+  });
+
+  it('rejeita descrição vazia/apenas espaços', () => {
+    expect(() => buildCreateFailurePayload({ problemId: 1, localId: 1, description: '  ' })).toThrow(
+      BadRequestException,
+    );
+  });
+
+  it('rejeita problemId ausente/inválido', () => {
+    expect(() =>
+      buildCreateFailurePayload({ problemId: 0 as number, localId: 1, description: 'x' }),
+    ).toThrow(BadRequestException);
+    expect(() =>
+      buildCreateFailurePayload({ problemId: NaN as number, localId: 1, description: 'x' }),
+    ).toThrow(BadRequestException);
+  });
+
+  it('rejeita quando não há local nem elemento', () => {
+    expect(() => buildCreateFailurePayload({ problemId: 1, description: 'x' })).toThrow(
+      BadRequestException,
+    );
+  });
+
+  it('valida a faixa de prioridade 1–4 (regra confirmada no sandbox)', () => {
+    expect(() =>
+      buildCreateFailurePayload({ problemId: 1, localId: 1, description: 'x', priority: 99 }),
+    ).toThrow(BadRequestException);
+    expect(
+      buildCreateFailurePayload({ problemId: 1, localId: 1, description: 'x', priority: 4 }).priority,
+    ).toBe(4);
   });
 });

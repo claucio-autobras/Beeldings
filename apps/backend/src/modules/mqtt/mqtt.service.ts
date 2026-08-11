@@ -37,6 +37,7 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
   private lastDisconnectedAt: string | null = null;
   private lastError: string | null = null;
   private sanitizedBroker = '';
+  private authUsername: string | undefined;
 
   constructor(private readonly config: ConfigService) {}
 
@@ -47,6 +48,7 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
     const password = this.config.get<string | undefined>('MQTT_PASSWORD');
 
     this.sanitizedBroker = this.sanitizeBrokerUrl(brokerUrl);
+    this.authUsername = username;
 
     this.client = mqtt.connect(brokerUrl, {
       clientId,
@@ -65,7 +67,27 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
 
     this.client.on('error', (err) => {
       this.lastError = err.message;
-      this.logger.error(`MQTT error: ${err.message}`);
+      // CONNACK de recusa de autenticação: 4/5 (MQTT 3.1.1 — bad user/pass,
+      // not authorized) e 134/135 (MQTT 5). Sem este log explícito, a recusa
+      // fica indistinguível de instabilidade de rede e passa despercebida —
+      // o backend fica SEM telemetria, status e saúde de gateways.
+      const reasonCode = (err as Partial<mqtt.ErrorWithReasonCode>).code;
+      if (
+        reasonCode === 4 ||
+        reasonCode === 5 ||
+        reasonCode === 134 ||
+        reasonCode === 135
+      ) {
+        this.logger.error(
+          `MQTT: AUTENTICAÇÃO RECUSADA pelo broker ${this.sanitizedBroker} ` +
+            `(username: ${this.authUsername ?? '(não definido)'}): ${err.message}. ` +
+            'Verifique se o usuário existe no EMQX e se MQTT_USERNAME/MQTT_PASSWORD ' +
+            'estão corretos — o backend segue SEM conexão MQTT (sem telemetria, ' +
+            'status ou saúde de gateways) até corrigir.',
+        );
+      } else {
+        this.logger.error(`MQTT error: ${err.message}`);
+      }
     });
 
     this.client.on('reconnect', () => {

@@ -2,7 +2,7 @@
 
 import { Bell, BellRing } from 'lucide-react';
 import type { AlarmGroupBadgeWidget } from '../../types/scada.types';
-import { ALARM_GROUP_SEVERITY_COLOR } from '../../types/scada.types';
+import { ALARM_GROUP_SEVERITY_COLOR, scadaBackgroundStyle } from '../../types/scada.types';
 import type { AlarmGroupAggregate } from '../../services/alarm-groups.service';
 
 interface Props {
@@ -42,7 +42,7 @@ export function AlarmGroupBadgeWidgetView({ widget, aggregate }: Props) {
         gap: 8,
         padding: '0 10px',
         boxSizing: 'border-box',
-        backgroundColor: widget.backgroundColor,
+        ...scadaBackgroundStyle(widget.backgroundColor),
         border: `1px solid ${accent}`,
         borderRadius: widget.borderRadius,
         color: widget.textColor,

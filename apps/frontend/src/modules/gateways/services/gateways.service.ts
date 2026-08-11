@@ -44,14 +44,15 @@ export interface GatewayHealthSummary {
   polling: GatewayPollingHealth[];
 }
 
-/** Estágios da atualização remota (OTA) reportados pelo gateway. */
+/** Estágios da atualização remota (OTA) reportados pelo gateway (+ `expired`, gerado pelo backend). */
 export type GatewayOtaStage =
   | 'downloading'
   | 'applying'
   | 'restarting'
   | 'completed'
   | 'failed'
-  | 'rolled_back';
+  | 'rolled_back'
+  | 'expired';
 
 /** Progresso da atualização remota em andamento (em memória no backend). */
 export interface GatewayOtaProgress {
@@ -90,9 +91,20 @@ export async function getGateways(tenantId?: string): Promise<GatewayItem[]> {
   return apiGet<GatewayItem[]>(`/gateways${qs}`);
 }
 
+/** Resumo leve para o badge do menu: número de gateways online com update disponível. */
+export async function getGatewayUpdateSummary(tenantId?: string): Promise<{ updatable: number }> {
+  const qs = tenantId ? `?tenantId=${tenantId}` : '';
+  return apiGet<{ updatable: number }>(`/gateways/update-summary${qs}`);
+}
+
 /** Dispara a atualização remota (OTA) de um gateway. */
 export async function triggerGatewayUpdate(id: string): Promise<{ version: string }> {
   return apiPost<{ version: string }>(`/gateways/${id}/update`, {});
+}
+
+/** Cancela/limpa uma atualização OTA travada (libera novo disparo). */
+export async function cancelGatewayUpdate(id: string): Promise<void> {
+  await apiPost<void>(`/gateways/${id}/update/cancel`, {});
 }
 
 /**

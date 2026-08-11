@@ -12,7 +12,14 @@ describe('AiService.detectMentionedModels', () => {
         return models;
       }),
     };
-    const service = new AiService({} as never, knowledge as never, { record: jest.fn() } as never);
+    const service = new AiService(
+      {} as never,
+      knowledge as never,
+      { record: jest.fn() } as never,
+      { findSimilar: jest.fn(async () => []) } as never,
+      { findAll: jest.fn(async () => []) } as never,
+      { getStatus: jest.fn(() => 'online'), resolveLastSeenMany: jest.fn(async () => new Map()) } as never,
+    );
     return {
       detect: (q: string) =>
         (service as unknown as { detectMentionedModels(q: string): Promise<string[]> })

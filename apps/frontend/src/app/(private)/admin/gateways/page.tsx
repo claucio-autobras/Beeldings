@@ -1,6 +1,7 @@
 'use client';
 
 import { Fragment, useState } from 'react';
+import { XCircle } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Activity,
@@ -17,6 +18,7 @@ import {
 import { apiGet, apiDelete, sensitiveActionHeaders } from '@/lib/api-client';
 import PasswordConfirmDialog from '@/components/PasswordConfirmDialog';
 import {
+  cancelGatewayUpdate,
   compareVersions,
   triggerGatewayUpdate,
 } from '@/modules/gateways/services/gateways.service';
@@ -89,12 +91,18 @@ function DeviceStatusBadge({ ok }: { ok: boolean }) {
   );
 }
 
+/**
+ * Janela de expiração no cliente — alinhada ao backend (15 min). O backend já
+ * transiciona para `expired` sozinho; este corte só cobre dados em cache.
+ */
+const OTA_EXPIRE_MS = 15 * 60_000;
+
 /** True enquanto a atualização OTA está em andamento (estágios não-finais). */
 function otaInFlight(ota?: GatewayOtaProgress | null): boolean {
   if (!ota) return false;
   if (!['downloading', 'applying', 'restarting'].includes(ota.stage)) return false;
-  // Sem estágio final há mais de 30min = considera abandonada.
-  return Date.now() - new Date(ota.receivedAt).getTime() < 30 * 60_000;
+  // Sem estágio final há mais de 15min = expirada (backend confirma no refetch).
+  return Date.now() - new Date(ota.receivedAt).getTime() < OTA_EXPIRE_MS;
 }
 
 const OTA_STAGE_LABEL: Record<string, string> = {
@@ -104,7 +112,11 @@ const OTA_STAGE_LABEL: Record<string, string> = {
   completed: 'Atualização concluída',
   failed: 'Falha na atualização',
   rolled_back: 'Falhou — versão anterior restaurada',
+  expired: 'Atualização não confirmada — o gateway não voltou após o restart',
 };
+
+/** Estágios terminais de falha (inclui o `expired` gerado pelo backend). */
+const OTA_FAILURE_STAGES = ['failed', 'rolled_back', 'expired'];
 
 type StatusFilter = 'all' | 'online' | 'offline';
 
@@ -136,6 +148,11 @@ export default function GatewaysPage() {
     onSettled: () => void qc.invalidateQueries({ queryKey: ['gateways'] }),
   });
 
+  const cancelMutation = useMutation({
+    mutationFn: (id: string) => cancelGatewayUpdate(id),
+    onSettled: () => void qc.invalidateQueries({ queryKey: ['gateways'] }),
+  });
+
   const { data: tenants = [] } = useQuery<TenantItem[]>({
     queryKey: ['tenants'],
     queryFn: () => apiGet('/tenants'),
@@ -153,23 +170,28 @@ export default function GatewaysPage() {
   const offlineCount = gateways.filter((g) => g.status !== 'online').length;
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto w-full max-w-6xl space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-xl font-semibold text-foreground">Gateways</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          Status e saúde em tempo real dos gateways instalados nos clientes
-        </p>
-      </div>
+      <header className="flex items-center gap-3">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-cyan-500/10">
+          <Router className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
+        </div>
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight text-foreground">Gateways</h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            Status e saúde em tempo real dos gateways instalados nos clientes
+          </p>
+        </div>
+      </header>
 
       {/* KPIs */}
       <div className="grid grid-cols-3 gap-4">
         {[
           { label: 'Total',   value: gateways.length, color: 'text-foreground' },
-          { label: 'Online',  value: onlineCount,      color: 'text-green-600' },
-          { label: 'Offline', value: offlineCount,     color: 'text-slate-500' },
+          { label: 'Online',  value: onlineCount,      color: 'text-green-600 dark:text-green-400' },
+          { label: 'Offline', value: offlineCount,     color: 'text-muted-foreground' },
         ].map(({ label, value, color }) => (
-          <div key={label} className="rounded-lg border border-border bg-card px-4 py-3 text-center">
+          <div key={label} className="rounded-xl border border-border bg-card px-4 py-3 text-center shadow-sm">
             <p className={`text-2xl font-bold ${color}`}>{value}</p>
             <p className="text-xs text-muted-foreground mt-0.5">{label}</p>
           </div>
@@ -202,15 +224,17 @@ export default function GatewaysPage() {
 
       {/* Error */}
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-400">
           Erro ao carregar gateways: {(error as Error).message}
         </div>
       )}
 
       {/* Empty */}
       {!isLoading && !error && filtered.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
-          <Router className="h-12 w-12 text-muted-foreground/25 mb-3" />
+        <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-border bg-card px-6 py-16 text-center shadow-sm">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-cyan-500/10">
+            <Router className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
+          </div>
           <p className="text-sm text-muted-foreground">
             {gateways.length === 0 ? 'Nenhum gateway cadastrado ainda.' : 'Nenhum gateway neste filtro.'}
           </p>
@@ -225,7 +249,7 @@ export default function GatewaysPage() {
             const health = freshHealth(gw.health);
             const expanded = expandedId === gw.id;
             return (
-              <div key={gw.id} className="rounded-xl border border-border bg-card">
+              <div key={gw.id} className="rounded-xl border border-border bg-card shadow-sm">
                 <button
                   type="button"
                   onClick={() => setExpandedId(expanded ? null : gw.id)}
@@ -234,10 +258,10 @@ export default function GatewaysPage() {
                   <div className="flex items-center gap-2">
                     {online
                       ? <Wifi className="h-4 w-4 text-green-500 shrink-0" />
-                      : <WifiOff className="h-4 w-4 text-slate-400 shrink-0" />}
+                      : <WifiOff className="h-4 w-4 text-muted-foreground/60 shrink-0" />}
                     <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-foreground">{gw.id}</span>
-                    <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ${online ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-slate-100 text-slate-500 border border-slate-200'}`}>
-                      <span className={`h-1.5 w-1.5 rounded-full ${online ? 'bg-green-500 animate-pulse' : 'bg-slate-400'}`} />
+                    <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ${online ? 'bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-900' : 'bg-muted text-muted-foreground border border-border'}`}>
+                      <span className={`h-1.5 w-1.5 rounded-full ${online ? 'bg-green-500 animate-pulse' : 'bg-muted-foreground/50'}`} />
                       {online ? 'Online' : 'Offline'}
                     </span>
                     {expanded
@@ -266,6 +290,13 @@ export default function GatewaysPage() {
                             : null
                         }
                         onUpdate={() => updateMutation.mutate(gw.id)}
+                        cancelPending={cancelMutation.isPending && cancelMutation.variables === gw.id}
+                        cancelError={
+                          cancelMutation.variables === gw.id && cancelMutation.error
+                            ? (cancelMutation.error as Error).message
+                            : null
+                        }
+                        onCancel={() => cancelMutation.mutate(gw.id)}
                       />
                     </div>
                     <HealthDetail health={health} />
@@ -286,16 +317,17 @@ export default function GatewaysPage() {
 
       {/* List — tabela no desktop/tablet */}
       {!isLoading && !error && filtered.length > 0 && (
-        <div className="hidden md:block border border-border rounded-xl overflow-x-auto">
+        <div className="hidden md:block overflow-hidden rounded-xl border border-border bg-card shadow-sm transition-shadow duration-200 hover:shadow-md">
+          <div className="overflow-x-auto">
           <table className="w-full min-w-[720px] text-sm">
             <thead>
               <tr className="bg-muted/30 border-b border-border">
-                <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">Gateway ID</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground hidden sm:table-cell">Cliente</th>
-                <th className="text-center px-4 py-3 text-xs font-medium text-muted-foreground">Status</th>
-                <th className="text-center px-4 py-3 text-xs font-medium text-muted-foreground hidden md:table-cell">Saúde</th>
-                <th className="text-center px-4 py-3 text-xs font-medium text-muted-foreground">Versão</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground">Última comunicação</th>
+                <th className="text-left px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Gateway ID</th>
+                <th className="text-left px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hidden sm:table-cell">Cliente</th>
+                <th className="text-center px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Status</th>
+                <th className="text-center px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hidden md:table-cell">Saúde</th>
+                <th className="text-center px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Versão</th>
+                <th className="text-right px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Última comunicação</th>
                 <th className="px-4 py-3" />
               </tr>
             </thead>
@@ -307,17 +339,17 @@ export default function GatewaysPage() {
                 return (
                   <Fragment key={gw.id}>
                     <tr
-                      className="hover:bg-muted/20 transition-colors cursor-pointer"
+                      className="transition-colors duration-150 hover:bg-muted/30 cursor-pointer"
                       onClick={() => setExpandedId(expanded ? null : gw.id)}
                     >
-                      <td className="px-4 py-3">
+                      <td className="px-5 py-3.5">
                         <div className="flex items-center gap-2">
                           {expanded
                             ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                             : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />}
                           {online
                             ? <Wifi className="h-4 w-4 text-green-500 shrink-0" />
-                            : <WifiOff className="h-4 w-4 text-slate-400 shrink-0" />}
+                            : <WifiOff className="h-4 w-4 text-muted-foreground/60 shrink-0" />}
                           <span className="font-mono text-xs text-foreground font-medium">{gw.id}</span>
                         </div>
                       </td>
@@ -325,8 +357,8 @@ export default function GatewaysPage() {
                         {tenantMap[gw.tenantId] ?? gw.tenantId}
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full ${online ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-slate-100 text-slate-500 border border-slate-200'}`}>
-                          <span className={`h-1.5 w-1.5 rounded-full ${online ? 'bg-green-500 animate-pulse' : 'bg-slate-400'}`} />
+                        <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full ${online ? 'bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-900' : 'bg-muted text-muted-foreground border border-border'}`}>
+                          <span className={`h-1.5 w-1.5 rounded-full ${online ? 'bg-green-500 animate-pulse' : 'bg-muted-foreground/50'}`} />
                           {online ? 'Online' : 'Offline'}
                         </span>
                       </td>
@@ -343,7 +375,7 @@ export default function GatewaysPage() {
                         <button
                           onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(gw.id); }}
                           title="Excluir gateway"
-                          className="inline-flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-red-600 hover:bg-red-50 transition-colors"
+                          className="inline-flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 dark:hover:text-red-400 transition-colors"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
@@ -363,6 +395,13 @@ export default function GatewaysPage() {
                                   : null
                               }
                               onUpdate={() => updateMutation.mutate(gw.id)}
+                              cancelPending={cancelMutation.isPending && cancelMutation.variables === gw.id}
+                              cancelError={
+                                cancelMutation.variables === gw.id && cancelMutation.error
+                                  ? (cancelMutation.error as Error).message
+                                  : null
+                              }
+                              onCancel={() => cancelMutation.mutate(gw.id)}
                             />
                           </div>
                           <HealthDetail health={health} />
@@ -374,6 +413,11 @@ export default function GatewaysPage() {
               })}
             </tbody>
           </table>
+          </div>
+          <div className="border-t border-border bg-muted/20 px-5 py-2.5 text-xs text-muted-foreground">
+            {filtered.length} gateway{filtered.length !== 1 ? 's' : ''}
+            {statusFilter !== 'all' ? ' neste filtro' : ''}
+          </div>
         </div>
       )}
 
@@ -401,11 +445,30 @@ export default function GatewaysPage() {
 /** Badge compacto da versão na linha da tabela (com aviso quando desatualizado). */
 function VersionBadge({ gw }: { gw: GatewayItem }) {
   const inFlight = otaInFlight(gw.ota);
+  const online = gw.status === 'online';
   if (inFlight) {
     return (
-      <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-cyan-50 text-cyan-700 border border-cyan-200">
+      <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-cyan-50 text-cyan-700 border border-cyan-200 dark:bg-cyan-950/40 dark:text-cyan-300 dark:border-cyan-800">
         <Loader2 className="h-3 w-3 animate-spin" />
-        {OTA_STAGE_LABEL[gw.ota!.stage] ?? 'Atualizando…'}
+        {online
+          ? OTA_STAGE_LABEL[gw.ota!.stage] ?? 'Atualizando…'
+          : 'Gateway offline durante a atualização…'}
+      </span>
+    );
+  }
+
+  // Expirada em memória OU persistida (sobrevive a restart do backend).
+  if (gw.ota?.stage === 'expired' || (!gw.ota && gw.otaState === 'expired')) {
+    return (
+      <span
+        title={OTA_STAGE_LABEL.expired}
+        className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-900"
+      >
+        <AlertTriangle className="h-3 w-3" />
+        Não confirmada
+        {gw.reportedVersion ? (
+          <span className="font-mono">· v{gw.reportedVersion}</span>
+        ) : null}
       </span>
     );
   }
@@ -421,7 +484,7 @@ function VersionBadge({ gw }: { gw: GatewayItem }) {
       title={outdated ? `Nova versão disponível: v${gw.latestVersion}` : 'Atualizado'}
       className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-mono ${
         outdated
-          ? 'bg-amber-50 text-amber-700 border border-amber-200'
+          ? 'bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800'
           : 'bg-muted/40 text-muted-foreground'
       }`}
     >
@@ -438,13 +501,20 @@ function VersionPanel({
   pending,
   error,
   onUpdate,
+  cancelPending,
+  cancelError,
+  onCancel,
 }: {
   gw: GatewayItem;
   online: boolean;
   pending: boolean;
   error: string | null;
   onUpdate: () => void;
+  cancelPending: boolean;
+  cancelError: string | null;
+  onCancel: () => void;
 }) {
+  const [confirmCancel, setConfirmCancel] = useState(false);
   const inFlight = otaInFlight(gw.ota);
   const version = gw.reportedVersion ?? null;
   const outdated = version !== null && compareVersions(gw.latestVersion, version) > 0;
@@ -467,11 +537,33 @@ function VersionPanel({
         </div>
 
         {inFlight ? (
-          <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-cyan-50 text-cyan-700 border border-cyan-200">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            {OTA_STAGE_LABEL[gw.ota!.stage] ?? 'Atualizando…'}
-            {gw.ota?.version ? ` (v${gw.ota.version})` : ''}
-          </span>
+          online ? (
+            <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-cyan-50 text-cyan-700 border border-cyan-200 dark:bg-cyan-950/40 dark:text-cyan-300 dark:border-cyan-800">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              {OTA_STAGE_LABEL[gw.ota!.stage] ?? 'Atualizando…'}
+              {gw.ota?.version ? ` (v${gw.ota.version})` : ''}
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Gateway offline durante a atualização
+              {gw.ota?.version ? ` (v${gw.ota.version})` : ''} — aguardando reconexão…
+            </span>
+          )
+        ) : gw.ota?.stage === 'expired' || (!gw.ota && gw.otaState === 'expired') ? (
+          gw.otaSupported && online ? (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onUpdate(); }}
+              disabled={pending}
+              className="inline-flex items-center gap-1.5 rounded-md bg-cyan-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-cyan-700 disabled:opacity-60 transition-colors"
+            >
+              {pending
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                : <DownloadCloud className="h-3.5 w-3.5" />}
+              Tentar atualizar novamente para v{gw.latestVersion}
+            </button>
+          ) : null
         ) : outdated && gw.otaSupported && online ? (
           <button
             type="button"
@@ -489,12 +581,50 @@ function VersionPanel({
             Nova versão disponível — o gateway precisa estar online para atualizar.
           </span>
         ) : version && !outdated ? (
-          <span className="text-xs text-green-700">Gateway atualizado.</span>
+          <span className="text-xs text-green-700 dark:text-green-400">Gateway atualizado.</span>
         ) : null}
+
+        {inFlight && (
+          confirmCancel ? (
+            <span className="inline-flex items-center gap-2 text-xs">
+              <span className="text-muted-foreground">Cancelar a atualização travada?</span>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setConfirmCancel(false); onCancel(); }}
+                disabled={cancelPending}
+                className="inline-flex items-center gap-1 rounded-md bg-red-600 px-2.5 py-1 font-medium text-white hover:bg-red-700 disabled:opacity-60 transition-colors"
+              >
+                {cancelPending
+                  ? <Loader2 className="h-3 w-3 animate-spin" />
+                  : <XCircle className="h-3 w-3" />}
+                Sim, cancelar
+              </button>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setConfirmCancel(false); }}
+                className="rounded-md border border-border px-2.5 py-1 font-medium text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Voltar
+              </button>
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); setConfirmCancel(true); }}
+              disabled={cancelPending}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground hover:border-red-300 hover:text-red-600 disabled:opacity-60 transition-colors"
+            >
+              {cancelPending
+                ? <Loader2 className="h-3 w-3 animate-spin" />
+                : <XCircle className="h-3 w-3" />}
+              Cancelar atualização travada
+            </button>
+          )
+        )}
       </div>
 
       {legacy && (
-        <div className="flex items-start gap-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+        <div className="flex items-start gap-2 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-300">
           <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
           <span>
             Este gateway foi instalado com uma versão antiga e não suporta atualização
@@ -504,19 +634,39 @@ function VersionPanel({
         </div>
       )}
 
-      {!inFlight && gw.ota && ['failed', 'rolled_back'].includes(gw.ota.stage) && (
-        <div className="flex items-start gap-2 rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+      {!inFlight && gw.ota && OTA_FAILURE_STAGES.includes(gw.ota.stage) && (
+        <div className="flex items-start gap-2 rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 dark:bg-red-950/40 dark:border-red-800 dark:text-red-400">
           <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
           <span>
-            {OTA_STAGE_LABEL[gw.ota.stage]}
-            {gw.ota.error ? ` — ${gw.ota.error}` : ''}
+            {gw.ota.stage === 'expired'
+              ? `${gw.ota.error ?? OTA_STAGE_LABEL.expired}. Versão instalada: ${version ? `v${version}` : 'desconhecida'}. Verifique o gateway no local e, quando ele voltar a ficar online, dispare a atualização novamente.`
+              : `${OTA_STAGE_LABEL[gw.ota.stage]}${gw.ota.error ? ` — ${gw.ota.error}` : ''}`}
+          </span>
+        </div>
+      )}
+
+      {/* Resultado persistido (sobrevive a restart do backend) quando não há progresso em memória. */}
+      {!inFlight && !gw.ota && gw.otaState && OTA_FAILURE_STAGES.includes(gw.otaState) && (
+        <div className="flex items-start gap-2 rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 dark:bg-red-950/40 dark:border-red-800 dark:text-red-400">
+          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+          <span>
+            {gw.otaMessage ?? OTA_STAGE_LABEL[gw.otaState] ?? 'Falha na atualização'}
+            {gw.otaState === 'expired'
+              ? ` Versão instalada: ${version ? `v${version}` : 'desconhecida'}. Verifique o gateway no local e, quando ele voltar a ficar online, dispare a atualização novamente.`
+              : ''}
           </span>
         </div>
       )}
 
       {error && (
-        <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+        <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 dark:bg-red-950/40 dark:border-red-800 dark:text-red-400">
           {error}
+        </div>
+      )}
+
+      {cancelError && (
+        <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 dark:bg-red-950/40 dark:border-red-800 dark:text-red-400">
+          {cancelError}
         </div>
       )}
     </div>
@@ -538,7 +688,7 @@ function HealthBadges({ health }: { health: GatewayHealthSummary | null }) {
       <span
         title="Fila offline (pendentes)"
         className={`inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded ${
-          pending > 0 ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-muted/40 text-muted-foreground'
+          pending > 0 ? 'bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800' : 'bg-muted/40 text-muted-foreground'
         }`}
       >
         fila {pending}
@@ -554,7 +704,7 @@ function HealthBadges({ health }: { health: GatewayHealthSummary | null }) {
       <span
         title="Reconexões MQTT desde o boot"
         className={`inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded ${
-          reconnects > 0 ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-muted/40 text-muted-foreground'
+          reconnects > 0 ? 'bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800' : 'bg-muted/40 text-muted-foreground'
         }`}
       >
         rec {reconnects}

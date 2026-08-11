@@ -122,10 +122,12 @@ export default function AddBACnetDeviceModal({ open, onClose, onCreated }: Props
   // Controladoras encontradas no scan de rede (Who-Is broadcast)
   const [scanResults, setScanResults] = useState<DiscoveredBacnetDevice[]>([]);
 
-  // Dados reais do backend
+  // Dados reais do backend. Perfil global sem cliente escolhido: não busca
+  // sites (tenant vazio no backend = "sem filtro") e trava o seletor de Site.
   const effectiveTenantId = isGlobalRole ? selectedClientId : (user.tenantId ?? '');
+  const tenantChosen = Boolean(effectiveTenantId);
   const { data: tenants = [] } = useTenants();
-  const { data: allSites = [] } = useSites(effectiveTenantId || undefined);
+  const { data: allSites = [] } = useSites(effectiveTenantId || undefined, { enabled: tenantChosen });
   const { data: siteProjects = [] } = useQuery({
     queryKey: ['projects', siteId || null, effectiveTenantId || null],
     queryFn: () => getProjects(siteId || undefined, effectiveTenantId || undefined),
@@ -418,9 +420,10 @@ export default function AddBACnetDeviceModal({ open, onClose, onCreated }: Props
                 </label>
                 <div className="relative">
                   <input
-                    className={inputCls}
-                    placeholder="Selecione ou digite um local"
+                    className={inputCls + (!tenantChosen ? ' opacity-60 cursor-not-allowed' : '')}
+                    placeholder={tenantChosen ? 'Selecione ou digite um local' : 'Selecione o cliente primeiro'}
                     value={siteName}
+                    disabled={!tenantChosen}
                     onChange={(e) => {
                       setSiteName(e.target.value);
                       setSiteId('');

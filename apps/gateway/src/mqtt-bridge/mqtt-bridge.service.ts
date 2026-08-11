@@ -74,6 +74,13 @@ export interface MqttWriteCommand {
   /** Id RPC para casar a resposta (campo `id` do JSON), quando aplicável. */
   matchId: number | null;
   /**
+   * Quando presente e não-nulo, a confirmação é casada pelo campo `value` do
+   * JSON de resposta (tolerância 0,1%) em vez do campo `id` RPC. Usado por
+   * equipamentos que ecoam o novo estado num tópico separado (ex.: Aeris sp_val1).
+   * null = modo padrão: com matchId → casa por `id`; sem matchId → qualquer resposta.
+   */
+  matchValue: number | null;
+  /**
    * Contexto do ponto comandado para publicar a telemetria confirmada
    * pós-escrita (mesmo formato do bridge). Ausente em comandos antigos.
    */
@@ -89,6 +96,8 @@ export interface MqttWriteCommand {
 interface WriteSession {
   responseTopic: string;
   matchId: number | null;
+  /** Quando não-nulo, a confirmação é casada pelo campo `value` do JSON de resposta. */
+  matchValue: number | null;
   wasSubscribed: boolean;
   timer: NodeJS.Timeout;
   command: MqttWriteCommand;
@@ -99,6 +108,15 @@ interface WriteSession {
    */
   bridgePublished: boolean;
 }
+
+/**
+ * Intervalo de retry de assinaturas NEGADAS pela ACL do broker. O EMQX nega
+ * subscribe silenciosamente (SUBACK com qos 128 — sem erro no callback); se a
+ * ACL de tópicos raiz do gateway ainda não foi (re)aplicada pelo backend, o
+ * bridge fica sem os dados até re-tentar. O retry cobre a janela entre a
+ * config chegar e o backend reconstruir a ACL (ou um EMQX re-provisionado).
+ */
+const DENIED_RETRY_MS = 30_000;
 
 /** Janela de captura de amostra (ms) e nº máximo de mensagens. */
 const SAMPLE_WINDOW_MS = 6_000;
@@ -140,6 +158,10 @@ export class MqttBridgeService implements OnModuleDestroy {
   private readonly bindings = new Map<string, MqttBridgeBinding[]>();
   /** Tópicos atualmente assinados pelo bridge (persistentes). */
   private subscribed = new Set<string>();
+  /** Tópicos cuja assinatura foi NEGADA pela ACL (SUBACK qos 128) — em retry. */
+  private readonly deniedTopics = new Set<string>();
+  /** Timer do retry periódico de assinaturas negadas. */
+  private deniedRetryTimer: NodeJS.Timeout | null = null;
   /** Sessões de amostra em andamento, keyed por command_id. */
   private readonly sampleSessions = new Map<string, SampleSession>();
   /** Sessões de escrita aguardando confirmação RPC, keyed por command_id. */
@@ -158,7 +180,57 @@ export class MqttBridgeService implements OnModuleDestroy {
   }
 
   onModuleDestroy(): void {
+    if (this.deniedRetryTimer) clearInterval(this.deniedRetryTimer);
     this.client?.end();
+  }
+
+  /**
+   * Assina um tópico detectando negação de ACL: o EMQX nega subscribe com
+   * SUBACK qos 128 (SEM erro no callback do mqtt.js). Tópico negado entra na
+   * fila de retry — a ACL de raiz pode ser reconstruída pelo backend segundos
+   * depois (criação de device) ou num EMQX re-provisionado.
+   */
+  private subscribeTopic(topic: string, logOnGrant = false): void {
+    this.client?.subscribe(topic, { qos: 0 }, (err, granted) => {
+      const denied =
+        !!err || (granted ?? []).some((g) => g.topic === topic && g.qos > 2);
+      if (denied) {
+        this.logger.error(
+          `Falha ao assinar ${topic}: ${err ? err.message : 'negado pela ACL do broker (qos 128)'} — retry em ${DENIED_RETRY_MS / 1000}s`,
+        );
+        this.deniedTopics.add(topic);
+        this.ensureDeniedRetryTimer();
+        return;
+      }
+      if (this.deniedTopics.delete(topic)) {
+        this.logger.log(`Bridge assinatura recuperada após retry: ${topic}`);
+      } else if (logOnGrant) {
+        this.logger.log(`Bridge assinando tópico: ${topic}`);
+      }
+    });
+  }
+
+  /** Liga o retry periódico de assinaturas negadas (idempotente). */
+  private ensureDeniedRetryTimer(): void {
+    if (this.deniedRetryTimer) return;
+    this.deniedRetryTimer = setInterval(() => {
+      if (this.deniedTopics.size === 0) {
+        if (this.deniedRetryTimer) clearInterval(this.deniedRetryTimer);
+        this.deniedRetryTimer = null;
+        return;
+      }
+      if (!this.client?.connected) return;
+      for (const topic of this.deniedTopics) {
+        // Só re-tenta tópicos que ainda interessam (binding/heartbeat/amostra).
+        if (!this.subscribed.has(topic)) {
+          this.deniedTopics.delete(topic);
+          continue;
+        }
+        this.subscribeTopic(topic);
+      }
+    }, DENIED_RETRY_MS);
+    // Não segura o processo vivo só pelo retry.
+    this.deniedRetryTimer.unref?.();
   }
 
   /**
@@ -192,9 +264,10 @@ export class MqttBridgeService implements OnModuleDestroy {
 
     this.client.on('connect', () => {
       this.logger.log(`Bridge MQTT conectado ao broker: ${brokerUrl}`);
-      // Re-assina os tópicos conhecidos (após reconexão)
+      // Re-assina os tópicos conhecidos (após reconexão) — com detecção de
+      // negação de ACL (a reconexão pode chegar antes da ACL reconstruída).
       for (const topic of this.subscribed) {
-        this.client?.subscribe(topic, { qos: 0 });
+        this.subscribeTopic(topic);
       }
     });
 
@@ -222,6 +295,7 @@ export class MqttBridgeService implements OnModuleDestroy {
     this.client.end(true);
     this.client = null;
     this.subscribed.clear();
+    this.deniedTopics.clear();
     this.logger.log('Bridge MQTT desconectado (sem device MQTT nem amostra ativa)');
   }
 
@@ -301,10 +375,7 @@ export class MqttBridgeService implements OnModuleDestroy {
     const wanted = new Set<string>([...next.keys(), ...nextHeartbeats.keys()]);
     for (const topic of wanted) {
       if (!this.subscribed.has(topic)) {
-        this.client?.subscribe(topic, { qos: 0 }, (err) => {
-          if (err) this.logger.error(`Falha ao assinar ${topic}: ${err.message}`);
-          else this.logger.log(`Bridge assinando tópico: ${topic}`);
-        });
+        this.subscribeTopic(topic, true);
         this.subscribed.add(topic);
       }
     }
@@ -313,6 +384,7 @@ export class MqttBridgeService implements OnModuleDestroy {
       if (!wanted.has(topic) && !this.isSampling(topic)) {
         this.client?.unsubscribe(topic);
         this.subscribed.delete(topic);
+        this.deniedTopics.delete(topic);
         this.logger.log(`Bridge parou de assinar: ${topic}`);
       }
     }
@@ -408,12 +480,16 @@ export class MqttBridgeService implements OnModuleDestroy {
         points,
       });
 
-      // Anti-duplicidade: se o próprio dispositivo publicou o NOVO estado do
+      // Readback pelo próprio dispositivo: se ele publicou o NOVO estado do
       // ponto comandado enquanto a escrita aguardava confirmação, o bridge já
-      // republicou o valor — a telemetria confirmada pós-escrita fica dispensada.
+      // republicou o valor — a telemetria confirmada pós-escrita fica dispensada
+      // E a escrita é considerada CONFIRMADA (o efeito real está comprovado,
+      // mesmo que a resposta RPC não case por tópico/id/timing — evita o erro
+      // falso de timeout com o relé já atuado, ex.: Shelly).
       // O valor precisa CASAR com o comandado (valor stale/antigo do mesmo tag
-      // NÃO conta — senão suprimiríamos a publicação confirmada indevidamente).
-      for (const session of this.writeSessions.values()) {
+      // NÃO conta — senão confirmaríamos/suprimiríamos indevidamente).
+      const confirmedByReadback: string[] = [];
+      for (const [commandId, session] of this.writeSessions) {
         const c = session.command.confirm;
         if (
           c &&
@@ -421,7 +497,14 @@ export class MqttBridgeService implements OnModuleDestroy {
           points.some((p) => p.tag === c.tag && p.value !== null && this.valuesMatch(p.value, c.value))
         ) {
           session.bridgePublished = true;
+          confirmedByReadback.push(commandId);
         }
+      }
+      for (const commandId of confirmedByReadback) {
+        this.logger.log(
+          `Escrita MQTT ${commandId} confirmada por readback de telemetria do próprio dispositivo`,
+        );
+        this.finishWriteSession(commandId, true, undefined, true);
       }
     }
   }
@@ -447,7 +530,8 @@ export class MqttBridgeService implements OnModuleDestroy {
 
     const wasSubscribed = this.subscribed.has(topic);
     if (!wasSubscribed) {
-      this.client?.subscribe(topic, { qos: 0 });
+      this.subscribeTopic(topic);
+      this.subscribed.add(topic);
     }
 
     this.sampleSessions.set(command.command_id, { topic, samples: [] });
@@ -525,16 +609,28 @@ export class MqttBridgeService implements OnModuleDestroy {
     // Com confirmação: registra a sessão ANTES de assinar/publicar.
     const wasSubscribed = this.subscribed.has(responseTopic);
     const timer = setTimeout(() => {
-      this.finishWriteSession(
-        command.command_id,
-        false,
-        `Timeout - dispositivo não confirmou em ${WRITE_CONFIRM_TIMEOUT_MS / 1000}s`,
+      // Timeout de confirmação ≠ falha dura: o comando FOI publicado no broker
+      // (o dispositivo tipicamente atuou; só a resposta RPC não casou — tópico
+      // errado/ausente, id diferente ou resposta tardia). Reporta sucesso
+      // "enviado, sem confirmação" (confirmed=false) — falha real continua
+      // sendo erro de publish ou resposta RPC com `error`.
+      const session = this.writeSessions.get(command.command_id);
+      if (session?.bridgePublished) {
+        // O próprio dispositivo já ecoou o novo estado — confirmado por readback.
+        this.finishWriteSession(command.command_id, true, undefined, true);
+        return;
+      }
+      this.logger.warn(
+        `Escrita MQTT ${command.command_id}: dispositivo não confirmou em ` +
+          `${WRITE_CONFIRM_TIMEOUT_MS / 1000}s — resultado "enviado, sem confirmação"`,
       );
+      this.finishWriteSession(command.command_id, true, undefined, false);
     }, WRITE_CONFIRM_TIMEOUT_MS);
 
     this.writeSessions.set(command.command_id, {
       responseTopic,
       matchId: command.matchId ?? null,
+      matchValue: command.matchValue ?? null,
       wasSubscribed,
       timer,
       command,
@@ -542,7 +638,7 @@ export class MqttBridgeService implements OnModuleDestroy {
     });
 
     if (!wasSubscribed) {
-      this.client?.subscribe(responseTopic, { qos: 0 });
+      this.subscribeTopic(responseTopic);
       this.subscribed.add(responseTopic);
     }
 
@@ -553,7 +649,7 @@ export class MqttBridgeService implements OnModuleDestroy {
     });
   }
 
-  /** Alimenta as sessões de escrita com uma mensagem recebida (confirmação RPC). */
+  /** Alimenta as sessões de escrita com uma mensagem recebida (confirmação RPC ou eco de valor). */
   private feedWriteSessions(topic: string, payload: Buffer): void {
     if (this.writeSessions.size === 0) return;
 
@@ -568,12 +664,37 @@ export class MqttBridgeService implements OnModuleDestroy {
         parsed = null;
       }
 
-      // Com matchId, só aceita a resposta cujo `id` casa (RPC concorrente).
+      // Modo 1 — correspondência por id RPC (ex.: Shelly Gen4): matchId presente.
       if (session.matchId !== null) {
         if (!parsed || Number(parsed.id) !== session.matchId) continue;
+        // Resposta RPC com campo `error` = dispositivo recusou o comando.
+        const rpcError = parsed.error as { message?: unknown; code?: unknown } | undefined;
+        if (rpcError) {
+          const msg = typeof rpcError.message === 'string'
+            ? rpcError.message
+            : `Dispositivo recusou o comando (código ${String(rpcError.code ?? '?')})`;
+          this.finishWriteSession(commandId, false, msg);
+        } else {
+          this.finishWriteSession(commandId, true, undefined, true);
+        }
+        continue;
       }
 
-      // Resposta RPC com campo `error` = dispositivo recusou o comando.
+      // Modo 2 — correspondência por valor (ex.: Aeris sp_val1): matchValue presente.
+      // O equipamento publica o novo estado no tópico de eco; confirmamos quando o
+      // campo `value` do JSON bate com o valor comandado (tolerância de 0,1%).
+      if (session.matchValue !== null) {
+        if (!parsed || parsed.value === undefined) continue;
+        const echoValue = Number(parsed.value);
+        if (!Number.isFinite(echoValue) || !this.valuesMatch(echoValue, session.matchValue)) continue;
+        this.logger.log(
+          `Confirmação por eco de valor: topic=${topic} value=${echoValue} ≈ comandado=${session.matchValue}`,
+        );
+        this.finishWriteSession(commandId, true, undefined, true);
+        continue;
+      }
+
+      // Modo 3 — sem match (aceita qualquer resposta no tópico de resposta).
       const rpcError = parsed?.error as { message?: unknown; code?: unknown } | undefined;
       if (rpcError) {
         const msg = typeof rpcError.message === 'string'

@@ -83,9 +83,12 @@ export default function AddMqttDeviceModal({ open, onClose, onCreated }: Props) 
   // Dispositivo criado em modo raiz: mostra a credencial dedicada antes de fechar.
   const [createdDevice, setCreatedDevice] = useState<MqttDevice | null>(null);
 
+  // Perfil global sem cliente escolhido: não busca sites (tenant vazio no
+  // backend = "sem filtro") e trava o seletor de Site.
   const effectiveTenantId = isGlobalRole ? selectedClientId : (user.tenantId ?? '');
+  const tenantChosen = Boolean(effectiveTenantId);
   const { data: tenants = [] } = useTenants();
-  const { data: allSites = [] } = useSites(effectiveTenantId || undefined);
+  const { data: allSites = [] } = useSites(effectiveTenantId || undefined, { enabled: tenantChosen });
   const { data: siteProjects = [] } = useQuery({
     queryKey: ['projects', siteId || null, effectiveTenantId || null],
     queryFn: () => getProjects(siteId || undefined, effectiveTenantId || undefined),
@@ -219,8 +222,7 @@ export default function AddMqttDeviceModal({ open, onClose, onCreated }: Props) 
   const heartbeatValid = !heartbeatSub.trim()
     || (Number.isFinite(heartbeatWindow) && heartbeatWindow >= 15 && heartbeatWindow <= 3600);
   const formValid = !!(name && siteId && projectId && siteGatewayId && clientSelected)
-    && validRows.length > 0
-    && validRows.every(rowWriteValid)
+    && (isRootMode ? true : (validRows.length > 0 && validRows.every(rowWriteValid)))
     && (!isRootMode || (!!rootNorm && !rootTopicInvalid))
     && heartbeatValid;
 
@@ -302,6 +304,15 @@ export default function AddMqttDeviceModal({ open, onClose, onCreated }: Props) 
               <p className="text-xs text-amber-700">A credencial não pôde ser provisionada agora — tente reabrir o dispositivo em edição.</p>
             )}
           </div>
+          <div className="px-5 pb-3">
+            <div className="flex items-start gap-2 rounded-lg border border-emerald-200 dark:border-emerald-900 bg-emerald-50/60 dark:bg-emerald-950/30 px-3 py-2.5 text-xs text-emerald-900 dark:text-emerald-200">
+              <span className="shrink-0 mt-0.5">💡</span>
+              <p>
+                <span className="font-medium">Próximo passo:</span> configure o equipamento com as credenciais acima e aguarde ele começar a publicar.
+                Em seguida, abra o dispositivo na lista e use <span className="font-medium">Adicionar Ponto</span> para mapear os sub-tópicos às tags monitoradas.
+              </p>
+            </div>
+          </div>
           <div className="flex justify-end border-t border-border px-5 py-4">
             <button
               onClick={() => { const d = createdDevice; onCreated(d); resetAndClose(); }}
@@ -355,9 +366,10 @@ export default function AddMqttDeviceModal({ open, onClose, onCreated }: Props) 
               <label className={labelCls}>Site <span className="text-red-500">*</span></label>
               <div className="relative">
                 <input
-                  className={inputCls}
-                  placeholder="Selecione ou digite um local"
+                  className={inputCls + (!tenantChosen ? ' opacity-60 cursor-not-allowed' : '')}
+                  placeholder={tenantChosen ? 'Selecione ou digite um local' : 'Selecione o cliente primeiro'}
                   value={siteName}
+                  disabled={!tenantChosen}
                   onChange={(e) => { setSiteName(e.target.value); setSiteId(''); setProjectId(''); setSiteGatewayId(''); setSiteOpen(true); }}
                   onFocus={() => setSiteOpen(true)}
                   onBlur={() => setTimeout(() => setSiteOpen(false), 150)}
@@ -423,7 +435,11 @@ export default function AddMqttDeviceModal({ open, onClose, onCreated }: Props) 
                 <span><span className="font-medium">Prefixo de sensores (padrão)</span> — o equipamento publica sob o namespace do gateway.</span>
               </label>
               <label className="flex items-start gap-2 text-xs text-foreground cursor-pointer">
-                <input type="radio" name="topicMode" className="mt-0.5 accent-sky-600" checked={isRootMode} onChange={() => setTopicMode('root')} />
+                <input type="radio" name="topicMode" className="mt-0.5 accent-sky-600" checked={isRootMode} onChange={() => {
+                  setTopicMode('root');
+                  setSampleTopicInput(''); setSamples([]); setSampleError(''); setSampled(false);
+                  setRows([emptyRow()]);
+                }} />
                 <span><span className="font-medium">Tópico raiz próprio</span> — o equipamento publica no próprio namespace, sem nenhum prefixo configurado nele.</span>
               </label>
             </div>
@@ -477,8 +493,8 @@ export default function AddMqttDeviceModal({ open, onClose, onCreated }: Props) 
             </div>
           )}
 
-          {/* Captura de amostra */}
-          <div className="space-y-2 border border-border rounded-lg p-3 bg-muted/20">
+          {/* Captura de amostra — apenas no modo prefixo */}
+          {!isRootMode && <div className="space-y-2 border border-border rounded-lg p-3 bg-muted/20">
             <div>
               <h3 className="text-sm font-semibold text-foreground">Capturar amostra do tópico</h3>
               <p className="text-[11px] text-muted-foreground">
@@ -532,10 +548,23 @@ export default function AddMqttDeviceModal({ open, onClose, onCreated }: Props) 
                 )}
               </div>
             )}
-          </div>
+          </div>}
 
-          {/* Pontos */}
-          <div className="space-y-2">
+          {/* Nota modo raiz — pontos depois */}
+          {isRootMode && (
+            <div className="flex items-start gap-2.5 rounded-lg border border-sky-200 dark:border-sky-900 bg-sky-50/60 dark:bg-sky-950/30 px-4 py-3 text-xs text-sky-900 dark:text-sky-200">
+              <Radio className="h-4 w-4 shrink-0 mt-0.5 text-sky-600" />
+              <p>
+                <span className="font-medium">Os pontos serão adicionados depois.</span>{' '}
+                Salve o dispositivo agora para obter a credencial dedicada. Assim que o equipamento estiver
+                publicando com essa credencial, abra o dispositivo e use <span className="font-medium">Adicionar Ponto</span> para
+                mapear os sub-tópicos e tags.
+              </p>
+            </div>
+          )}
+
+          {/* Pontos — apenas no modo prefixo */}
+          {!isRootMode && <div className="space-y-2">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-semibold text-foreground">Pontos</h3>
@@ -669,7 +698,7 @@ export default function AddMqttDeviceModal({ open, onClose, onCreated }: Props) 
             <p className="text-xs text-muted-foreground">
               {validRows.length} ponto{validRows.length !== 1 ? 's' : ''} válido{validRows.length !== 1 ? 's' : ''} (tag + tópico preenchidos).
             </p>
-          </div>
+          </div>}
 
           {errorMsg && (
             <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">{errorMsg}</div>
@@ -687,7 +716,7 @@ export default function AddMqttDeviceModal({ open, onClose, onCreated }: Props) 
             className="h-9 px-4 text-sm rounded-md font-medium bg-sky-700 text-white hover:bg-sky-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
           >
             {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-            {saving ? 'Salvando...' : `Salvar Dispositivo (${validRows.length})`}
+            {saving ? 'Salvando...' : isRootMode ? 'Salvar Dispositivo' : `Salvar Dispositivo (${validRows.length})`}
           </button>
         </div>
       </div>

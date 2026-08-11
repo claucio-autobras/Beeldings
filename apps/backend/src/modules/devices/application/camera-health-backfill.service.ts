@@ -48,6 +48,13 @@ export class CameraHealthBackfillService implements OnApplicationBootstrap {
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    // Primeiro: classifica câmeras que ficaram sem monitoredDeviceType.
+    // Deve rodar ANTES dos demais backfills que filtram por monitoredDeviceType.
+    try {
+      await this.backfillCameraType();
+    } catch (err) {
+      this.logger.error(`Backfill de tipo de câmera falhou: ${(err as Error).message}`);
+    }
     try {
       await this.backfill();
     } catch (err) {
@@ -72,13 +79,34 @@ export class CameraHealthBackfillService implements OnApplicationBootstrap {
   }
 
   /**
+   * Dispositivos com protocolo onvif ou snmp gravados sem classificação
+   * (monitoredDeviceType = null) são marcados como CAMERA idempotentemente.
+   * Nunca toca em dispositivos já classificados (NVR, SWITCH, ACCESS_CONTROLLER).
+   */
+  private async backfillCameraType(): Promise<void> {
+    const result = await this.prisma.device.updateMany({
+      where: {
+        protocol: { in: [ONVIF_PROTOCOL, SNMP_PROTOCOL] },
+        monitoredDeviceType: null,
+      },
+      data: { monitoredDeviceType: 'CAMERA' },
+    });
+
+    if (result.count > 0) {
+      this.logger.log(
+        `Backfill monitoredDeviceType: ${result.count} dispositivo(s) onvif/snmp sem classificação marcado(s) como CAMERA.`,
+      );
+    }
+  }
+
+  /**
    * Todas as câmeras CFTV (SNMP e ONVIF) ganham o ponto PERDA_PING —
    * perda de pacotes medida por ping ICMP no gateway (camada 3, funciona
    * em qualquer fabricante, sem OID).
    */
   private async backfillPingLoss(): Promise<void> {
     const cameras = await this.prisma.device.findMany({
-      where: { protocol: { in: [SNMP_PROTOCOL, ONVIF_PROTOCOL] } },
+      where: { monitoredDeviceType: { not: null } },
       include: { points: true },
     });
 

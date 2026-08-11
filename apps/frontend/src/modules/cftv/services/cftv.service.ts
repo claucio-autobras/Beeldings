@@ -59,6 +59,54 @@ export interface OnvifDeviceInfo {
   serialNumber: string | null;
 }
 
+/** Estado de capacidade de uma métrica por device. */
+export type CapabilityState =
+  | 'SUPPORTED'
+  | 'UNSUPPORTED'
+  | 'TEMPORARY_ERROR'
+  | 'NO_PERMISSION';
+
+/** Resultado de capacidade de uma métrica no DeviceCapabilityMap. */
+export interface MetricCapability {
+  metricKey: string;
+  state: CapabilityState;
+  probeValue: number | null;
+  profileId: string | null;
+  profileLayer: 'base' | 'vendor' | 'override' | null;
+  lastProbeAt: string;
+}
+
+/** Mapa de capacidades de uma câmera (resultado do último probe). */
+export interface CameraCapabilities {
+  profileId: string | null;
+  profileLabel: string;
+  profileSource: 'detected' | 'manual' | 'generic';
+  profileOverrides: Record<string, string> | null;
+  capabilities: MetricCapability[];
+}
+
+/** Perfil de monitoramento disponível. */
+export interface MonitoringProfile {
+  id: string;
+  label: string;
+  metrics: Array<{
+    metricKey: string;
+    oid: string | null;
+    scale: number;
+    unit: string;
+  }>;
+}
+
+/** Resultado do probe de capacidades. */
+export interface ProbeCapabilitiesResult {
+  reachable: boolean;
+  cause?: 'community' | 'no_response' | null;
+  sysDescr?: string | null;
+  detectedProfileId: string;
+  detectedProfileLabel: string;
+  capabilities: MetricCapability[];
+}
+
 /** Câmera CFTV (Device protocol 'snmp' ou 'onvif' mapeado pelo backend). */
 export interface Camera {
   id: string;
@@ -68,15 +116,32 @@ export interface Camera {
   monitoringProtocol: 'snmp' | 'onvif';
   /** Ativo crítico (card Ativos Críticos do dashboard). */
   critical?: boolean;
-  /** Usuário ONVIF (senha NUNCA retorna na API). */
+  /**
+   * Usuário ONVIF (senha NUNCA retorna na API). Na câmera SNMP são as
+   * credenciais opcionais de "Vídeo ao vivo".
+   */
   onvifUsername: string | null;
   hasOnvifPassword: boolean;
+  /** SNMP: porta do serviço ONVIF/vídeo (null em câmera ONVIF — usa a principal). */
+  onvifPort: number | null;
+  /**
+   * "Ver ao vivo" disponível: ONVIF sempre; SNMP quando o cadastro tem
+   * credenciais de vídeo ONVIF ou URL RTSP.
+   */
+  liveViewAvailable: boolean;
   /** Fabricante/modelo/firmware/série lidos via ONVIF (null para SNMP). */
   deviceInfo: OnvifDeviceInfo | null;
   site: string;
   siteId: string | null;
   tenantId: string;
   gatewayId: string | null;
+  /**
+   * Liveness do gateway responsável pela câmera no momento do carregamento
+   * (sinal LWT/heartbeat do broker, via DeviceStatusService no backend).
+   * null = câmera sem gatewayId cadastrado.
+   * TODO(follow-up): atualizar em tempo real via socket 'gateway:status'.
+   */
+  gatewayOnline: boolean | null;
   ip: string;
   port: number;
   snmpVersion: '1' | '2c';
@@ -101,6 +166,14 @@ export interface Camera {
    * base do "tempo online estimado" quando a câmera não expõe uptime real.
    */
   estimatedOnlineSince: string | null;
+  /** ID do perfil de monitoramento (detectado ou manual). null = genérico. */
+  profileId: string | null;
+  /** Rótulo do perfil resolvido. Ex.: "Hikvision", "Genérico (MIB padrão)". */
+  profileLabel: string;
+  /** Origem do perfil: 'detected' = auto-detectado, 'manual' = operador, 'generic' = sem perfil. */
+  profileSource: 'detected' | 'manual' | 'generic';
+  /** Overrides manuais de OID por métrica. null = nenhum override. */
+  profileOverrides: Record<string, string> | null;
 }
 
 /** Payload de criação/edição de câmera. */
@@ -112,9 +185,14 @@ export interface CameraInput {
   ip?: string;
   port?: number;
   monitoringProtocol?: 'snmp' | 'onvif';
-  /** Credenciais ONVIF (senha vazia na edição = manter a atual). */
+  /**
+   * Credenciais ONVIF (senha vazia na edição = manter a atual). Na câmera
+   * SNMP são o canal opcional de "Vídeo ao vivo" (username vazio = limpar).
+   */
   onvifUsername?: string;
   onvifPassword?: string;
+  /** SNMP: porta do serviço ONVIF/vídeo (padrão 80). */
+  onvifPort?: number;
   snmpVersion?: '1' | '2c';
   community?: string;
   rtspUrl?: string | null;
@@ -139,6 +217,16 @@ export interface CameraInput {
    * falhando (validação fica pendente e é re-tentada em segundo plano).
    */
   forceCreate?: boolean;
+  /**
+   * Perfil de monitoramento selecionado manualmente.
+   * null = limpar override e usar detecção automática.
+   */
+  profileId?: string | null;
+  /**
+   * Overrides de OID por métrica definidos pelo operador.
+   * null = limpar todos os overrides.
+   */
+  profileOverrides?: Record<string, string> | null;
 }
 
 /** Dispositivo encontrado no scan SNMP de rede. */
@@ -200,6 +288,39 @@ export async function createCamera(data: CameraInput): Promise<Camera> {
 
 export async function updateCamera(id: string, data: CameraInput): Promise<Camera> {
   return apiPatch<Camera>(`/cftv/cameras/${id}`, data);
+}
+
+// ─── Perfil de monitoramento + capacidades ────────────────────────────────────
+
+/** Lista os perfis de monitoramento disponíveis para um tipo de dispositivo. */
+export async function getMonitoringProfiles(
+  deviceType = 'CAMERA',
+): Promise<MonitoringProfile[]> {
+  return apiGet<MonitoringProfile[]>(`/cftv/profiles?deviceType=${deviceType}`);
+}
+
+/** Lê o mapa de capacidades da câmera (resultado do último probe). */
+export async function getCameraCapabilities(
+  cameraId: string,
+): Promise<CameraCapabilities> {
+  return apiGet<CameraCapabilities>(`/cftv/cameras/${cameraId}/capabilities`);
+}
+
+/**
+ * Executa o probe de capacidades da câmera via gateway.
+ * Aguarda o resultado (pode levar até ~120s em câmeras lentas).
+ */
+export async function probeCameraCapabilities(
+  cameraId: string,
+): Promise<ProbeCapabilitiesResult> {
+  const data = await apiPost<
+    | ({ success: true } & ProbeCapabilitiesResult)
+    | { success: false; error?: string }
+  >(`/cftv/cameras/${cameraId}/probe-capabilities`, {});
+  if (!data.success) {
+    throw new Error((data as { error?: string }).error ?? 'Erro desconhecido no probe de capacidades.');
+  }
+  return data as ProbeCapabilitiesResult;
 }
 
 /** Exclusão crítica: exige o token de confirmação de senha do operador. */
@@ -424,6 +545,370 @@ export async function getScanProgress(scanId: string): Promise<SnmpScanProgress 
     found: data.found ?? 0,
     done: data.done ?? false,
   };
+}
+
+// ─── Switches gerenciáveis (SNMP IF-MIB) ─────────────────────────────────────
+
+/** Ponto escalar de um switch (STATUS, UPTIME, CPU). */
+export interface SwitchScalarPoint {
+  id: string;
+  tag: string;
+  objectName: string;
+  metric: string;
+  oid: string | null;
+  unsupported: boolean;
+  unit: string;
+  critical?: boolean;
+  lastValue: number | null;
+  lastValueAt: string | null;
+  lastValueState: string | null;
+}
+
+/** Referência a um ponto de porta embutida na resposta do switch. */
+export interface SwitchPortPoint {
+  id: string;
+  tag: string;
+  objectName: string;
+  lastValue: number | null;
+  lastValueAt: string | null;
+}
+
+/** Porta sincronizada de um switch (agrupamento dos 3 pontos por ifIndex). */
+export interface SwitchPortEntry {
+  ifIndex: number;
+  statePoint: SwitchPortPoint | null;
+  inPoint: SwitchPortPoint | null;
+  outPoint: SwitchPortPoint | null;
+}
+
+/** Switch gerenciável (Device monitoredDeviceType='SWITCH'). */
+export interface ManagedSwitch {
+  id: string;
+  name: string;
+  ip: string;
+  port: number;
+  /** Sempre 'snmp' — discriminador para excluir de isCameraDevice. */
+  protocol: 'snmp';
+  /** Discriminador SWITCH — distingue de câmeras SNMP. */
+  monitoredDeviceType: 'SWITCH';
+  snmpVersion: '1' | '2c';
+  community: string;
+  pollingInterval: number;
+  manufacturer: string | null;
+  profileId: string | null;
+  profileLabel: string;
+  profileSource: 'detected' | 'manual' | 'generic';
+  profileOverrides: Record<string, string> | null;
+  site: string;
+  siteId: string | null;
+  tenantId: string;
+  gatewayId: string | null;
+  gatewayOnline: boolean | null;
+  status: 'online' | 'offline';
+  critical?: boolean;
+  lastCommunication: string | null;
+  /** Pontos escalares: STATUS, UPTIME, CPU. */
+  points: SwitchScalarPoint[];
+  /** Portas sincronizadas (vazio até o primeiro sync). */
+  ports: SwitchPortEntry[];
+}
+
+/** Payload de criação/edição de switch. */
+export interface SwitchInput {
+  name?: string;
+  ip?: string;
+  port?: number;
+  snmpVersion?: '1' | '2c';
+  community?: string;
+  pollingInterval?: number;
+  siteId?: string;
+  tenantId?: string;
+  gatewayId?: string;
+}
+
+/** Porta descoberta pelo scan IF-MIB (resultado do sync). */
+export interface DiscoveredPort {
+  ifIndex: number;
+  ifDescr: string;
+  ifAlias: string | null;
+  ifType: number | null;
+  /** Velocidade máxima em Mbps (ifHighSpeed). null se não disponível. */
+  ifHighSpeed: number | null;
+  /** 1 = up, 2 = down. */
+  ifOperStatus: number;
+  existsInDb: boolean;
+}
+
+/** Resultado da sincronização de portas. */
+export interface SwitchSyncResult {
+  added: number;
+  updated: number;
+  removed: number[];
+  sysDescr: string | null;
+  ports: DiscoveredPort[];
+}
+
+export async function getSwitches(tenantId?: string): Promise<ManagedSwitch[]> {
+  return apiGet<ManagedSwitch[]>(`/cftv/switches${tenantId ? `?tenantId=${tenantId}` : ''}`);
+}
+
+export async function createSwitch(data: SwitchInput): Promise<ManagedSwitch> {
+  return apiPost<ManagedSwitch>('/cftv/switches', data);
+}
+
+export async function updateSwitch(id: string, data: SwitchInput): Promise<ManagedSwitch> {
+  return apiPatch<ManagedSwitch>(`/cftv/switches/${id}`, data);
+}
+
+export async function deleteSwitch(id: string, confirmationToken: string): Promise<void> {
+  await apiDelete(`/cftv/switches/${id}`, { headers: sensitiveActionHeaders(confirmationToken) });
+}
+
+export async function syncSwitchPorts(id: string): Promise<SwitchSyncResult> {
+  const data = await apiPost<{ success: boolean; error?: string } & Partial<SwitchSyncResult>>(
+    `/cftv/switches/${id}/sync-ports`,
+    {},
+  );
+  if (!data.success) throw new Error(data.error ?? 'Erro ao sincronizar portas.');
+  return {
+    added: data.added ?? 0,
+    updated: data.updated ?? 0,
+    removed: data.removed ?? [],
+    sysDescr: data.sysDescr ?? null,
+    ports: data.ports ?? [],
+  };
+}
+
+export async function deleteSwitchPort(
+  id: string,
+  ifIndex: number,
+  confirmationToken: string,
+): Promise<void> {
+  await apiDelete(`/cftv/switches/${id}/ports/${ifIndex}`, {
+    headers: sensitiveActionHeaders(confirmationToken),
+  });
+}
+
+export async function probeSwitchCapabilities(id: string): Promise<ProbeCapabilitiesResult> {
+  const data = await apiPost<
+    | ({ success: true } & ProbeCapabilitiesResult)
+    | { success: false; error?: string }
+  >(`/cftv/switches/${id}/probe-capabilities`, {});
+  if (!data.success) {
+    throw new Error((data as { error?: string }).error ?? 'Erro desconhecido no probe.');
+  }
+  return data as ProbeCapabilitiesResult;
+}
+
+export async function getSwitchCapabilities(id: string): Promise<MetricCapability[]> {
+  return apiGet<MetricCapability[]>(`/cftv/switches/${id}/capabilities`);
+}
+
+// ─── NVRs/DVRs gerenciáveis (SNMP) ───────────────────────────────────────────
+
+/** Ponto escalar de um NVR (STATUS, UPTIME, CPU, etc.). */
+export interface NvrScalarPoint {
+  id: string;
+  tag: string;
+  objectName: string;
+  metric: string;
+  oid: string | null;
+  unsupported: boolean;
+  unit: string;
+  critical?: boolean;
+  lastValue: number | null;
+  lastValueAt: string | null;
+  lastValueState: string | null;
+}
+
+/** Ponto de status de disco. */
+export interface NvrDiskStatusPoint {
+  id: string;
+  tag: string;
+  lastValue: number | null;
+  statusLabel: string | null;
+}
+
+/** Ponto de capacidade do disco. */
+export interface NvrDiskCapPoint {
+  id: string;
+  tag: string;
+  lastValue: number | null;
+}
+
+/** Entrada de disco sincronizada (slot com status + capacidade + espaço usado). */
+export interface NvrDiskEntry {
+  slotIndex: number;
+  statusPoint: NvrDiskStatusPoint | null;
+  capPoint: NvrDiskCapPoint | null;
+  usedPoint: NvrDiskCapPoint | null;
+}
+
+/** Canal de gravação sincronizado. */
+export interface NvrChannelEntry {
+  channelIndex: number;
+  pointId: string;
+  lastValue: number | null;
+  statusLabel: string | null;
+}
+
+/** NVR/DVR gerenciável (Device monitoredDeviceType='NVR'). */
+export interface ManagedNvr {
+  id: string;
+  name: string;
+  ip: string;
+  port: number;
+  protocol: 'snmp';
+  monitoredDeviceType: 'NVR';
+  snmpVersion: '1' | '2c';
+  community: string;
+  pollingInterval: number;
+  manufacturer: string | null;
+  profileId: string | null;
+  profileLabel: string;
+  profileSource: 'detected' | 'manual' | 'generic';
+  profileOverrides: Record<string, string> | null;
+  site: string;
+  siteId: string | null;
+  tenantId: string;
+  gatewayId: string | null;
+  gatewayOnline: boolean | null;
+  status: 'online' | 'offline';
+  critical?: boolean;
+  lastCommunication: string | null;
+  /** Pontos escalares: STATUS, UPTIME, CPU, MEMORIA, TEMPERATURA. */
+  points: NvrScalarPoint[];
+  /** Discos sincronizados (vazio até o primeiro sync). */
+  disks: NvrDiskEntry[];
+  /** Canais de gravação sincronizados (vazio até o primeiro sync). */
+  channels: NvrChannelEntry[];
+}
+
+/** Payload de criação/edição de NVR. */
+export interface NvrInput {
+  name?: string;
+  ip?: string;
+  port?: number;
+  snmpVersion?: '1' | '2c';
+  community?: string;
+  pollingInterval?: number;
+  siteId?: string;
+  tenantId?: string;
+  gatewayId?: string;
+  manufacturer?: string | null;
+}
+
+/** Disco descoberto na resposta do sync. */
+export interface NvrSyncDisk {
+  slotIndex: number;
+  status: number | null;
+  statusLabel: string | null;
+  capacityGb: number | null;
+  usedGb: number | null;
+}
+
+/** Canal descoberto na resposta do sync. */
+export interface NvrSyncChannel {
+  channelIndex: number;
+  status: number | null;
+  statusLabel: string | null;
+}
+
+/** Resultado da sincronização de discos/canais. */
+export interface NvrSyncResult {
+  added: number;
+  updatedDisks: number;
+  updatedChannels: number;
+  sysDescr: string | null;
+  disks: NvrSyncDisk[];
+  channels: NvrSyncChannel[];
+}
+
+export async function getNvrs(tenantId?: string): Promise<ManagedNvr[]> {
+  return apiGet<ManagedNvr[]>(`/cftv/nvrs${tenantId ? `?tenantId=${tenantId}` : ''}`);
+}
+
+export async function getNvr(id: string): Promise<ManagedNvr> {
+  return apiGet<ManagedNvr>(`/cftv/nvrs/${id}`);
+}
+
+export async function createNvr(data: NvrInput): Promise<ManagedNvr> {
+  return apiPost<ManagedNvr>('/cftv/nvrs', data);
+}
+
+export async function updateNvr(id: string, data: NvrInput): Promise<ManagedNvr> {
+  return apiPatch<ManagedNvr>(`/cftv/nvrs/${id}`, data);
+}
+
+export async function deleteNvr(id: string, confirmationToken: string): Promise<void> {
+  await apiDelete(`/cftv/nvrs/${id}`, { headers: sensitiveActionHeaders(confirmationToken) });
+}
+
+export async function syncNvrDisks(id: string): Promise<NvrSyncResult> {
+  const data = await apiPost<{ success: boolean; error?: string } & Partial<NvrSyncResult>>(
+    `/cftv/nvrs/${id}/sync-disks`,
+    {},
+  );
+  if (!data.success) throw new Error(data.error ?? 'Erro ao sincronizar discos/canais.');
+  return {
+    added: data.added ?? 0,
+    updatedDisks: data.updatedDisks ?? 0,
+    updatedChannels: data.updatedChannels ?? 0,
+    sysDescr: data.sysDescr ?? null,
+    disks: data.disks ?? [],
+    channels: data.channels ?? [],
+  };
+}
+
+export async function probeNvrCapabilities(id: string): Promise<ProbeCapabilitiesResult> {
+  const data = await apiPost<
+    | ({ success: true } & ProbeCapabilitiesResult)
+    | { success: false; error?: string }
+  >(`/cftv/nvrs/${id}/probe-capabilities`, {});
+  if (!data.success) {
+    throw new Error((data as { error?: string }).error ?? 'Erro desconhecido no probe.');
+  }
+  return data as ProbeCapabilitiesResult;
+}
+
+export async function getNvrCapabilities(id: string): Promise<MetricCapability[]> {
+  return apiGet<MetricCapability[]>(`/cftv/nvrs/${id}/capabilities`);
+}
+
+// ─── Visualização ao vivo (câmeras ONVIF) ────────────────────────────────────
+
+/** Resposta do start da sessão de visualização ao vivo. */
+export interface LiveViewSessionInfo {
+  sessionId: string;
+  /** Janela de expiração sem keep-alive (ms). */
+  ttlMs: number;
+  /** Cadência de renovação sugerida pelo backend (ms). */
+  keepAliveIntervalMs: number;
+}
+
+/**
+ * Inicia uma sessão de visualização ao vivo (frames JPEG via socket
+ * /telemetry, evento `camera:frame`). UMA sessão por operador — um segundo
+ * start substitui a anterior.
+ */
+export async function startLiveView(
+  cameraId: string,
+  tenantId?: string,
+): Promise<LiveViewSessionInfo> {
+  return apiPost<LiveViewSessionInfo>(
+    `/cftv/cameras/${cameraId}/live-view`,
+    tenantId ? { tenantId } : {},
+  );
+}
+
+/** Renova a sessão ao vivo (espectador ainda presente). */
+export async function keepAliveLiveView(sessionId: string): Promise<{ ttlMs: number }> {
+  return apiPost<{ ttlMs: number }>(`/cftv/live-view/${sessionId}/keepalive`);
+}
+
+/** Encerra a sessão ao vivo explicitamente (fechamento do modal). */
+export async function stopLiveView(sessionId: string): Promise<void> {
+  await apiDelete(`/cftv/live-view/${sessionId}`);
 }
 
 /** Marca/desmarca a câmera como ativo crítico (a câmera é um Device). */

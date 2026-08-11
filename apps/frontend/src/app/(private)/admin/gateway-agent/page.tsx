@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Download, Loader2, MonitorCheck, Terminal, ShieldCheck, FileText } from 'lucide-react';
+import { Download, HardDriveDownload, Loader2, MonitorCheck, Terminal, ShieldCheck, FileText } from 'lucide-react';
 import { downloadAgentPackage, type AgentOs } from '@/modules/gateways/services/agent-package.service';
 
 export default function GatewayAgentPage() {
@@ -21,18 +21,23 @@ export default function GatewayAgentPage() {
   }
 
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="mx-auto w-full max-w-6xl space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-xl font-semibold text-foreground">Agente de Gateway</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          Baixe o agente para instalar no equipamento do cliente. Ele conecta os
-          dispositivos de campo (BACnet/Modbus) à plataforma via MQTT sobre TLS.
-        </p>
-      </div>
+      <header className="flex items-center gap-3">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-cyan-500/10">
+          <HardDriveDownload className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
+        </div>
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight text-foreground">Agente de Gateway</h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            Baixe o agente para instalar no equipamento do cliente. Ele conecta os
+            dispositivos de campo (BACnet/Modbus) à plataforma via MQTT sobre TLS.
+          </p>
+        </div>
+      </header>
 
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:text-red-300">
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
           Erro ao baixar o pacote: {error}
         </div>
       )}
@@ -40,9 +45,9 @@ export default function GatewayAgentPage() {
       {/* Download cards */}
       <div className="grid gap-4 sm:grid-cols-2">
         {/* Linux */}
-        <div className="rounded-xl border border-border bg-card p-5 space-y-3">
+        <div className="rounded-xl border border-border bg-card p-5 space-y-3 shadow-sm transition-shadow duration-200 hover:shadow-md">
           <div className="flex items-center gap-2.5">
-            <Terminal className="h-5 w-5 text-cyan-600" />
+            <Terminal className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
             <h2 className="text-sm font-semibold text-foreground">Linux</h2>
           </div>
           <p className="text-xs text-muted-foreground">
@@ -52,7 +57,7 @@ export default function GatewayAgentPage() {
           <button
             onClick={() => handleDownload('linux')}
             disabled={busy !== null}
-            className="inline-flex items-center gap-2 h-9 px-4 text-sm font-medium rounded-md bg-cyan-600 text-white hover:bg-cyan-700 disabled:opacity-50 transition-colors"
+            className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-cyan-700 disabled:opacity-50"
           >
             {busy === 'linux' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
             Baixar para Linux (.zip)
@@ -60,9 +65,9 @@ export default function GatewayAgentPage() {
         </div>
 
         {/* Windows */}
-        <div className="rounded-xl border border-border bg-card p-5 space-y-3">
+        <div className="rounded-xl border border-border bg-card p-5 space-y-3 shadow-sm transition-shadow duration-200 hover:shadow-md">
           <div className="flex items-center gap-2.5">
-            <MonitorCheck className="h-5 w-5 text-cyan-600" />
+            <MonitorCheck className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
             <h2 className="text-sm font-semibold text-foreground">Windows</h2>
           </div>
           <p className="text-xs text-muted-foreground">
@@ -72,7 +77,7 @@ export default function GatewayAgentPage() {
           <button
             onClick={() => handleDownload('windows')}
             disabled={busy !== null}
-            className="inline-flex items-center gap-2 h-9 px-4 text-sm font-medium rounded-md bg-cyan-600 text-white hover:bg-cyan-700 disabled:opacity-50 transition-colors"
+            className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-cyan-700 disabled:opacity-50"
           >
             {busy === 'windows' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
             Baixar para Windows (.zip)
@@ -81,10 +86,10 @@ export default function GatewayAgentPage() {
       </div>
 
       {/* Pré-requisitos */}
-      <section className="rounded-xl border border-border bg-card p-5 space-y-3">
+      <section className="rounded-xl border border-border bg-card p-5 space-y-3 shadow-sm">
         <div className="flex items-center gap-2">
           <ShieldCheck className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold text-foreground">Pré-requisitos</h2>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-foreground">Pré-requisitos</h2>
         </div>
         <ul className="text-sm text-muted-foreground space-y-1.5 list-disc pl-5">
           <li>Máquina <strong>sempre ligada (24/7)</strong> na mesma rede dos equipamentos de automação.</li>
@@ -96,15 +101,15 @@ export default function GatewayAgentPage() {
       </section>
 
       {/* Como instalar */}
-      <section className="rounded-xl border border-border bg-card p-5 space-y-4">
+      <section className="rounded-xl border border-border bg-card p-5 space-y-4 shadow-sm">
         <div className="flex items-center gap-2">
           <FileText className="h-4 w-4 text-muted-foreground" />
-          <h2 className="text-sm font-semibold text-foreground">Como instalar</h2>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-foreground">Como instalar</h2>
         </div>
 
         <div className="space-y-2">
           <div className="flex items-center gap-2">
-            <Terminal className="h-4 w-4 text-cyan-600" />
+            <Terminal className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />
             <h3 className="text-xs font-semibold text-foreground uppercase tracking-wide">Linux</h3>
           </div>
           <ol className="text-sm text-muted-foreground space-y-1 list-decimal pl-5">
@@ -113,27 +118,27 @@ export default function GatewayAgentPage() {
             <li>Rode <code className="text-xs">sudo bash instalar.sh</code>.</li>
           </ol>
           <pre className="text-xs bg-[#0f172a] text-[#e2e8f0] rounded-md p-3 overflow-x-auto">
-{`unzip bluebee-gateway-agent-linux.zip
-cd bluebee-gateway-agent
+{`unzip beeldings-gateway-agent-linux.zip
+cd beeldings-gateway-agent
 # copie o gateway-config.env para esta pasta
 sudo bash instalar.sh
 
 # status e logs
-systemctl status bluebee-gateway
-journalctl -u bluebee-gateway -f`}
+systemctl status beeldings-gateway
+journalctl -u beeldings-gateway -f`}
           </pre>
         </div>
 
         <div className="space-y-2">
           <div className="flex items-center gap-2">
-            <MonitorCheck className="h-4 w-4 text-cyan-600" />
+            <MonitorCheck className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />
             <h3 className="text-xs font-semibold text-foreground uppercase tracking-wide">Windows</h3>
           </div>
           <ol className="text-sm text-muted-foreground space-y-1 list-decimal pl-5">
             <li>Baixe o <strong>.zip</strong> nesta página.</li>
             <li>
               Descompacte a pasta diretamente em <code className="text-xs">C:\</code> (ex.:{' '}
-              <code className="text-xs">C:\bluebee-gateway-agent</code>).
+              <code className="text-xs">C:\beeldings-gateway-agent</code>).
             </li>
             <li>
               Coloque o arquivo <code className="text-xs">gateway-config.env</code> (baixado na
@@ -150,7 +155,7 @@ journalctl -u bluebee-gateway -f`}
           </p>
           <pre className="text-xs bg-[#0f172a] text-[#e2e8f0] rounded-md p-3 overflow-x-auto">
 {`# status e logs (depois de instalado)
-sc query BlueBeeGateway
+sc query BeeldingsGateway
 # logs em gateway.log, dentro da pasta do agente`}
           </pre>
           <p className="text-xs text-muted-foreground">

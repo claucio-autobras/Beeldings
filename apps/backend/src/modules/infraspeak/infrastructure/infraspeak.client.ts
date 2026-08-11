@@ -133,6 +133,92 @@ export class InfraspeakClient {
   }
 
   /**
+   * Cria um recurso via POST autenticado. Devolve o envelope de objeto único
+   * (`{ data: {...} }`) usado pela Infraspeak em criações.
+   *
+   * Retry: apenas em 429 (rate limit) — nunca em timeout/erro de rede após o
+   * envio, para não criar o recurso em duplicidade.
+   */
+  async post<T = unknown>(resourcePath: string, body: Record<string, unknown>): Promise<{ data: T }> {
+    this.assertConfigured();
+    const url = this.buildUrl(resourcePath);
+
+    let attempt = 0;
+    while (true) {
+      attempt += 1;
+      try {
+        return await this.doWriteRequest<T>(url, body);
+      } catch (err) {
+        if (
+          err instanceof RetryableError &&
+          err.kind === 'rate_limit' &&
+          attempt <= this.maxRetries
+        ) {
+          const delayMs = Math.min(
+            err.retryAfterMs ?? this.backoffMs(attempt),
+            InfraspeakClient.MAX_RETRY_DELAY_MS,
+          );
+          this.logger.warn(
+            `Infraspeak POST: tentativa ${attempt}/${this.maxRetries + 1} em rate limit; retry em ${delayMs}ms`,
+          );
+          await this.sleep(delayMs);
+          continue;
+        }
+        if (err instanceof RetryableError) throw err.toHttpException();
+        throw err;
+      }
+    }
+  }
+
+  private async doWriteRequest<T>(url: string, body: Record<string, unknown>): Promise<{ data: T }> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          'User-Agent': this.userAgent,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      // Sem retry: após o envio não dá para saber se o recurso foi criado.
+      if ((err as Error).name === 'AbortError') {
+        throw new GatewayTimeoutException(
+          `Infraspeak: timeout após ${this.timeoutMs}ms ao criar o recurso — verifique na lista se o chamado foi criado antes de tentar de novo.`,
+        );
+      }
+      throw new ServiceUnavailableException(`Infraspeak indisponível: ${(err as Error).message}`);
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (res.ok) {
+      let parsed: unknown;
+      try {
+        parsed = await res.json();
+      } catch {
+        throw new BadGatewayException('Infraspeak retornou uma resposta não-JSON na criação.');
+      }
+      const data = (parsed as Record<string, unknown> | null)?.data;
+      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        throw new BadGatewayException(
+          'Infraspeak retornou um formato inesperado na criação (campo "data" ausente ou inválido).',
+        );
+      }
+      return { data: data as T };
+    }
+
+    return this.handleErrorStatus(res);
+  }
+
+  /**
    * Percorre automaticamente todas as páginas de um recurso e consolida o
    * conteúdo de `data` em uma única coleção.
    *
@@ -303,7 +389,7 @@ export class InfraspeakClient {
 
     switch (res.status) {
       case 400:
-        throw new BadRequestException(`Infraspeak 400 (validação/parâmetros): ${message}`);
+        throw new BadRequestException(this.mapInfraspeakValidationMessage(message));
       case 401:
         throw new UnauthorizedException(
           `Infraspeak 401: autenticação inválida, ausente ou token revogado. ${message}`,
@@ -349,14 +435,48 @@ export class InfraspeakClient {
     return undefined;
   }
 
+  /**
+   * Mapeia mensagens de validação da Infraspeak para texto legível em PT-BR.
+   *
+   * O erro "O tipo de chamado deve existir" / "validation.has_access_network"
+   * indica que o problem_id enviado não está disponível para o cliente do local
+   * selecionado (all_clients=false sem permissão, ou ID de área pai em vez de
+   * tipo folha). Confirmado no sandbox em 05/08/2026.
+   */
+  private mapInfraspeakValidationMessage(message: string | undefined): string {
+    if (!message) return 'Infraspeak 400: erro de validação.';
+    if (
+      /O tipo de chamado deve existir/i.test(message) ||
+      /validation\.has_access_network/i.test(message)
+    ) {
+      return (
+        'O tipo de problema selecionado não está disponível para o local escolhido. ' +
+        'Selecione outro tipo de problema compatível com o local.'
+      );
+    }
+    return `Infraspeak 400 (validação/parâmetros): ${message}`;
+  }
+
   private extractMessage(bodyText: string): string | undefined {
     if (!bodyText) return undefined;
     try {
       const parsed = JSON.parse(bodyText) as {
-        error?: { message?: string };
+        error?: { message?: string; properties?: Record<string, unknown> };
         message?: string;
       };
-      return parsed?.error?.message ?? parsed?.message ?? undefined;
+      const base = parsed?.error?.message ?? parsed?.message ?? undefined;
+      // Erros de validação trazem `error.properties` com mensagens por campo —
+      // concatena para o usuário saber exatamente o que corrigir.
+      const props = parsed?.error?.properties;
+      if (props && typeof props === 'object') {
+        const details = Object.values(props)
+          .flatMap((v) => (Array.isArray(v) ? v : [v]))
+          .filter((v): v is string => typeof v === 'string');
+        if (details.length > 0) {
+          return [base, details.join(' ')].filter(Boolean).join(' — ');
+        }
+      }
+      return base;
     } catch {
       return bodyText.slice(0, 500);
     }

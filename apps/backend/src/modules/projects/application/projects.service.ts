@@ -3,6 +3,7 @@ import { randomBytes } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { EmqxProvisioningService } from '../../sites/application/emqx-provisioning.service.js';
 import { DeviceStatusService } from '../../mqtt/device-status.service.js';
+import { EXCLUDE_VIRTUAL_DEVICES } from '../../prisma/device-filters.js';
 import type { CreateProjectDto } from './dtos/create-project.dto.js';
 import type { UpdateProjectDto } from './dtos/update-project.dto.js';
 import type { Project, Gateway } from '@prisma/client';
@@ -102,8 +103,6 @@ export class ProjectsService {
     const project = await this.prisma.project.create({
       data: {
         name: dto.name.trim(),
-        address: dto.address?.trim() ?? null,
-        technicalContact: dto.technicalContact?.trim() ?? null,
         siteId: dto.siteId,
         tenantId: dto.tenantId,
         gatewayId: gateway.id,
@@ -145,8 +144,6 @@ export class ProjectsService {
     const project = await this.prisma.project.create({
       data: {
         name: dto.name.trim(),
-        address: dto.address?.trim() ?? null,
-        technicalContact: dto.technicalContact?.trim() ?? null,
         siteId: dto.siteId,
         tenantId: dto.tenantId,
         gatewayId: gateway.id,
@@ -169,15 +166,47 @@ export class ProjectsService {
             id: true,
             status: true,
             lastSeen: true,
-            _count: { select: { devices: true } },
           },
         },
       },
     });
 
-    return projects.map((p) =>
-      p.gateway ? { ...p, gateway: this.withGatewayLiveStatus(p.gateway) } : p,
-    );
+    // Compute device counts scoped to each project's own site (not the full
+    // gateway count) — a gateway can be shared across sites, so raw
+    // gateway._count.devices would include devices belonging to other sites.
+    // Also exclude virtual/bancada devices consistent with the detail page.
+    const gatewayIds = projects.map((p) => p.gatewayId).filter(Boolean) as string[];
+    const siteIds = projects.map((p) => p.siteId).filter(Boolean) as string[];
+
+    let deviceCountMap = new Map<string, Map<string, number>>(); // gatewayId → siteId → count
+    if (gatewayIds.length > 0) {
+      const rows = await this.prisma.device.groupBy({
+        by: ['gatewayId', 'siteId'],
+        where: {
+          gatewayId: { in: gatewayIds },
+          siteId: { in: siteIds },
+          ...EXCLUDE_VIRTUAL_DEVICES,
+        },
+        _count: { id: true },
+      });
+      for (const row of rows) {
+        if (!row.gatewayId || !row.siteId) continue;
+        if (!deviceCountMap.has(row.gatewayId)) {
+          deviceCountMap.set(row.gatewayId, new Map());
+        }
+        deviceCountMap.get(row.gatewayId)!.set(row.siteId, row._count.id);
+      }
+    }
+
+    return projects.map((p) => {
+      if (!p.gateway) return p;
+      const count = deviceCountMap.get(p.gatewayId!)?.get(p.siteId) ?? 0;
+      const gatewayWithCount = {
+        ...p.gateway,
+        _count: { devices: count },
+      };
+      return { ...p, gateway: this.withGatewayLiveStatus(gatewayWithCount) };
+    });
   }
 
   async findOne(id: string, tenantId: string | undefined): Promise<Project> {
@@ -199,7 +228,7 @@ export class ProjectsService {
     return project;
   }
 
-  /** Atualiza dados editáveis do projeto (nome, endereço, contato). */
+  /** Atualiza dados editáveis do projeto (apenas o nome — endereço/contato vivem no Site). */
   async update(
     id: string,
     tenantId: string | undefined,
@@ -219,10 +248,6 @@ export class ProjectsService {
       where: { id },
       data: {
         ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
-        ...(dto.address !== undefined ? { address: dto.address?.trim() ?? null } : {}),
-        ...(dto.technicalContact !== undefined
-          ? { technicalContact: dto.technicalContact?.trim() ?? null }
-          : {}),
       },
     });
   }

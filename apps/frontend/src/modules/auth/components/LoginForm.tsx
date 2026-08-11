@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { ArrowRight, Loader2, Mail } from 'lucide-react';
 import { useAuth } from '../hooks/use-auth';
+import { TurnstileWidget } from './TurnstileWidget';
 import { BrandMark } from './BrandMark';
 import { InputField } from './ui/InputField';
 import { PasswordField } from './ui/PasswordField';
@@ -15,6 +16,19 @@ export function LoginForm() {
   const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Anti-robô (Cloudflare Turnstile): a site key vem do backend; null = desativado.
+  const [turnstileSiteKey, setTurnstileSiteKey] = useState<string | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  // Tokens do Turnstile são de uso único: após login que falhou, força reset.
+  const [turnstileReset, setTurnstileReset] = useState(0);
+
+  useEffect(() => {
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
+    fetch(`${apiUrl}/auth/turnstile-config`)
+      .then((res) => (res.ok ? res.json() : { siteKey: null }))
+      .then((cfg: { siteKey: string | null }) => setTurnstileSiteKey(cfg.siteKey))
+      .catch(() => setTurnstileSiteKey(null)); // sem config → login segue sem widget
+  }, []);
 
   // Usuário derrubado por inativação do cliente chega aqui via
   // /login?reason=tenant-inactive (redirect do api-client ao receber
@@ -34,9 +48,14 @@ export function LoginForm() {
     setError(null);
 
     try {
-      await login({ email, password });
+      await login({ email, password, turnstileToken: turnstileToken ?? undefined });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao realizar login');
+      // Token já foi consumido pelo backend — pede um novo antes da retentativa.
+      if (turnstileSiteKey) {
+        setTurnstileToken(null);
+        setTurnstileReset((n) => n + 1);
+      }
     }
   }
 
@@ -91,6 +110,15 @@ export function LoginForm() {
           </a>
         </div>
 
+        {/* Verificação anti-robô (Cloudflare Turnstile) */}
+        {turnstileSiteKey && (
+          <TurnstileWidget
+            siteKey={turnstileSiteKey}
+            onToken={setTurnstileToken}
+            resetSignal={turnstileReset}
+          />
+        )}
+
         {/* Erro */}
         {error && (
           <div
@@ -104,7 +132,7 @@ export function LoginForm() {
         {/* Botão */}
         <button
           type="submit"
-          disabled={isLoading}
+          disabled={isLoading || (Boolean(turnstileSiteKey) && !turnstileToken)}
           className="group flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-cyan-700 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-cyan-800 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {isLoading ? (

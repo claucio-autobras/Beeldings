@@ -44,7 +44,9 @@ export const config = {
      * - _next/image (otimizacao de imagens)
      * - favicon.ico
      * - arquivos publicos (imagens, etc.)
+     * - manifest.webmanifest e sw.js (PWA — precisam ser públicos, senão o
+     *   navegador não consegue instalar o app nem registrar o service worker)
      */
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|sw.js|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 };

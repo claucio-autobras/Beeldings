@@ -26,6 +26,15 @@ const dashCardDefaults = {
   borderRadius: 12,
 } as const;
 
+/** Estilo padrão dos widgets de controle de clima — dark/neon da referência. */
+const climateDarkDefaults = {
+  backgroundColor: '#0B1220',
+  textColor: '#E2E8F0',
+  mutedColor: '#64748B',
+  borderColor: '#1E293B',
+  borderRadius: 14,
+} as const;
+
 export function buildDefaultWidget(type: WidgetType, x: number, y: number, width: number, height: number): Widget {
   const base = { id: `w-${nanoid(8)}`, x, y, width, height, opacity: 1, visible: true, zIndex: 2, visibility: defaultVisibility };
   const eqBase = { ...base, deviceId: '', tagStatus: '', showLabel: true, labelText: '', baseColor: '#64748B' };
@@ -159,6 +168,24 @@ export function buildDefaultWidget(type: WidgetType, x: number, y: number, width
         { id: nanoid(6), label: 'Automático', value: 1 },
         { id: nanoid(6), label: 'Manual', value: 0 },
       ] };
+    // ── Controle de clima (dark/neon — cores explícitas, canvas ≠ tema) ──
+    case 'value-stepper':
+      return { ...base, type, deviceId: '', tag: '', minValue: 16, maxValue: 30, step: 0.5, unit: '°C', decimals: 0, priority: 8, ...climateDarkDefaults, buttonColor: '#111C30', accentColor: '#22D3EE', valueFontSize: 22 };
+    case 'setpoint-ring':
+      return { ...base, type, deviceId: '', tag: '', minValue: 0, maxValue: 40, unit: '°C', decimals: 1, label: 'AMBIENTE', showLabel: true, ringColor: '#22D3EE', trackColor: '#1E293B', textColor: '#E2E8F0', mutedColor: '#64748B', backgroundColor: 'transparent', borderRadius: 16 };
+    case 'equipment-card':
+      return { ...base, type, ...climateDarkDefaults, title: 'Equipamento', subtitle: '', statusDeviceId: '', statusTag: '', statusRules: [
+        { id: nanoid(6), operator: 'eq', value: 1, color: '#34D399', animation: 'none', text: 'LIGADO' },
+        { id: nanoid(6), operator: 'eq', value: 0, color: '#64748B', animation: 'none', text: 'DESLIGADO' },
+      ], accentColor: '#22D3EE', priority: 8, rows: [] };
+    case 'climate-card':
+      return { ...base, type, ...climateDarkDefaults, title: 'Climatização', subtitle: '', statusDeviceId: '', statusTag: '', statusRules: [
+        { id: nanoid(6), operator: 'eq', value: 1, color: '#34D399', animation: 'none', text: 'LIGADO' },
+        { id: nanoid(6), operator: 'eq', value: 0, color: '#64748B', animation: 'none', text: 'DESLIGADO' },
+      ], accentColor: '#22D3EE',
+      readingDeviceId: '', readingTag: '', readingLabel: 'TEMPERATURA AMBIENTE', readingUnit: '°C', readingDecimals: 1, showSparkline: true, sparkColor: '#22D3EE', periodHours: 6,
+      setpointDeviceId: '', setpointTag: '', setpointLabel: 'SETPOINT', setpointUnit: '°C', setpointDecimals: 0, minValue: 16, maxValue: 30, step: 0.5,
+      powerDeviceId: '', powerTag: '', onValue: 1, offValue: 0, powerConfirm: false, priority: 8, footerText: '' };
     default:
       return { ...base, type: 'rectangle', fillColor: 'rgba(6,182,212,0.1)', strokeColor: '#06B6D4', strokeWidth: 1, borderRadius: 4 };
   }

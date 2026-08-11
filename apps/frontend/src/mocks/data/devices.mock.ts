@@ -113,11 +113,16 @@ export interface ModbusDevice {
 
 export type MqttValueType = 'number' | 'boolean';
 
-/** Binding de escrita de um ponto MQTT comandável (ex.: relé Shelly Gen4). */
+/** Binding de escrita de um ponto MQTT comandável (ex.: relé Shelly Gen4, Aeris). */
 export interface MqttWriteConfig {
   commandTopic: string;
   payloadTemplate: string;
   responseTopic?: string | null;
+  /**
+   * Quando true, a confirmação é casada pelo campo `value` do eco do equipamento
+   * em vez do campo `id` RPC. Usar com equipamentos Aeris (eco em sp_val1 etc.).
+   */
+  matchByValue?: boolean;
 }
 
 export interface MqttPoint {
@@ -135,6 +140,10 @@ export interface MqttPoint {
   opRole?: 'status' | 'mode' | 'setpoint' | null;
   status: PointStatus;
   lastUpdate: string;
+  /** Último valor persistido (seed até a telemetria ao vivo chegar); null = nunca houve leitura. */
+  lastValue?: number | null;
+  lastValueAt?: string | null;
+  lastValueState?: string | null;
 }
 
 export interface MqttDevice {

@@ -1,28 +1,26 @@
 import { apiGet, apiPatch } from '@/lib/api-client';
 import type { UserRole } from '@/hooks/useCurrentUser';
+// Re-export canonical tenant types/functions so page imports stay unchanged.
+export type {
+  TenantItem,
+  InitialRecipientDto,
+  CreateTenantDto,
+} from '@/modules/tenants/services/tenants.service';
+export { createTenant } from '@/modules/tenants/services/tenants.service';
 
 // ─── Tenant (cliente) ─────────────────────────────────────────────────────────
-
-export interface TenantItem {
-  id: string;
-  name: string;
-  slug: string;
-  siteCount?: number;
-  deviceCount?: number;
-  createdAt: string;
-}
 
 export interface UpdateTenantDto {
   name?: string;
   slug?: string;
 }
 
-export async function getTenants(): Promise<TenantItem[]> {
-  return apiGet<TenantItem[]>('/tenants');
+export async function getTenants(): Promise<import('@/modules/tenants/services/tenants.service').TenantItem[]> {
+  return apiGet('/tenants');
 }
 
-export async function updateTenant(id: string, data: UpdateTenantDto): Promise<TenantItem> {
-  return apiPatch<TenantItem>(`/tenants/${id}`, data);
+export async function updateTenant(id: string, data: UpdateTenantDto): Promise<import('@/modules/tenants/services/tenants.service').TenantItem> {
+  return apiPatch(`/tenants/${id}`, data);
 }
 
 // ─── Perfil do usuário ─────────────────────────────────────────────────────────

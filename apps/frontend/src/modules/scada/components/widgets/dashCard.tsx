@@ -1,7 +1,7 @@
 'use client';
 
 import type { DashCardBase, EquipmentStateRule } from '../../types/scada.types';
-import { toScadaNumber } from '../../types/scada.types';
+import { toScadaNumber, scadaBackgroundStyle } from '../../types/scada.types';
 
 /**
  * Base visual compartilhada dos widgets estilo dashboard (cards do PDF BlueBee):
@@ -12,7 +12,7 @@ import { toScadaNumber } from '../../types/scada.types';
 export function dashCardStyle(w: DashCardBase): React.CSSProperties {
   return {
     width: '100%', height: '100%', boxSizing: 'border-box',
-    backgroundColor: w.backgroundColor,
+    ...scadaBackgroundStyle(w.backgroundColor),
     border: `1px solid ${w.borderColor}`,
     borderRadius: w.borderRadius,
     color: w.textColor,

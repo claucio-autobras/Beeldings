@@ -77,6 +77,27 @@ export interface CommandResultPayload {
 }
 
 /**
+ * Evento de uma sessão de visualização ao vivo de câmera (canal efêmero):
+ * frame JPEG em base64, erro de captura ou encerramento da sessão.
+ */
+export interface CameraFramePayload {
+  sessionId: string;
+  deviceId: string;
+  type: 'frame' | 'error' | 'ended';
+  /** Timestamp do frame/evento (ISO). */
+  ts: string;
+  /** Sequencial do frame na sessão (type='frame'). */
+  seq?: number;
+  /** JPEG em base64 (type='frame'). */
+  image?: string;
+  /** Código/mensagem do erro de captura (type='error'). */
+  errorCode?: string;
+  error?: string;
+  /** Motivo do encerramento (type='ended'). */
+  reason?: string;
+}
+
+/**
  * Evento emitido em tempo real para as telas operacionais. Cobre tanto alarmes
  * de telemetria (`kind='ALARM'`) quanto avisos de automação (`kind='AUTOMATION_NOTICE'`).
  * Campos específicos de alarme (ponto/dispositivo/regra) são opcionais porque
@@ -343,6 +364,16 @@ export class TelemetryGateway
 
   emitCommandResult(data: CommandResultPayload, tenantId: string): void {
     this.scopedEmit('bacnet:command:result', data, tenantId);
+  }
+
+  /**
+   * Frame (ou evento de erro/fim) de uma sessão de visualização ao vivo de
+   * câmera. Canal EFÊMERO: nada é persistido — o evento só existe no socket.
+   * Emissão direta em toda instância (como telemetria/alarme): cada instância
+   * assina o tópico MQTT de frames e emite aos seus próprios clientes.
+   */
+  emitCameraFrame(data: CameraFramePayload, tenantId: string): void {
+    this.scopedEmit('camera:frame', data, tenantId);
   }
 
   emitAlarmEvent(data: AlarmEventPayload): void {

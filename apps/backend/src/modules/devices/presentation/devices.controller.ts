@@ -89,11 +89,13 @@ interface MqttPointInput {
   jsonPath?: string;
   valueType?: 'number' | 'boolean';
   unit?: string;
-  /** Opcional — binding de escrita (ponto comandável, ex.: relé Shelly). */
+  /** Opcional — binding de escrita (ponto comandável, ex.: relé Shelly, Aeris). */
   write?: {
     commandTopic: string;
     payloadTemplate: string;
     responseTopic?: string | null;
+    /** Confirmar pelo valor ecoado em vez de campo `id` RPC (ex.: Aeris sp_val1). */
+    matchByValue?: boolean;
   } | null;
 }
 
@@ -138,8 +140,8 @@ export class DevicesController {
   /**
    * GET /devices/:id/heartbeat
    * Diagnóstico do último heartbeat do dispositivo MQTT (RSSI, IP, uptime),
-   * guardado em memória a partir do canal device-heartbeat. `null` quando
-   * nunca recebido nesta sessão do backend.
+   * memória (esta instância) com fallback durável em devices.last_heartbeat
+   * (sobrevive a restart/cluster). `null` só quando nunca recebido.
    */
   @Get(':id/heartbeat')
   @UseGuards(JwtAuthGuard)
@@ -153,7 +155,7 @@ export class DevicesController {
     if (scope && device.tenantId !== scope) {
       throw new ForbiddenException('Sem permissão para ver este dispositivo');
     }
-    return { heartbeat: this.deviceHeartbeat.get(id) };
+    return { heartbeat: await this.deviceHeartbeat.get(id) };
   }
 
   @Get('/')
@@ -191,6 +193,12 @@ export class DevicesController {
     const liveStatus = this.deviceStatus.getStatus(device.id);
 
     return {
+      // Config de tópico dos devices MQTT — a tela de detalhe (aberta a partir
+      // da lista) precisa dela p/ montar o tópico no modal "Adicionar Ponto"
+      // (modo raiz) e p/ o card de credencial/heartbeat.
+      ...(device.protocol === 'mqtt'
+        ? { mqttConfig: this.buildMqttConfigView(device) }
+        : {}),
       id: device.id,
       name: device.name,
       protocol: device.protocol,
@@ -551,7 +559,12 @@ export class DevicesController {
         `responseTopic deve estar sob "${scopePrefix}" (escopo deste dispositivo): ${responseTopic}`,
       );
     }
-    return { commandTopic, payloadTemplate, responseTopic };
+    return {
+      commandTopic,
+      payloadTemplate,
+      responseTopic,
+      ...(write.matchByValue === true ? { matchByValue: true } : {}),
+    };
   }
 
   /** Mapeia um DevicePoint MQTT para o shape de ponto esperado pelo frontend (lê o binding). */
@@ -565,6 +578,9 @@ export class DevicesController {
     critical: boolean;
     opRole?: string | null;
     createdAt: Date;
+    lastValue?: number | null;
+    lastValueAt?: Date | null;
+    lastValueState?: string | null;
   }) {
     const b = (p.binding ?? {}) as {
       sourceTopic?: string;
@@ -577,6 +593,7 @@ export class DevicesController {
           commandTopic: b.write.commandTopic,
           payloadTemplate: b.write.payloadTemplate,
           responseTopic: b.write.responseTopic ?? null,
+          matchByValue: b.write.matchByValue === true ? true : undefined,
         }
       : null;
     return {
@@ -593,6 +610,39 @@ export class DevicesController {
       value: 0,
       status: 'normal',
       lastUpdate: p.createdAt.toISOString(),
+      // Último valor persistido (seed da UI até a telemetria ao vivo chegar).
+      // null = nunca houve leitura → a UI mantém "Aguardando leitura…".
+      lastValue: p.lastValue ?? null,
+      lastValueAt: p.lastValueAt ? p.lastValueAt.toISOString() : null,
+      lastValueState: p.lastValueState ?? null,
+    };
+  }
+
+  /**
+   * Monta o bloco `mqttConfig` (modo de tópico, heartbeat e credencial)
+   * exposto ao frontend. Compartilhado entre o create/update (mapMqttDevice)
+   * e a listagem GET /devices (mapDevice) — a tela de detalhe depende dele
+   * para montar o tópico correto no modal "Adicionar Ponto".
+   */
+  private buildMqttConfigView(device: { config: unknown }) {
+    const cfg = this.mqttDeviceConfig(device);
+    const topicMode = cfg.topicMode === 'root' ? 'root' : 'prefix';
+    return {
+      topicMode,
+      rootTopic: topicMode === 'root' ? (cfg.rootTopic ?? null) : null,
+      heartbeatTopic: cfg.heartbeatTopic ?? null,
+      heartbeatTimeoutSeconds: cfg.heartbeatTopic ? (cfg.heartbeatTimeoutSeconds ?? DEFAULT_HEARTBEAT_TIMEOUT_S) : null,
+      // Credencial dedicada do equipamento (modo raiz) — exibida na UI como
+      // a credencial de sensores do modo prefixo.
+      credential:
+        topicMode === 'root' && cfg.deviceMqttUser && cfg.deviceMqttPass
+          ? {
+              username: cfg.deviceMqttUser,
+              password: cfg.deviceMqttPass,
+              broker: process.env.MQTT_BROKER_URL ?? null,
+              topicPrefix: `${cfg.rootTopic ?? ''}/`,
+            }
+          : null,
     };
   }
 
@@ -601,26 +651,8 @@ export class DevicesController {
     device: Prisma.DeviceGetPayload<{ include: { points: true } }>,
     siteName: string,
   ) {
-    const cfg = this.mqttDeviceConfig(device);
-    const topicMode = cfg.topicMode === 'root' ? 'root' : 'prefix';
     return {
-      mqttConfig: {
-        topicMode,
-        rootTopic: topicMode === 'root' ? (cfg.rootTopic ?? null) : null,
-        heartbeatTopic: cfg.heartbeatTopic ?? null,
-        heartbeatTimeoutSeconds: cfg.heartbeatTopic ? (cfg.heartbeatTimeoutSeconds ?? DEFAULT_HEARTBEAT_TIMEOUT_S) : null,
-        // Credencial dedicada do equipamento (modo raiz) — exibida na UI como
-        // a credencial de sensores do modo prefixo.
-        credential:
-          topicMode === 'root' && cfg.deviceMqttUser && cfg.deviceMqttPass
-            ? {
-                username: cfg.deviceMqttUser,
-                password: cfg.deviceMqttPass,
-                broker: process.env.MQTT_BROKER_URL ?? null,
-                topicPrefix: `${cfg.rootTopic ?? ''}/`,
-              }
-            : null,
-      },
+      mqttConfig: this.buildMqttConfigView(device),
       id: device.id,
       name: device.name,
       protocol: device.protocol,
@@ -997,12 +1029,13 @@ export class DevicesController {
     }
 
     const points = body.selectedPoints ?? [];
-    if (points.length === 0) {
+    // Modo raiz: pontos são adicionados depois (credencial precisa existir primeiro).
+    const isRootMode = body.topicMode === 'root';
+    if (points.length === 0 && !isRootMode) {
       throw new BadRequestException('Informe ao menos um ponto MQTT');
     }
 
     // Modo de tópico: valida raiz (formato + unicidade global) e heartbeat.
-    const isRootMode = body.topicMode === 'root';
     let rootTopic: string | null = null;
     if (isRootMode) {
       rootTopic = this.validateRootTopicFormat(body.rootTopic ?? '');

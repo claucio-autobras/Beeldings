@@ -1,5 +1,33 @@
 # The format of this file is identical to `.dockerignore`.
 # It is used to reduce the size of deployed images to make the process of publishing faster.
 
-# No need to store the pnpm store twice.
+# Caches / stores locais (pnpm store, caches de dev)
 .local
+.cache
+.upm
+
+# Histórico git (3,9 GB) — não é necessário em runtime de produção
+.git
+
+# Build de DEV do Next (o build de produção gera o próprio .next no deploy)
+apps/frontend/.next
+
+# Libs Python (usadas só em ferramentas de dev, nada em produção roda Python)
+.pythonlibs
+
+# Assets anexados no chat e arquivos brutos — nunca servidos em produção
+attached_assets
+backups
+exports
+*.mp4
+
+# Artefatos auxiliares do workspace (mockups, vídeo comercial) — não fazem
+# parte do app publicado
+artifacts/mockup-sandbox
+artifacts/video-comercial
+
+# Diversos de dev
+docs
+nodered-flows
+infra
+docker-compose.test.yml

@@ -125,6 +125,30 @@ export const DICT_DASHBOARD: Record<string, string> = {
 
   // ── OperationalSummaryCard ──
   'Resumo Operacional': 'Operational Summary',
+  'Disponibilidade média dos equipamentos no período (mesma base do relatório de disponibilidade)':
+    'Average equipment availability in the period (same basis as the availability report)',
+
+  // ── TopOffendersCard ──
+  'Top ofensores': 'Top offenders',
+  'Equipamentos e regras que mais alarmaram no período': 'Equipment and rules that alarmed the most in the period',
+  'Nenhum alarme no período': 'No alarms in the period',
+  'Nenhum equipamento disparou alarmes na janela selecionada': 'No equipment triggered alarms in the selected window',
+
+  // ── AdminTrendCard ──
+  'Evolução no período': 'Trend over the period',
+  'Alarmes disparados e quedas de comunicação ao longo do período (todos os clientes ativos)':
+    'Alarms triggered and communication drops over the period (all active clients)',
+  'Alarmes disparados': 'Alarms triggered',
+  'Quedas (offline)': 'Drops (offline)',
+  'Nada registrado no período': 'Nothing recorded in the period',
+  'Sem alarmes disparados nem quedas de comunicação na janela selecionada':
+    'No alarms triggered and no communication drops in the selected window',
+  'Alarmes disparados e quedas de comunicação por bucket de tempo':
+    'Alarms triggered and communication drops per time bucket',
+
+  // ── TenantRankingCard (score composto) ──
+  'Ordenado por críticos em falha, gateways offline, alarmes e backlog de ACK':
+    'Ranked by critical assets in fault, offline gateways, alarms and ACK backlog',
   'Visão geral do período': 'Period overview',
   'Alarmes críticos ativos': 'Active critical alarms',
   'Aguardando ACK': 'Awaiting ACK',

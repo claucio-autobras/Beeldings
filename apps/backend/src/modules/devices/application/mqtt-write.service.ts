@@ -86,24 +86,54 @@ export class MqttWriteService implements OnModuleInit {
    * Renderiza o template do payload substituindo os placeholders.
    * Retorna também o rpcId gerado (quando o template usa `{{id}}`) para o
    * gateway casar a resposta RPC.
+   *
+   * Placeholders suportados:
+   *  `{{value}}` — valor JSON conforme valueType (obrigatório)
+   *  `{{id}}`    — id numérico de RPC gerado por requisição (Shelly)
+   *  `{{ts}}`    — epoch UNIX em segundos inteiro no momento do envio
+   *  `{{sh}}`    — assinatura proprietária Aeris: NÃO pode ser computada
+   *               automaticamente (algoritmo/secret não documentados). O
+   *               placeholder é mantido literal no payload — o firmware Aeris
+   *               descartará o comando até que o algoritmo seja configurado.
+   *               Consulte a documentação/firmware Aeris para o algoritmo do
+   *               campo "sh" e reporte para que seja integrado.
    */
   renderPayload(
     template: string,
     value: number | boolean,
     valueType: 'number' | 'boolean',
   ): { payload: string; rpcId: number | null } {
+    // Modo "valor puro": template contendo APENAS {{value}} publica o valor cru,
+    // sem envelope JSON — booleanos viram 0/1 (formato que firmwares como o
+    // Aeris esperam no canal set/, ex.: `1` ou `22`). Em templates JSON
+    // (ex.: Shelly {"on":{{value}}}), booleanos seguem como true/false.
+    const isRawValue = template.trim() === '{{value}}';
     const jsonValue =
       valueType === 'boolean'
-        ? String(value === true || value === 1)
+        ? (isRawValue
+            ? (value === true || value === 1 ? '1' : '0')
+            : String(value === true || value === 1))
         : String(typeof value === 'number' ? value : Number(value));
 
     const usesId = template.includes('{{id}}');
     const rpcId = usesId ? randomInt(1, 2_000_000_000) : null;
 
+    // Epoch UNIX em segundos (inteiro) — gerado no momento do envio.
+    const ts = String(Math.floor(Date.now() / 1000));
+
     let payload = template.split('{{value}}').join(jsonValue);
     if (rpcId !== null) {
       payload = payload.split('{{id}}').join(String(rpcId));
     }
+    // {{ts}} → epoch em segundos
+    if (template.includes('{{ts}}')) {
+      payload = payload.split('{{ts}}').join(ts);
+    }
+    // {{sh}} → NÃO resolvido: algoritmo Aeris desconhecido.
+    // Mantém literal para que o operador perceba que a assinatura está faltando
+    // em vez de receber um sh silenciosamente errado.
+    // (Quando o algoritmo for documentado, implementar aqui.)
+
     return { payload, rpcId };
   }
 
@@ -138,9 +168,27 @@ export class MqttWriteService implements OnModuleInit {
 
     const { payload, rpcId } = this.renderPayload(template, req.value, req.valueType);
 
+    // Aviso claro quando o template contém {{sh}} não resolvido: o firmware Aeris
+    // descartará o comando até que o algoritmo seja documentado e integrado.
+    if (payload.includes('{{sh}}')) {
+      this.logger.warn(
+        `Comando MQTT ${req.deviceId}: payload contém {{sh}} não resolvido — ` +
+          'o firmware Aeris descartará esta mensagem no canal config/. ' +
+          'Para Aeris, use o canal oficial de comando set/ do fabricante ' +
+          '(ex.: {serial}/set/split/0/force1 com payload {{value}} puro), ' +
+          'que não exige assinatura "sh".',
+      );
+    }
+
     // UUID (não Date.now()) para evitar colisão de command_id sob concorrência.
     const commandId = `mqtt-write-${randomUUID()}`;
     const commandTopic = `bluebee/${req.tenantId}/gateway/${req.gatewayId}/commands`;
+
+    // Valor numérico no formato canônico da telemetria (boolean → 0/1).
+    const numericValue =
+      req.valueType === 'boolean'
+        ? (req.value === true || req.value === 1 ? 1 : 0)
+        : Number(req.value);
 
     // Envelope padrão do gateway (CommandDispatcherService): protocol + action + params.
     const commandPayload = {
@@ -155,16 +203,18 @@ export class MqttWriteService implements OnModuleInit {
         payload,
         responseTopic,
         matchId: responseTopic ? rpcId : null,
+        // matchValue: quando o binding declara matchByValue, a confirmação é
+        // casada pelo campo `value` do JSON de resposta em vez do campo `id` RPC.
+        // Usado por equipamentos que ecoam o novo estado num tópico separado
+        // (ex.: Aeris sp_val1). null = modo padrão (qualquer resposta / id RPC).
+        matchValue:
+          responseTopic && req.write.matchByValue === true ? numericValue : null,
         // Contexto para o gateway publicar a telemetria confirmada pós-escrita
         // (mesmo payload do bridge) assim que a resposta RPC validar o comando.
         confirm: {
           deviceId: req.deviceId,
           tag: req.pointTag,
-          // Valor numérico no formato canônico da telemetria (boolean → 0/1).
-          value:
-            req.valueType === 'boolean'
-              ? (req.value === true || req.value === 1 ? 1 : 0)
-              : Number(req.value),
+          value: numericValue,
           unit: req.pointUnit,
         },
       },

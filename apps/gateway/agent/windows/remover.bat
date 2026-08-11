@@ -1,11 +1,12 @@
 @echo off
 setlocal EnableExtensions
 REM ===========================================================================
-REM  BlueBee IoT Gateway - Remocao do Servico do Windows
+REM  Beeldings IoT Gateway - Remocao do Servico do Windows
 REM  Execute como ADMINISTRADOR. Use antes de reinstalar do zero.
 REM ===========================================================================
 
-set "SERVICE_NAME=BlueBeeGateway"
+set "SERVICE_NAME=BeeldingsGateway"
+set "LEGACY_SERVICE_NAME=BlueBeeGateway"
 set "NSSM=%~dp0nssm.exe"
 
 REM --- Privilegios de administrador ---------------------------------------
@@ -25,6 +26,18 @@ if exist "%NSSM%" (
   REM Reserva, sem NSSM: comandos nativos do Windows
   sc.exe stop %SERVICE_NAME% >nul 2>&1
   sc.exe delete %SERVICE_NAME%
+)
+
+REM --- Limpa tambem o servico LEGADO (nome antigo BlueBee), se existir ------
+sc.exe query %LEGACY_SERVICE_NAME% >nul 2>&1
+if %errorlevel% equ 0 (
+  echo Removendo tambem o servico legado "%LEGACY_SERVICE_NAME%"...
+  if exist "%NSSM%" (
+    "%NSSM%" stop %LEGACY_SERVICE_NAME% >nul 2>&1
+    "%NSSM%" remove %LEGACY_SERVICE_NAME% confirm >nul 2>&1
+  )
+  sc.exe stop %LEGACY_SERVICE_NAME% >nul 2>&1
+  sc.exe delete %LEGACY_SERVICE_NAME% >nul 2>&1
 )
 
 echo.

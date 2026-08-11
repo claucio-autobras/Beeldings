@@ -10,11 +10,18 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  CircleAlert,
+  CircleCheck,
+  CircleOff,
+  HardDrive,
   Info,
   LineChart,
   Loader2,
+  MonitorPlay,
+  Network,
   Pencil,
   Plus,
+  Radar,
   ScanSearch,
   Stethoscope,
   Trash2,
@@ -29,11 +36,15 @@ import { PointConfigPanel } from '@/modules/trends/components/PointConfigPanel';
 import type {
   Camera as CameraType,
   HealthMetric,
+  ManagedSwitch,
   SnmpHealthTestOutcome,
 } from '../services/cftv.service';
-import { setCameraCritical, setCameraPointCritical } from '../services/cftv.service';
+import { deleteSwitch, setCameraCritical, setCameraPointCritical } from '../services/cftv.service';
 import PasswordConfirmDialog from '@/components/PasswordConfirmDialog';
-import { useBacnetTelemetry, type TelemetryMap } from '@/hooks/useBacnetTelemetry';
+import { useT } from '@/lib/i18n';
+import { CameraLiveViewModal } from '../components/CameraLiveViewModal';
+import { SnmpDiagnoseModal } from '../components/SnmpDiagnoseModal';
+import { useBacnetTelemetry, deviceTagKey, type TelemetryMap } from '@/hooks/useBacnetTelemetry';
 import { useCurrentUser } from '@/hooks/useCurrentUser';
 import { useTenantFilter } from '@/hooks/useTenantFilter';
 import { useSiteFilter } from '@/hooks/useSiteFilter';
@@ -42,9 +53,11 @@ import { useSites } from '@/modules/sites/hooks/useSites';
 import { useTenants } from '@/modules/tenants/hooks/useTenants';
 import {
   type Camera,
+  type CameraCapabilities,
   type CameraInput,
   type DiagMetric,
   type DiscoveredOnvifDevice,
+  type MonitoringProfile,
   type SnmpDiagnoseOutcome,
   type SnmpDiagnoseProgress,
   type SnmpScanOutcome,
@@ -53,17 +66,32 @@ import {
   createCamera,
   deleteCamera,
   diagnoseCameraSnmp,
+  getCameraCapabilities,
   getDiagnoseProgress,
+  getMonitoringProfiles,
   getScanProgress,
+  probeCameraCapabilities,
   scanOnvifNetwork,
   scanSnmpRange,
   testCameraSnmp,
   updateCamera,
 } from '../services/cftv.service';
 import { useCameras } from '../hooks/useCameras';
+import { useSwitches } from '../hooks/useSwitches';
+import { useNvrs } from '../hooks/useNvrs';
+import { SwitchFormModal } from '../components/SwitchFormModal';
+import { SwitchPanel } from '../components/SwitchPanel';
+import { NvrFormModal } from '../components/NvrFormModal';
+import { NvrPanel } from '../components/NvrPanel';
+import {
+  type ManagedNvr,
+  deleteNvr,
+} from '../services/cftv.service';
 import {
   type CameraHealth,
+  type CameraHealthInfo,
   cameraHealth,
+  cameraHealthInfo,
   ESTIMATED_UPTIME_HINT,
   estimatedUptimeSeconds,
   formatUptime,
@@ -167,6 +195,7 @@ export default function CftvPage({ embedded = false }: { embedded?: boolean } = 
   const isAdmin = user.role === 'ADMIN' || user.role === 'CCO' || user.role === 'SUPERVISOR';
   const canDelete = user.role === 'ADMIN' || user.role === 'CCO';
 
+  const t = useT();
   const { selectedTenantId } = useTenantFilter();
   const { selectedSiteId } = useSiteFilter();
   const effectiveTenantId = isAdmin
@@ -175,6 +204,11 @@ export default function CftvPage({ embedded = false }: { embedded?: boolean } = 
 
   const queryClient = useQueryClient();
   const { data: cameras = [], isLoading } = useCameras(effectiveTenantId);
+  const { data: switches = [], isLoading: isLoadingSwitches } = useSwitches(effectiveTenantId);
+  const { data: nvrs = [], isLoading: isLoadingNvrs } = useNvrs(effectiveTenantId);
+
+  const refetchSwitches = () => queryClient.invalidateQueries({ queryKey: ['cftv-switches'] });
+  const refetchNvrs = () => queryClient.invalidateQueries({ queryKey: ['cftv-nvrs'] });
 
   // Toggle de câmera crítica (estrela) — otimista, reverte em erro.
   const [criticalById, setCriticalById] = useState<Record<string, boolean>>({});
@@ -199,7 +233,9 @@ export default function CftvPage({ embedded = false }: { embedded?: boolean } = 
   const { byDevice } = useBacnetTelemetry({ enabled: cameras.length > 0 });
 
   // Critério canônico compartilhado com o card CFTV do dashboard.
-  const healthOf = (camera: Camera): CameraHealth => cameraHealth(camera, byDevice);
+  // healthInfoOf() inclui o motivo (ex.: 'gateway_offline') para badge/tooltip.
+  const healthInfoOf = (camera: Camera): CameraHealthInfo => cameraHealthInfo(camera, byDevice);
+  const healthOf = (camera: Camera): CameraHealth => healthInfoOf(camera).health;
 
   const uptimeOf = (camera: Camera): number | null => {
     const entry = liveOrSeed(camera, 'UPTIME', byDevice);
@@ -240,6 +276,8 @@ export default function CftvPage({ embedded = false }: { embedded?: boolean } = 
   const [cameraToDelete, setCameraToDelete] = useState<Camera | null>(null);
   const [cameraForAlarm, setCameraForAlarm] = useState<Camera | null>(null);
   const [cameraForTelemetry, setCameraForTelemetry] = useState<Camera | null>(null);
+  // Visualização ao vivo (ONVIF): um único modal/sessão por vez.
+  const [cameraForLive, setCameraForLive] = useState<Camera | null>(null);
   const [cameraToDiagnose, setCameraToDiagnose] = useState<Camera | null>(null);
   const [prefillIp, setPrefillIp] = useState<string | null>(null);
   const [prefillProtocol, setPrefillProtocol] = useState<'snmp' | 'onvif' | null>(null);
@@ -281,6 +319,58 @@ export default function CftvPage({ embedded = false }: { embedded?: boolean } = 
       void refetch();
     },
   });
+
+  // ── Switch modal state ────────────────────────────────────────────────────
+  const [switchFormOpen, setSwitchFormOpen] = useState(false);
+  const [switchToEdit, setSwitchToEdit] = useState<ManagedSwitch | null>(null);
+  const [switchToDelete, setSwitchToDelete] = useState<ManagedSwitch | null>(null);
+  const [switchForPanel, setSwitchForPanel] = useState<ManagedSwitch | null>(null);
+
+  const deleteSwitchMutation = useMutation({
+    mutationFn: ({ id, token }: { id: string; token: string }) => deleteSwitch(id, token),
+    onSuccess: () => {
+      setSwitchToDelete(null);
+      void refetchSwitches();
+    },
+  });
+
+  const filteredSwitches = useMemo(
+    () =>
+      switches.filter((sw) => {
+        if (search && !`${sw.name} ${sw.ip}`.toLowerCase().includes(search.toLowerCase())) {
+          return false;
+        }
+        if (selectedSiteId && sw.siteId !== selectedSiteId) return false;
+        return true;
+      }),
+    [switches, search, selectedSiteId],
+  );
+
+  // ── NVR modal state ───────────────────────────────────────────────────────
+  const [nvrFormOpen, setNvrFormOpen] = useState(false);
+  const [nvrToEdit, setNvrToEdit] = useState<ManagedNvr | null>(null);
+  const [nvrToDelete, setNvrToDelete] = useState<ManagedNvr | null>(null);
+  const [nvrForPanel, setNvrForPanel] = useState<ManagedNvr | null>(null);
+
+  const deleteNvrMutation = useMutation({
+    mutationFn: ({ id, token }: { id: string; token: string }) => deleteNvr(id, token),
+    onSuccess: () => {
+      setNvrToDelete(null);
+      void refetchNvrs();
+    },
+  });
+
+  const filteredNvrs = useMemo(
+    () =>
+      nvrs.filter((nvr) => {
+        if (search && !`${nvr.name} ${nvr.ip}`.toLowerCase().includes(search.toLowerCase())) {
+          return false;
+        }
+        if (selectedSiteId && nvr.siteId !== selectedSiteId) return false;
+        return true;
+      }),
+    [nvrs, search, selectedSiteId],
+  );
 
   return (
     <div className="space-y-6">
@@ -372,11 +462,18 @@ export default function CftvPage({ embedded = false }: { embedded?: boolean } = 
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
           {filtered.map((camera) => {
-            const health = healthOf(camera);
+            const healthInfo = healthInfoOf(camera);
+            const health = healthInfo.health;
             const uptime = uptimeOf(camera);
-            const statusReadAt = formatReadTime(
-              liveOrSeed(camera, 'STATUS', byDevice)?.timestamp ?? null,
-            );
+            const statusEntry = liveOrSeed(camera, 'STATUS', byDevice);
+            const statusReadAt = formatReadTime(statusEntry?.timestamp ?? null);
+            // Tooltip do badge de status: motivo quando disponível + "lido às" como contexto.
+            const statusBadgeTooltip: string | undefined =
+              healthInfo.reason === 'gateway_offline'
+                ? `Gateway offline — STATUS congelado${statusReadAt ? ` (lido às ${statusReadAt})` : ''}`
+                : health === 'unknown' && statusEntry
+                  ? `Dados desatualizados${statusReadAt ? ` (lido às ${statusReadAt})` : ''}`
+                  : undefined;
             return (
               <div
                 key={camera.id}
@@ -426,6 +523,22 @@ export default function CftvPage({ embedded = false }: { embedded?: boolean } = 
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
+                    {/* Ver ao vivo — câmera com vídeo disponível (ONVIF sempre;
+                        SNMP quando tem credenciais de vídeo/RTSP) e online. */}
+                    {camera.liveViewAvailable && (
+                      <button
+                        onClick={() => setCameraForLive(camera)}
+                        disabled={health !== 'online'}
+                        title={
+                          health === 'online'
+                            ? t('Ver ao vivo')
+                            : t('Disponível quando a câmera estiver online')
+                        }
+                        className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+                      >
+                        <MonitorPlay className="h-3.5 w-3.5" />
+                      </button>
+                    )}
                     {/* Detalhe de telemetria — visível para todos os perfis. */}
                     <button
                       onClick={() => setCameraForTelemetry(camera)}
@@ -493,8 +606,10 @@ export default function CftvPage({ embedded = false }: { embedded?: boolean } = 
 
                 <div className="flex items-center justify-between text-xs">
                   <span
+                    title={statusBadgeTooltip}
                     className={[
                       'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-medium',
+                      statusBadgeTooltip ? 'cursor-help' : '',
                       health === 'online'
                         ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400'
                         : health === 'offline'
@@ -512,10 +627,24 @@ export default function CftvPage({ embedded = false }: { embedded?: boolean } = 
                             : 'bg-slate-400',
                       ].join(' ')}
                     />
-                    {health === 'online' ? 'Online' : health === 'offline' ? 'Offline' : 'Sem dados'}
+                    {health === 'online'
+                      ? 'Online'
+                      : health === 'offline'
+                        ? healthInfo.reason === 'gateway_offline'
+                          ? 'Sem comunicação'
+                          : 'Offline'
+                        : 'Sem dados'}
                   </span>
-                  {statusReadAt && (
+                  {/* "lido às" — preservado como info contextual; quando o tooltip
+                      do badge já contém a hora (gateway_offline / desatualizado),
+                      omitimos o texto duplicado para não poluir o card. */}
+                  {statusReadAt && !statusBadgeTooltip && (
                     <span className="text-[11px] text-muted-foreground">
+                      lido às {statusReadAt}
+                    </span>
+                  )}
+                  {statusReadAt && statusBadgeTooltip && (
+                    <span className="text-[11px] text-muted-foreground" title={statusBadgeTooltip}>
                       lido às {statusReadAt}
                     </span>
                   )}
@@ -714,8 +843,18 @@ export default function CftvPage({ embedded = false }: { embedded?: boolean } = 
 
       {/* Diagnóstico SNMP da câmera */}
       {cameraToDiagnose && (
-        <DiagnoseSnmpModal
-          camera={cameraToDiagnose}
+        <SnmpDiagnoseModal
+          device={{
+            id: cameraToDiagnose.id,
+            name: cameraToDiagnose.name,
+            ip: cameraToDiagnose.ip as string,
+            port: cameraToDiagnose.port,
+            community: cameraToDiagnose.community,
+          }}
+          diagnoseFn={diagnoseCameraSnmp}
+          getProgressFn={getDiagnoseProgress}
+          applyFn={applySnmpOids}
+          deviceLabel="câmera"
           onClose={() => setCameraToDiagnose(null)}
           onApplied={() => void refetch()}
         />
@@ -727,6 +866,7 @@ export default function CftvPage({ embedded = false }: { embedded?: boolean } = 
           camera={cameraForTelemetry}
           live={byDevice}
           showIp={isAdmin}
+          isAdmin={isAdmin}
           onClose={() => setCameraForTelemetry(null)}
         />
       )}
@@ -740,6 +880,448 @@ export default function CftvPage({ embedded = false }: { embedded?: boolean } = 
           trendByPoint={trendByPoint}
           onChanged={refreshPointConfig}
           onClose={() => setCameraForAlarm(null)}
+        />
+      )}
+
+      {/* Ver ao vivo (ONVIF) — fechar encerra a sessão imediatamente */}
+      {cameraForLive && (
+        <CameraLiveViewModal
+          cameraId={cameraForLive.id}
+          cameraName={cameraForLive.name}
+          subtitle={
+            [
+              cameraForLive.site || null,
+              cameraForLive.deviceInfo?.model
+                ? [cameraForLive.deviceInfo.manufacturer, cameraForLive.deviceInfo.model]
+                    .filter(Boolean)
+                    .join(' ')
+                : null,
+            ]
+              .filter(Boolean)
+              .join(' — ') || null
+          }
+          tenantId={effectiveTenantId}
+          onClose={() => setCameraForLive(null)}
+        />
+      )}
+
+      {/* ── Seção de switches ─────────────────────────────────────────────── */}
+      <div className="border-t border-border pt-6 space-y-4">
+        {/* Cabeçalho da seção */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-md bg-blue-100 text-blue-600 dark:bg-blue-500/15 dark:text-blue-400">
+              <Network className="h-4 w-4" />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold text-foreground">Switches gerenciáveis</h2>
+              <p className="text-[11px] text-muted-foreground">
+                Monitoramento de portas via SNMP IF-MIB
+              </p>
+            </div>
+            {switches.length > 0 && (
+              <span className="ml-1 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                {switches.length}
+              </span>
+            )}
+          </div>
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => { setSwitchToEdit(null); setSwitchFormOpen(true); }}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Adicionar switch
+            </button>
+          )}
+        </div>
+
+        {/* Lista de switches */}
+        {isLoadingSwitches ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+            {[1, 2].map((i) => (
+              <div key={i} className="h-[130px] rounded-lg bg-muted/50 animate-pulse" />
+            ))}
+          </div>
+        ) : filteredSwitches.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border py-10 text-center text-sm text-muted-foreground">
+            <Network className="mx-auto mb-3 h-8 w-8 opacity-40" />
+            {switches.length === 0
+              ? 'Nenhum switch cadastrado.'
+              : 'Nenhum switch encontrado para os filtros atuais.'}
+            {isAdmin && switches.length === 0 && (
+              <p className="mt-1 text-xs">
+                Clique em &quot;Adicionar switch&quot; para cadastrar o primeiro.
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+            {filteredSwitches.map((sw) => {
+              const statusPoint = sw.points.find((p) => p.tag === 'STATUS');
+              const uptimePoint = sw.points.find((p) => p.tag === 'UPTIME');
+              const cpuPoint = sw.points.find((p) => p.tag === 'CPU');
+              const statusEntry = byDevice.get(deviceTagKey(sw.id, 'STATUS'));
+              const uptimeEntry = byDevice.get(deviceTagKey(sw.id, 'UPTIME'));
+              const cpuEntry = byDevice.get(deviceTagKey(sw.id, 'CPU'));
+
+              const liveStatus = statusEntry?.value ?? statusPoint?.lastValue ?? null;
+              const isOnline = typeof liveStatus === 'number' ? liveStatus >= 1 : sw.status === 'online';
+
+              const liveUptime = typeof uptimeEntry?.value === 'number' ? uptimeEntry.value : uptimePoint?.lastValue ?? null;
+              const liveCpu = typeof cpuEntry?.value === 'number' ? cpuEntry.value : cpuPoint?.lastValue ?? null;
+
+              const portCount = sw.ports.length;
+
+              return (
+                <div
+                  key={sw.id}
+                  className="group rounded-lg border border-border bg-card p-4 space-y-3 cursor-pointer hover:border-primary/40 transition-colors"
+                  onClick={() => setSwitchForPanel(sw)}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div
+                        className={[
+                          'flex h-9 w-9 shrink-0 items-center justify-center rounded-md',
+                          sw.gatewayOnline === false
+                            ? 'bg-muted text-muted-foreground'
+                            : isOnline
+                              ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400'
+                              : 'bg-red-100 text-red-600 dark:bg-red-500/15 dark:text-red-400',
+                        ].join(' ')}
+                      >
+                        <Network className="h-4 w-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-foreground">{sw.name}</p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {sw.ip}:{sw.port} · SNMP v{sw.snmpVersion}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <span
+                        className={[
+                          'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium',
+                          sw.gatewayOnline === false
+                            ? 'bg-muted text-muted-foreground'
+                            : isOnline
+                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400'
+                              : 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-400',
+                        ].join(' ')}
+                      >
+                        <span
+                          className={[
+                            'h-1.5 w-1.5 rounded-full',
+                            sw.gatewayOnline === false
+                              ? 'bg-slate-400'
+                              : isOnline ? 'bg-emerald-500' : 'bg-red-500',
+                          ].join(' ')}
+                        />
+                        {sw.gatewayOnline === false ? 'GW offline' : isOnline ? 'Online' : 'Offline'}
+                      </span>
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setSwitchToEdit(sw); setSwitchFormOpen(true); }}
+                          className="rounded p-1 text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-muted hover:text-foreground transition-opacity"
+                          title="Editar switch"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setSwitchToDelete(sw); }}
+                          className="rounded p-1 text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10 transition-opacity"
+                          title="Excluir switch"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Métricas escalares */}
+                  <div className="grid grid-cols-3 gap-2 text-xs">
+                    <div>
+                      <p className="text-[10px] text-muted-foreground">Uptime</p>
+                      <p className="font-medium text-foreground">
+                        {uptimePoint?.unsupported
+                          ? 'n/d'
+                          : typeof liveUptime === 'number' && Number.isFinite(liveUptime)
+                            ? formatUptime(liveUptime)
+                            : '—'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-muted-foreground">CPU</p>
+                      <p className="font-medium text-foreground">
+                        {cpuPoint?.unsupported
+                          ? 'n/d'
+                          : typeof liveCpu === 'number' && Number.isFinite(liveCpu)
+                            ? `${Math.round(liveCpu)}%`
+                            : '—'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-muted-foreground">Portas</p>
+                      <p className="font-medium text-foreground">
+                        {portCount > 0 ? portCount : <span className="text-muted-foreground">sync</span>}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Site/gateway */}
+                  {(sw.site || sw.gatewayId) && (
+                    <p className="text-[11px] text-muted-foreground truncate">
+                      {[sw.site, sw.gatewayId ? `GW: ${sw.gatewayId.slice(0, 12)}…` : null]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* ── Modais de switch ──────────────────────────────────────────────── */}
+      {switchFormOpen && (
+        <SwitchFormModal
+          sw={switchToEdit ?? undefined}
+          onClose={() => { setSwitchFormOpen(false); setSwitchToEdit(null); }}
+          onSaved={() => {
+            setSwitchFormOpen(false);
+            setSwitchToEdit(null);
+            void refetchSwitches();
+          }}
+        />
+      )}
+
+      {switchForPanel && (() => {
+        // Re-read from up-to-date list in case ports were synced.
+        const current = switches.find((s) => s.id === switchForPanel.id) ?? switchForPanel;
+        return (
+          <SwitchPanel
+            sw={current}
+            live={byDevice}
+            isAdmin={isAdmin}
+            onClose={() => setSwitchForPanel(null)}
+            onRefresh={refetchSwitches}
+          />
+        );
+      })()}
+
+      {switchToDelete && (
+        <PasswordConfirmDialog
+          title={`Excluir o switch "${switchToDelete.name}"?`}
+          description={
+            <>
+              O switch <strong>{switchToDelete.ip}</strong> e todos os seus pontos
+              (incluindo portas sincronizadas) serão excluídos permanentemente.
+            </>
+          }
+          isPending={deleteSwitchMutation.isPending}
+          error={deleteSwitchMutation.error ? (deleteSwitchMutation.error as Error).message : null}
+          onCancel={() => { setSwitchToDelete(null); deleteSwitchMutation.reset(); }}
+          onConfirm={(token) => deleteSwitchMutation.mutate({ id: switchToDelete.id, token })}
+        />
+      )}
+
+      {/* ── Seção de NVRs/DVRs ────────────────────────────────────────────── */}
+      <div className="border-t border-border pt-6 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-md bg-orange-100 text-orange-600 dark:bg-orange-500/15 dark:text-orange-400">
+              <HardDrive className="h-4 w-4" />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold text-foreground">NVRs / DVRs</h2>
+              <p className="text-[11px] text-muted-foreground">
+                Monitoramento de gravadores via SNMP — discos e canais de gravação
+              </p>
+            </div>
+            {nvrs.length > 0 && (
+              <span className="ml-1 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                {nvrs.length}
+              </span>
+            )}
+          </div>
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => { setNvrToEdit(null); setNvrFormOpen(true); }}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Adicionar NVR
+            </button>
+          )}
+        </div>
+
+        {isLoadingNvrs ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+            {[1, 2].map((i) => (
+              <div key={i} className="h-[130px] rounded-lg bg-muted/50 animate-pulse" />
+            ))}
+          </div>
+        ) : filteredNvrs.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border py-10 text-center text-sm text-muted-foreground">
+            <HardDrive className="mx-auto mb-3 h-8 w-8 opacity-40" />
+            {nvrs.length === 0
+              ? 'Nenhum NVR/DVR cadastrado.'
+              : 'Nenhum NVR/DVR encontrado para os filtros atuais.'}
+            {isAdmin && nvrs.length === 0 && (
+              <p className="mt-1 text-xs">
+                Clique em &quot;Adicionar NVR&quot; para cadastrar o primeiro.
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+            {filteredNvrs.map((nvr) => {
+              const statusPoint = nvr.points.find((p) => p.tag === 'STATUS');
+              const uptimePoint = nvr.points.find((p) => p.tag === 'UPTIME');
+              const cpuPoint = nvr.points.find((p) => p.tag === 'CPU');
+              const statusEntry = byDevice.get(deviceTagKey(nvr.id, 'STATUS'));
+              const uptimeEntry = byDevice.get(deviceTagKey(nvr.id, 'UPTIME'));
+              const cpuEntry = byDevice.get(deviceTagKey(nvr.id, 'CPU'));
+
+              const liveStatus = statusEntry?.value ?? statusPoint?.lastValue ?? null;
+              const isOnline = typeof liveStatus === 'number' ? liveStatus >= 1 : nvr.status === 'online';
+              const liveUptime = typeof uptimeEntry?.value === 'number' ? uptimeEntry.value : uptimePoint?.lastValue ?? null;
+              const liveCpu = typeof cpuEntry?.value === 'number' ? cpuEntry.value : cpuPoint?.lastValue ?? null;
+
+              return (
+                <div
+                  key={nvr.id}
+                  className="rounded-lg border border-border bg-card p-4 space-y-3 cursor-pointer hover:border-primary/40 transition-colors"
+                  onClick={() => setNvrForPanel(nvr)}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className={[
+                        'flex h-9 w-9 shrink-0 items-center justify-center rounded-md',
+                        isOnline
+                          ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400'
+                          : 'bg-red-100 text-red-600 dark:bg-red-500/15 dark:text-red-400',
+                      ].join(' ')}>
+                        <HardDrive className="h-4.5 w-4.5" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-foreground">{nvr.name}</p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          {[
+                            isAdmin ? `${nvr.ip}:${nvr.port}` : null,
+                            nvr.site || null,
+                            nvr.manufacturer || null,
+                          ].filter(Boolean).join(' — ')}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      {isAdmin && (
+                        <>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setNvrToEdit(nvr); setNvrFormOpen(true); }}
+                            title="Editar NVR"
+                            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setNvrToDelete(nvr); }}
+                            title="Excluir NVR"
+                            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-red-600 dark:hover:text-red-400"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Status badge + métricas */}
+                  <div className="flex items-center gap-3 text-xs">
+                    <span className={[
+                      'inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium',
+                      isOnline
+                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400'
+                        : 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-400',
+                    ].join(' ')}>
+                      <span className={[
+                        'h-1.5 w-1.5 rounded-full',
+                        isOnline ? 'bg-emerald-500' : 'bg-red-500',
+                      ].join(' ')} />
+                      {isOnline ? 'Online' : 'Offline'}
+                    </span>
+                    {liveUptime !== null && (
+                      <span className="text-muted-foreground font-mono">{formatUptime(liveUptime)}</span>
+                    )}
+                    {liveCpu !== null && (
+                      <span className="text-muted-foreground font-mono">CPU {Math.round(liveCpu)}%</span>
+                    )}
+                  </div>
+
+                  {/* Resumo de discos/canais */}
+                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                    <span>{nvr.disks.length} disco{nvr.disks.length !== 1 ? 's' : ''}</span>
+                    <span>·</span>
+                    <span>{nvr.channels.length} canal{nvr.channels.length !== 1 ? 'is' : ''}</span>
+                    <span>·</span>
+                    <span className="truncate">{nvr.profileLabel}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* ── Modais de NVR ─────────────────────────────────────────────────── */}
+      {nvrFormOpen && (
+        <NvrFormModal
+          nvr={nvrToEdit ?? undefined}
+          onClose={() => { setNvrFormOpen(false); setNvrToEdit(null); }}
+          onSaved={() => {
+            setNvrFormOpen(false);
+            setNvrToEdit(null);
+            void refetchNvrs();
+          }}
+        />
+      )}
+
+      {nvrForPanel && (() => {
+        const current = nvrs.find((n) => n.id === nvrForPanel.id) ?? nvrForPanel;
+        return (
+          <NvrPanel
+            nvr={current}
+            live={byDevice}
+            isAdmin={isAdmin}
+            onClose={() => setNvrForPanel(null)}
+            onRefresh={refetchNvrs}
+          />
+        );
+      })()}
+
+      {nvrToDelete && (
+        <PasswordConfirmDialog
+          title={`Excluir o NVR "${nvrToDelete.name}"?`}
+          description={
+            <>
+              O NVR <strong>{nvrToDelete.ip}</strong> e todos os seus pontos
+              (incluindo discos e canais sincronizados) serão excluídos permanentemente.
+            </>
+          }
+          isPending={deleteNvrMutation.isPending}
+          error={deleteNvrMutation.error ? (deleteNvrMutation.error as Error).message : null}
+          onCancel={() => { setNvrToDelete(null); deleteNvrMutation.reset(); }}
+          onConfirm={(token) => deleteNvrMutation.mutate({ id: nvrToDelete.id, token })}
         />
       )}
 
@@ -793,8 +1375,11 @@ function CameraFormModal({
   const tenantId = camera?.tenantId
     ?? (isGlobal ? (modalTenantId || undefined) : (user.tenantId ?? undefined));
 
-  const { data: sites = [] } = useSites(tenantId);
-  const { data: gateways = [] } = useGateways(tenantId);
+  // Perfil global sem cliente escolhido: não busca sites/gateways (tenant
+  // vazio no backend = "sem filtro") e mantém os selects travados.
+  const tenantChosen = Boolean(tenantId);
+  const { data: sites = [] } = useSites(tenantId, { enabled: tenantChosen });
+  const { data: gateways = [] } = useGateways(tenantId, { enabled: tenantChosen });
 
   const [protocol, setProtocol] = useState<'snmp' | 'onvif'>(
     camera?.monitoringProtocol ?? prefillProtocol ?? 'snmp',
@@ -838,6 +1423,8 @@ function CameraFormModal({
   const [onvifPassword, setOnvifPassword] = useState('');
   const [pollingInterval, setPollingInterval] = useState(camera?.pollingInterval ?? 30);
   const [rtspUrl, setRtspUrl] = useState(camera?.rtspUrl ?? '');
+  // SNMP: porta do serviço ONVIF/vídeo (a porta principal é a do SNMP).
+  const [onvifPort, setOnvifPort] = useState(camera?.onvifPort ?? 80);
 
   // Canal SNMP opcional de saúde (câmera ONVIF) + overrides de OID.
   const [healthEnabled, setHealthEnabled] = useState(camera?.snmpHealth?.enabled ?? false);
@@ -947,6 +1534,11 @@ function CameraFormModal({
               snmpVersion,
               community: community.trim(),
               manufacturer: manufacturer.trim() || null,
+              // "Vídeo ao vivo" opcional: username vazio limpa as credenciais;
+              // senha vazia na edição mantém a atual.
+              onvifUsername: onvifUsername.trim(),
+              ...(onvifPassword ? { onvifPassword } : {}),
+              ...(onvifUsername.trim() ? { onvifPort: Number(onvifPort) || 80 } : {}),
               // Overrides manuais de OID por ponto — saúde + uptime (só edição).
               ...(camera && cleanOverrides(OVERRIDE_METRICS)
                 ? { healthOids: cleanOverrides(OVERRIDE_METRICS) }
@@ -975,7 +1567,12 @@ function CameraFormModal({
   });
   const probeFailed = (save.error as ApiError | null)?.code === 'ONVIF_PROBE_FAILED';
 
-  const onvifValid = !isOnvif || (onvifUsername.trim() && (camera ? true : onvifPassword));
+  const onvifValid = isOnvif
+    ? Boolean(onvifUsername.trim() && (camera ? true : onvifPassword))
+    : // SNMP: vídeo opcional — mas usuário preenchido exige senha (exceto
+      // edição com senha já salva, que é mantida).
+      !onvifUsername.trim() ||
+      Boolean(onvifPassword || (camera?.hasOnvifPassword && camera.onvifUsername));
   const valid = name.trim() && ip.trim() && onvifValid && (camera || (tenantId && gatewayId));
 
   return (
@@ -1005,8 +1602,13 @@ function CameraFormModal({
         )}
 
         <Field label="Site">
-          <select value={siteId} onChange={(e) => setSiteId(e.target.value)} className={inputCls}>
-            <option value="">Sem site</option>
+          <select
+            value={siteId}
+            onChange={(e) => setSiteId(e.target.value)}
+            disabled={!tenantChosen}
+            className={inputCls + (!tenantChosen ? ' opacity-60 cursor-not-allowed' : '')}
+          >
+            <option value="">{tenantChosen ? 'Sem site' : 'Selecione o cliente primeiro'}</option>
             {sites.map((s) => (
               <option key={s.id} value={s.id}>{s.name}</option>
             ))}
@@ -1015,8 +1617,13 @@ function CameraFormModal({
 
         {!camera && (
           <Field label="Gateway (faz o polling) *">
-            <select value={gatewayId} onChange={(e) => setGatewayId(e.target.value)} className={inputCls}>
-              <option value="">Selecione…</option>
+            <select
+              value={gatewayId}
+              onChange={(e) => setGatewayId(e.target.value)}
+              disabled={!tenantChosen}
+              className={inputCls + (!tenantChosen ? ' opacity-60 cursor-not-allowed' : '')}
+            >
+              <option value="">{tenantChosen ? 'Selecione…' : 'Selecione o cliente primeiro'}</option>
               {gateways.map((g) => (
                 <option key={g.id} value={g.id}>{g.id} ({g.status})</option>
               ))}
@@ -1163,6 +1770,46 @@ function CameraFormModal({
                 <option value="Axis" />
               </datalist>
             </Field>
+
+            {/* Vídeo ao vivo opcional (câmera SNMP): credenciais ONVIF e/ou a
+                URL RTSP (campo abaixo) habilitam o botão "Ver ao vivo". */}
+            <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-3">
+              <p className="text-sm font-medium text-foreground">Vídeo ao vivo (opcional)</p>
+              <p className="text-[11px] text-muted-foreground -mt-1">
+                Para habilitar o botão &quot;Ver ao vivo&quot;, informe o usuário e a senha
+                ONVIF da câmera e/ou uma URL RTSP (campo abaixo). O vídeo é
+                independente do monitoramento SNMP — falha em um nunca afeta o outro.
+              </p>
+              <div className="grid grid-cols-3 gap-3">
+                <Field label="Usuário ONVIF">
+                  <input
+                    value={onvifUsername}
+                    onChange={(e) => setOnvifUsername(e.target.value)}
+                    placeholder="admin"
+                    autoComplete="off"
+                    className={inputCls}
+                  />
+                </Field>
+                <Field label="Senha ONVIF">
+                  <input
+                    type="password"
+                    value={onvifPassword}
+                    onChange={(e) => setOnvifPassword(e.target.value)}
+                    placeholder={camera?.hasOnvifPassword ? '••••• (manter atual)' : 'Senha'}
+                    autoComplete="new-password"
+                    className={inputCls}
+                  />
+                </Field>
+                <Field label="Porta ONVIF">
+                  <input
+                    type="number"
+                    value={onvifPort}
+                    onChange={(e) => setOnvifPort(Number(e.target.value))}
+                    className={inputCls}
+                  />
+                </Field>
+              </div>
+            </div>
 
             {/* Edição: OIDs das métricas de saúde (perfil genérico por padrão) */}
             {camera && (
@@ -1635,426 +2282,6 @@ function ScanModal({
   );
 }
 
-// ─── Diagnóstico SNMP da câmera ──────────────────────────────────────────────
-
-function DiagnoseSnmpModal({
-  camera,
-  onClose,
-  onApplied,
-}: {
-  camera: CameraType;
-  onClose: () => void;
-  onApplied: () => void;
-}) {
-  const [result, setResult] = useState<SnmpDiagnoseOutcome | null>(null);
-  const [progress, setProgress] = useState<SnmpDiagnoseProgress | null>(null);
-  const [selected, setSelected] = useState<Partial<Record<DiagMetric, string>>>({});
-  const [walkOpen, setWalkOpen] = useState(false);
-  const [walkFilter, setWalkFilter] = useState('');
-  const [copiedOid, setCopiedOid] = useState<string | null>(null);
-  const [techOpen, setTechOpen] = useState<Partial<Record<DiagMetric, boolean>>>({});
-  const [applied, setApplied] = useState(false);
-  const diagnoseIdRef = useRef<string | null>(null);
-
-  const diagnose = useMutation({
-    mutationFn: () => {
-      const diagnoseId = crypto.randomUUID();
-      diagnoseIdRef.current = diagnoseId;
-      // Nunca deixar resultado antigo coexistir com o spinner de um novo run.
-      setResult(null);
-      setProgress(null);
-      return diagnoseCameraSnmp(camera.id, diagnoseId);
-    },
-    onSuccess: (outcome) => {
-      setResult(outcome);
-      // Pré-seleciona a sugestão: 1º candidato que respondeu quando o OID
-      // atual não responde (ou não existe).
-      const pre: Partial<Record<DiagMetric, string>> = {};
-      for (const m of outcome.metrics) {
-        // Sem ponto ainda (métrica nova, ex.: RAM total) o backend cria o
-        // ponto ao aplicar — exceto uptime, que sempre existe quando aplicável.
-        if (m.currentResponded || (!m.pointId && m.metric === 'uptime')) continue;
-        const suggestion = m.candidates.find((c) => c.responded && !c.isCurrent);
-        if (suggestion) pre[m.metric] = suggestion.oid;
-      }
-      setSelected(pre);
-    },
-    onSettled: () => {
-      diagnoseIdRef.current = null;
-      setProgress(null);
-    },
-  });
-
-  // Dispara automaticamente ao abrir o modal.
-  const started = useRef(false);
-  useEffect(() => {
-    if (started.current) return;
-    started.current = true;
-    diagnose.mutate();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Sem progresso após alguns segundos → avisa que ainda aguarda o gateway
-  // (em vez de ficar preso em "Iniciando…" sem contexto).
-  const [waitingLong, setWaitingLong] = useState(false);
-  useEffect(() => {
-    if (!diagnose.isPending || progress) {
-      setWaitingLong(false);
-      return;
-    }
-    const handle = setTimeout(() => setWaitingLong(true), 6000);
-    return () => clearTimeout(handle);
-  }, [diagnose.isPending, progress]);
-
-  // Polling do progresso enquanto o diagnóstico roda no gateway.
-  useEffect(() => {
-    if (!diagnose.isPending) return;
-    const interval = setInterval(async () => {
-      const id = diagnoseIdRef.current;
-      if (!id) return;
-      try {
-        const p = await getDiagnoseProgress(id);
-        if (p && diagnoseIdRef.current === id) setProgress(p);
-      } catch {
-        // best-effort — o resultado final chega pela mutation
-      }
-    }, 2000);
-    return () => clearInterval(interval);
-  }, [diagnose.isPending]);
-
-  const apply = useMutation({
-    mutationFn: () => applySnmpOids(camera.id, selected),
-    onSuccess: () => {
-      setApplied(true);
-      onApplied();
-    },
-  });
-
-  const selectedCount = Object.keys(selected).length;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="w-full max-w-2xl rounded-xl border border-border bg-card p-6 shadow-xl space-y-4 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-foreground">
-            Diagnóstico SNMP — {camera.name}
-          </h3>
-          <button type="button" onClick={onClose} className="rounded-md p-1 text-muted-foreground hover:bg-muted">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        <p className="text-xs text-muted-foreground">
-          Testa cada OID cadastrado e os OIDs conhecidos de todos os fabricantes
-          (Hikvision, Dahua, Intelbras, Axis e genérico) direto na câmera
-          {' '}{camera.ip}, via gateway.
-        </p>
-
-        {diagnose.isPending && !result && (
-          <div className="rounded-lg border border-border bg-muted/40 px-3 py-3 text-sm text-muted-foreground space-y-2">
-            <p className="inline-flex items-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              {progress
-                ? progress.phase === 'walk'
-                  ? `Explorando a MIB da câmera… (${progress.tested}/${progress.total} subárvores)`
-                  : `Testando OIDs… ${progress.tested}/${progress.total}`
-                : waitingLong
-                  ? 'Ainda aguardando o gateway responder… ele pode estar ocupado ou lento.'
-                  : 'Iniciando o diagnóstico no gateway…'}
-            </p>
-            {progress && progress.total > 0 && (
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                <div
-                  className="h-full rounded-full bg-primary transition-all"
-                  style={{ width: `${Math.round((progress.tested / progress.total) * 100)}%` }}
-                />
-              </div>
-            )}
-          </div>
-        )}
-
-        {diagnose.error && (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-400 space-y-2">
-            <p>
-              {/em andamento/i.test((diagnose.error as Error).message)
-                ? 'O gateway está ocupado com outro diagnóstico SNMP. Aguarde alguns instantes e tente novamente.'
-                : (diagnose.error as Error).message}
-            </p>
-            <button
-              type="button"
-              onClick={() => diagnose.mutate()}
-              className="rounded-md border border-red-300 px-2.5 py-1 font-medium hover:bg-red-100 dark:border-red-500/40 dark:hover:bg-red-500/20"
-            >
-              Tentar novamente
-            </button>
-          </div>
-        )}
-
-        {result && !result.reachable && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-400">
-            {result.cause === 'community' ? (
-              <>
-                A câmera respondeu com a community padrão <span className="font-mono">public</span>,
-                mas não com a community configurada (
-                <span className="font-mono">{camera.community || '—'}</span>).
-                Corrija a community no cadastro da câmera.
-              </>
-            ) : (
-              <>
-                A câmera não respondeu ao SNMP em nenhuma tentativa (nem ao teste
-                com a community padrão). Verifique se o SNMP está habilitado na
-                câmera, a porta ({camera.port}) e a conectividade de rede a partir
-                do gateway.
-              </>
-            )}
-          </div>
-        )}
-
-        {result && result.reachable && (
-          <>
-            {result.sysDescr && (
-              <p className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground font-mono break-all">
-                {result.sysDescr}
-              </p>
-            )}
-
-            <div className="space-y-3">
-              {result.metrics.map((m) => {
-                const suggestions = m.candidates.filter((c) => c.responded && !c.isCurrent);
-                const hasSuggestions =
-                  suggestions.length > 0 && (!!m.pointId || m.metric !== 'uptime');
-                const friendly = formatDiagValue(m.metric, m.currentValue);
-                const isTechOpen = !!techOpen[m.metric];
-                return (
-                  <div key={m.metric} className="rounded-lg border border-border p-3 space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-baseline gap-2 min-w-0">
-                        <p className="text-sm font-medium text-foreground">{m.label}</p>
-                        {m.currentResponded && friendly !== null && (
-                          <p className="text-base font-semibold text-foreground">{friendly}</p>
-                        )}
-                      </div>
-                      {!m.supported ? (
-                        <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-                          não suportada pela câmera
-                        </span>
-                      ) : m.currentResponded ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400">
-                          <CheckCircle2 className="h-3 w-3" /> Funcionando
-                        </span>
-                      ) : hasSuggestions ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-400">
-                          <ScanSearch className="h-3 w-3" /> Sugestão disponível
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-700 dark:bg-red-500/15 dark:text-red-400">
-                          <XCircle className="h-3 w-3" /> Não funciona
-                        </span>
-                      )}
-                    </div>
-
-                    {!m.currentOid && m.supported && (
-                      <p className="text-xs text-muted-foreground">
-                        Sem OID cadastrado para esta métrica.
-                      </p>
-                    )}
-
-                    {/* Candidatos que responderam (sugestões aplicáveis) */}
-                    {hasSuggestions && (
-                      <div className="space-y-1">
-                        <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
-                          Alternativas que funcionaram
-                        </p>
-                        {suggestions.map((c) => (
-                          <label
-                            key={c.oid}
-                            className="flex items-start gap-2 rounded-md border border-border px-2.5 py-1.5 text-xs cursor-pointer hover:bg-muted/50"
-                          >
-                            <input
-                              type="checkbox"
-                              className="mt-0.5 h-3.5 w-3.5 accent-primary"
-                              checked={selected[m.metric] === c.oid}
-                              onChange={(e) =>
-                                setSelected((prev) => {
-                                  const next = { ...prev };
-                                  if (e.target.checked) next[m.metric] = c.oid;
-                                  else delete next[m.metric];
-                                  return next;
-                                })
-                              }
-                            />
-                            <span className="min-w-0">
-                              <span className="font-medium text-foreground">{c.profileLabel}</span>
-                              <span className="text-muted-foreground">
-                                {' '}— leu{' '}
-                                <span className="font-medium text-foreground">
-                                  {formatDiagValue(m.metric, c.value, c.unit) ?? c.raw ?? '—'}
-                                </span>
-                              </span>
-                            </span>
-                          </label>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Detalhes técnicos (OIDs e valores crus) recolhidos */}
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setTechOpen((prev) => ({ ...prev, [m.metric]: !prev[m.metric] }))
-                      }
-                      className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground hover:text-foreground"
-                    >
-                      {isTechOpen ? (
-                        <ChevronDown className="h-3 w-3" />
-                      ) : (
-                        <ChevronRight className="h-3 w-3" />
-                      )}
-                      Detalhes técnicos
-                    </button>
-                    {isTechOpen && (
-                      <div className="rounded-md bg-muted/40 px-2.5 py-2 text-[11px] text-muted-foreground space-y-1">
-                        {m.currentOid ? (
-                          <p className="break-all">
-                            <span className="font-medium">OID atual:</span>{' '}
-                            <span className="font-mono">{m.currentOid}</span>
-                            {m.currentResponded && (
-                              <>
-                                {' '}
-                                <span className="text-foreground">
-                                  = {m.currentRaw ?? m.currentValue}
-                                </span>
-                              </>
-                            )}
-                          </p>
-                        ) : (
-                          <p>Sem OID cadastrado para esta métrica.</p>
-                        )}
-                        {suggestions.map((c) => (
-                          <p key={c.oid} className="break-all">
-                            <span className="font-medium">{c.profileLabel}:</span>{' '}
-                            <span className="font-mono">{c.oid}</span>{' '}
-                            <span className="text-foreground">= {c.raw ?? c.value}</span>
-                          </p>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Walk resumido (avançado) */}
-            <div className="rounded-lg border border-border">
-              <button
-                type="button"
-                onClick={() => setWalkOpen((v) => !v)}
-                className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium text-foreground hover:bg-muted/50"
-              >
-                {walkOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                Avançado: OIDs expostos pela câmera (walk resumido)
-              </button>
-              {walkOpen && (
-                <div className="border-t border-border px-3 py-2 space-y-3">
-                  {result.walk.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">Nenhuma subárvore respondeu.</p>
-                  ) : (
-                    <input
-                      value={walkFilter}
-                      onChange={(e) => setWalkFilter(e.target.value)}
-                      placeholder="Buscar por OID ou valor…"
-                      className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                    />
-                  )}
-                  <div className="space-y-3 max-h-72 overflow-y-auto">
-                    {result.walk.map((section) => {
-                      const q = walkFilter.trim().toLowerCase();
-                      const entries = q
-                        ? section.entries.filter(
-                            (e) =>
-                              e.oid.toLowerCase().includes(q) ||
-                              e.value.toLowerCase().includes(q),
-                          )
-                        : section.entries;
-                      if (q && entries.length === 0) return null;
-                      return (
-                        <div key={section.root} className="space-y-1">
-                          <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
-                            {section.label}
-                            {section.truncated ? ' (parcial)' : ''} — {entries.length}
-                            {q ? ` de ${section.entries.length}` : ''} OID
-                            {entries.length !== 1 ? 's' : ''}
-                          </p>
-                          {entries.length > 0 && (
-                            <ul className="space-y-0.5 font-mono text-[11px] text-muted-foreground">
-                              {entries.map((e) => (
-                                <li key={e.oid} className="group flex items-start gap-1.5 break-all">
-                                  <span className="min-w-0">
-                                    {e.oid} = {e.value}
-                                  </span>
-                                  <button
-                                    type="button"
-                                    title="Copiar OID"
-                                    onClick={() => {
-                                      void navigator.clipboard?.writeText(e.oid);
-                                      setCopiedOid(e.oid);
-                                      setTimeout(() => setCopiedOid((c) => (c === e.oid ? null : c)), 1500);
-                                    }}
-                                    className="shrink-0 rounded border border-border px-1 text-[10px] text-muted-foreground opacity-0 transition-opacity hover:bg-muted group-hover:opacity-100"
-                                  >
-                                    {copiedOid === e.oid ? 'copiado' : 'copiar'}
-                                  </button>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-          </>
-        )}
-
-        {apply.error && (
-          <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-400">
-            {(apply.error as Error).message}
-          </p>
-        )}
-        {applied && (
-          <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-400">
-            OIDs aplicados — o gateway já recebeu a nova configuração.
-          </p>
-        )}
-
-        <div className="flex justify-end gap-2 pt-1">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted"
-          >
-            Fechar
-          </button>
-          {result?.reachable && (
-            <button
-              type="button"
-              disabled={selectedCount === 0 || apply.isPending}
-              onClick={() => { setApplied(false); apply.mutate(); }}
-              className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-            >
-              {apply.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-              Aplicar sugest{selectedCount === 1 ? 'ão' : 'ões'}
-              {selectedCount > 0 ? ` (${selectedCount})` : ''}
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ─── Detalhe de telemetria da câmera ─────────────────────────────────────────
 
 /**
@@ -2062,16 +2289,288 @@ function DiagnoseSnmpModal({
  * última leitura. Atualiza em tempo real via socket (fallback: último valor
  * persistido no backend). Visível para qualquer perfil de usuário.
  */
+// ─── MonitoringProfilePanel ───────────────────────────────────────────────────
+
+/** Ícone e cor por estado de capacidade. */
+const CAPABILITY_STATE_ICON: Record<
+  string,
+  { icon: React.ReactNode; label: string; cls: string }
+> = {
+  SUPPORTED: {
+    icon: <CircleCheck className="h-3.5 w-3.5" />,
+    label: 'Suportada',
+    cls: 'text-emerald-600 dark:text-emerald-400',
+  },
+  UNSUPPORTED: {
+    icon: <CircleOff className="h-3.5 w-3.5" />,
+    label: 'Não suportada',
+    cls: 'text-muted-foreground',
+  },
+  NO_PERMISSION: {
+    icon: <CircleAlert className="h-3.5 w-3.5" />,
+    label: 'Sem permissão SNMP',
+    cls: 'text-orange-500',
+  },
+  TEMPORARY_ERROR: {
+    icon: <CircleAlert className="h-3.5 w-3.5" />,
+    label: 'Erro temporário',
+    cls: 'text-amber-500',
+  },
+};
+
+const METRIC_LABELS: Record<string, string> = {
+  cpu: 'CPU',
+  memory: 'Memória',
+  ram_total: 'RAM Total',
+  storage: 'Armazenamento',
+  temperature: 'Temperatura',
+  packet_loss: 'Perda de pacotes',
+  uptime: 'Tempo ligado',
+  status: 'Status',
+  stream: 'Stream',
+  motion: 'Movimento',
+  tamper: 'Adulteração',
+  video_loss: 'Perda de vídeo',
+  latency: 'Latência',
+  last_motion: 'Último movimento',
+  ping_loss: 'Perda de ping',
+};
+
+const PROFILE_SOURCE_LABELS: Record<string, string> = {
+  detected: 'Detectado',
+  manual: 'Manual',
+  generic: 'Genérico',
+};
+
+const PROFILE_SOURCE_CLS: Record<string, string> = {
+  detected:
+    'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-800',
+  manual:
+    'bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950/40 dark:text-violet-300 dark:border-violet-800',
+  generic:
+    'bg-muted text-muted-foreground border-border',
+};
+
+/**
+ * Secção colapsável "Perfil de monitoramento" dentro do CameraTelemetryModal.
+ * Só visível para ADMIN/CCO. Permite:
+ *   – Ver o perfil detectado / manual / genérico
+ *   – Selecionar um perfil manualmente
+ *   – Executar o probe de capacidades
+ *   – Ver o mapa de capacidades por métrica
+ */
+function MonitoringProfilePanel({
+  camera,
+  isAdmin,
+}: {
+  camera: CameraType;
+  isAdmin: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  const [probing, setProbing] = useState(false);
+  const [probeError, setProbeError] = useState<string | null>(null);
+  const [savingProfile, setSavingProfile] = useState(false);
+
+  const capQuery = useQuery({
+    queryKey: ['camera-capabilities', camera.id],
+    queryFn: () => getCameraCapabilities(camera.id),
+    enabled: open,
+    staleTime: 30_000,
+  });
+
+  const profilesQuery = useQuery({
+    queryKey: ['monitoring-profiles', 'CAMERA'],
+    queryFn: () => getMonitoringProfiles('CAMERA'),
+    staleTime: 5 * 60_000,
+  });
+
+  const cap = capQuery.data;
+  const profiles: MonitoringProfile[] = profilesQuery.data ?? [];
+
+  // Perfil exibido: usa a resposta de capabilities quando disponível,
+  // caso contrário cai no que veio no objeto Camera.
+  const profileId = cap?.profileId ?? camera.profileId ?? null;
+  const profileLabel = cap?.profileLabel ?? camera.profileLabel ?? t('Genérico');
+  const profileSource = cap?.profileSource ?? camera.profileSource ?? 'generic';
+
+  async function handleProbe() {
+    setProbing(true);
+    setProbeError(null);
+    try {
+      await probeCameraCapabilities(camera.id);
+      await capQuery.refetch();
+      queryClient.invalidateQueries({ queryKey: ['cftv-cameras'] });
+    } catch (err) {
+      setProbeError((err as Error).message);
+    } finally {
+      setProbing(false);
+    }
+  }
+
+  async function handleProfileChange(newProfileId: string) {
+    setSavingProfile(true);
+    try {
+      await updateCamera(camera.id, {
+        profileId: newProfileId === '' ? null : newProfileId,
+      });
+      await capQuery.refetch();
+      queryClient.invalidateQueries({ queryKey: ['cftv-cameras'] });
+    } finally {
+      setSavingProfile(false);
+    }
+  }
+
+  // Câmeras ONVIF sem canal SNMP não têm OIDs para sondar.
+  const isSnmp = camera.protocol === 'snmp' ||
+    (camera.protocol === 'onvif' && camera.snmpHealth?.enabled === true);
+
+  if (!isAdmin) return null;
+
+  return (
+    <div className="rounded-lg border border-border">
+      {/* Cabeçalho colapsável */}
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground"
+      >
+        <span className="flex items-center gap-1.5">
+          <Radar className="h-3.5 w-3.5" />
+          {t('Perfil de monitoramento')}
+        </span>
+        <span className="flex items-center gap-2">
+          {/* Badge de perfil/fonte visível mesmo colapsado */}
+          <span
+            className={[
+              'rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-none',
+              PROFILE_SOURCE_CLS[profileSource] ?? PROFILE_SOURCE_CLS.generic,
+            ].join(' ')}
+          >
+            {PROFILE_SOURCE_LABELS[profileSource] ?? profileSource}
+          </span>
+          <span className="text-xs font-normal text-foreground">{profileLabel}</span>
+          {open ? (
+            <ChevronDown className="h-3.5 w-3.5" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5" />
+          )}
+        </span>
+      </button>
+
+      {open && (
+        <div className="border-t border-border px-3 pb-3 pt-2 space-y-3">
+          {/* Dropdown de seleção manual + botão de probe */}
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={profileId ?? ''}
+              disabled={savingProfile}
+              onChange={(e) => handleProfileChange(e.target.value)}
+              className="flex-1 min-w-0 rounded border border-border bg-background px-2 py-1 text-xs text-foreground"
+            >
+              <option value="">{t('Usar detecção automática')}</option>
+              {profiles.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+            {isSnmp && (
+              <button
+                type="button"
+                onClick={handleProbe}
+                disabled={probing || savingProfile}
+                className="flex shrink-0 items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs text-foreground hover:bg-muted disabled:opacity-50"
+              >
+                {probing ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Radar className="h-3 w-3" />
+                )}
+                {probing ? t('Identificando…') : t('Identificar perfil')}
+              </button>
+            )}
+          </div>
+
+          {/* Erro do probe */}
+          {probeError && (
+            <p className="rounded bg-destructive/10 px-2 py-1 text-xs text-destructive">
+              {t('Probe falhou')}: {probeError}
+            </p>
+          )}
+
+          {/* Tabela de capacidades */}
+          {capQuery.isLoading && (
+            <div className="flex items-center justify-center py-3">
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            </div>
+          )}
+          {cap && cap.capabilities.length > 0 && (
+            <div className="overflow-hidden rounded border border-border">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border bg-muted/50">
+                    <th className="px-2 py-1 text-left text-[10px] font-medium text-muted-foreground">
+                      {t('Capacidades')}
+                    </th>
+                    <th className="px-2 py-1 text-right text-[10px] font-medium text-muted-foreground">
+                      Estado
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {cap.capabilities
+                    // Mostra apenas as métricas relevantes para o protocolo
+                    .filter((c) =>
+                      isSnmp
+                        ? ['cpu', 'memory', 'ram_total', 'storage', 'temperature', 'packet_loss', 'uptime'].includes(c.metricKey)
+                        : ['status', 'stream', 'motion', 'tamper', 'video_loss'].includes(c.metricKey),
+                    )
+                    .map((c) => {
+                      const meta = CAPABILITY_STATE_ICON[c.state] ?? CAPABILITY_STATE_ICON.TEMPORARY_ERROR;
+                      return (
+                        <tr key={c.metricKey} className="hover:bg-muted/30">
+                          <td className="px-2 py-1 text-foreground">
+                            {METRIC_LABELS[c.metricKey] ?? c.metricKey}
+                          </td>
+                          <td className={['px-2 py-1 text-right flex items-center justify-end gap-1', meta.cls].join(' ')}>
+                            {meta.icon}
+                            <span>{t(meta.label)}</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {cap && cap.capabilities.length === 0 && !capQuery.isLoading && (
+            <p className="text-center text-xs text-muted-foreground py-2">
+              Nenhum dado de probe — clique em &quot;{t('Identificar perfil')}&quot; para iniciar.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 function CameraTelemetryModal({
   camera,
   live,
   showIp,
+  isAdmin,
   onClose,
 }: {
   camera: CameraType;
   live: TelemetryMap;
   /** IP:porta é informação de rede — só perfis administrativos veem. */
   showIp: boolean;
+  isAdmin: boolean;
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
@@ -2198,6 +2697,9 @@ function CameraTelemetryModal({
             );
           })}
         </ul>
+
+        {/* Secção "Perfil de monitoramento" — só para ADMIN/CCO */}
+        <MonitoringProfilePanel camera={camera} isAdmin={isAdmin} />
       </div>
     </div>
   );

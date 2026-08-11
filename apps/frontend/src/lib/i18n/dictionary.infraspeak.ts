@@ -4,6 +4,8 @@ export const DICT_INFRASPEAK: Record<string, string> = {
   'Chamados (Infraspeak)': 'Requests (Infraspeak)',
   'Chamados de manutenção sincronizados da Infraspeak':
     'Maintenance requests synced from Infraspeak',
+  'Não foi possível identificar o cliente deste local na Infraspeak. Por segurança, apenas os tipos de problema disponíveis a todos os clientes são exibidos.':
+    'The client for this location could not be identified in Infraspeak. For safety, only problem types available to all clients are shown.',
   'Em aberto': 'Open',
   'SLA vencido': 'SLA overdue',
   'Concluídos': 'Completed',

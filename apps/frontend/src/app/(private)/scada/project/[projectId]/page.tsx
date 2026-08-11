@@ -1,6 +1,6 @@
 import ScadaProjectPage from '@/modules/scada/pages/scada-project.page';
 
-export const metadata = { title: 'Projeto SCADA — BlueBee IoT' };
+export const metadata = { title: 'Projeto SCADA — Beeldings' };
 
 interface Props {
   params: Promise<{ projectId: string }>;

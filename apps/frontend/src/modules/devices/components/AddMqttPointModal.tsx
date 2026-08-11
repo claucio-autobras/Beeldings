@@ -39,6 +39,8 @@ export default function AddMqttPointModal({ deviceId, tenantId, gatewayId, open,
   const rootTopicParam = topicPrefix && !topicPrefix.startsWith('bluebee/')
     ? topicPrefix.replace(/\/+$/, '')
     : undefined;
+  // Rótulo do prefixo nos campos de sub-tópico: raiz do equipamento ou namespace do gateway.
+  const prefixLabel = rootTopicParam ? `${rootTopicParam}/` : '…/sensors/';
   const isEdit = !!point;
   // Remove o prefixo do namespace para exibir/editar só o sub-tópico.
   const stripPrefixInit = (full: string | null | undefined) =>
@@ -57,6 +59,7 @@ export default function AddMqttPointModal({ deviceId, tenantId, gatewayId, open,
   const [commandTopic, setCommandTopic] = useState(stripPrefixInit(point?.write?.commandTopic));
   const [payloadTemplate, setPayloadTemplate] = useState(point?.write?.payloadTemplate ?? '');
   const [responseTopic, setResponseTopic] = useState(stripPrefixInit(point?.write?.responseTopic));
+  const [matchByValue, setMatchByValue] = useState(point?.write?.matchByValue ?? false);
 
   // Captura de amostra — mesmo fluxo do cadastro de dispositivo
   const [sampling, setSampling] = useState(false);
@@ -69,7 +72,7 @@ export default function AddMqttPointModal({ deviceId, tenantId, gatewayId, open,
 
   function resetAndClose() {
     setTag(''); setDisplayName(''); setSourceTopic(''); setJsonPath(''); setValueType('number'); setUnit('');
-    setWriteEnabled(false); setCommandTopic(''); setPayloadTemplate(''); setResponseTopic('');
+    setWriteEnabled(false); setCommandTopic(''); setPayloadTemplate(''); setResponseTopic(''); setMatchByValue(false);
     setErrorMsg('');
     setSampling(false); setSamples([]); setSampleError('');
     onClose();
@@ -80,9 +83,33 @@ export default function AddMqttPointModal({ deviceId, tenantId, gatewayId, open,
     const base = sourceTopic.trim().split('/')[0] || 'shelly1';
     setCommandTopic(`${base}/rpc`);
     setResponseTopic(`${base}/resp/rpc`);
+    setMatchByValue(false);
     setPayloadTemplate(
       `{"id":{{id}},"src":"${topicPrefix}${base}/resp","method":"Switch.Set","params":{"id":0,"on":{{value}}}}`,
     );
+  }
+
+  /**
+   * Preenche os campos de comando com o canal OFICIAL de comando Aeris (set/),
+   * informado pelo fabricante: `{serial}/set/split/0/force1` (0/1) e
+   * `{serial}/set/split/0/sp1` (18–27), com o VALOR PURO como payload — sem
+   * envelope JSON, sem `ts` e sem a assinatura proprietária `sh` (que só o
+   * canal legado config/ exige).
+   * A confirmação vem pelo eco real do equipamento, casada por valor:
+   * force1 → `update/sensor/POWER1`; sp1 → `config/split/0/sp_val1`.
+   */
+  function applyAerisPreset(kind: 'force' | 'sp') {
+    // Extrai o serial (primeiro segmento do sourceTopic) ex.: "008065"
+    const parts = sourceTopic.trim().split('/');
+    const serial = parts[0] || '008065';
+    setCommandTopic(`${serial}/set/split/0/${kind === 'force' ? 'force1' : 'sp1'}`);
+    setResponseTopic(
+      kind === 'force'
+        ? `${serial}/update/sensor/POWER1`
+        : `${serial}/config/split/0/sp_val1`,
+    );
+    setMatchByValue(true);
+    setPayloadTemplate('{{value}}');
   }
 
   async function handleSample() {
@@ -135,15 +162,18 @@ export default function AddMqttPointModal({ deviceId, tenantId, gatewayId, open,
     if (!formValid) return;
     setSaving(true);
     setErrorMsg('');
+    const buildWrite = () =>
+      writeEnabled && commandTopic.trim()
+        ? {
+            commandTopic: topicPrefix + commandTopic.trim(),
+            payloadTemplate: payloadTemplate.trim(),
+            responseTopic: responseTopic.trim() ? topicPrefix + responseTopic.trim() : null,
+            matchByValue: matchByValue || undefined,
+          }
+        : null;
     if (isEdit && point) {
       try {
-        const write = writeEnabled && commandTopic.trim()
-          ? {
-              commandTopic: topicPrefix + commandTopic.trim(),
-              payloadTemplate: payloadTemplate.trim(),
-              responseTopic: responseTopic.trim() ? topicPrefix + responseTopic.trim() : null,
-            }
-          : null;
+        const write = buildWrite();
         await updateMqttPoint(deviceId, point.id, {
           tag: tag.trim(),
           objectName: displayName.trim() || tag.trim(),
@@ -179,13 +209,7 @@ export default function AddMqttPointModal({ deviceId, tenantId, gatewayId, open,
         jsonPath: jsonPath.trim(),
         valueType,
         unit: unit.trim(),
-        write: writeEnabled && commandTopic.trim()
-          ? {
-              commandTopic: topicPrefix + commandTopic.trim(),
-              payloadTemplate: payloadTemplate.trim(),
-              responseTopic: responseTopic.trim() ? topicPrefix + responseTopic.trim() : null,
-            }
-          : null,
+        write: buildWrite(),
       });
       onAdded(device);
       resetAndClose();
@@ -212,7 +236,7 @@ export default function AddMqttPointModal({ deviceId, tenantId, gatewayId, open,
         <div className="flex-1 px-5 py-4 overflow-y-auto">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="sm:col-span-2">
-              <label className={labelCls}>Sub-tópico (sob …/sensors/) <span className="text-red-500">*</span></label>
+              <label className={labelCls}>Sub-tópico (sob {prefixLabel}) <span className="text-red-500">*</span></label>
               <div className="flex items-center gap-2">
                 <input className={`${inputCls} font-mono flex-1`} placeholder="sala/temp" value={sourceTopic} onChange={(e) => setSourceTopic(e.target.value)} />
                 <button
@@ -299,18 +323,39 @@ export default function AddMqttPointModal({ deviceId, tenantId, gatewayId, open,
             {writeEnabled && (
               <>
                 <p className="text-[11px] text-muted-foreground">
-                  Permite enviar comandos ao equipamento pelo SCADA (ex.: ligar/desligar um relé).
-                  O payload usa <span className="font-mono">{'{{value}}'}</span> (valor enviado) e opcionalmente <span className="font-mono">{'{{id}}'}</span> (id RPC para casar a confirmação).
+                  Permite enviar comandos ao equipamento pelo SCADA.
+                  Placeholders no payload: <span className="font-mono">{'{{value}}'}</span> (valor enviado),{' '}
+                  <span className="font-mono">{'{{id}}'}</span> (id RPC — Shelly),{' '}
+                  <span className="font-mono">{'{{ts}}'}</span> (epoch UNIX em segundos, gerado automaticamente).
+                  Payload contendo apenas <span className="font-mono">{'{{value}}'}</span> publica o valor puro, sem JSON (liga/desliga vira 0/1 — padrão Aeris set/).
                 </p>
-                <button
-                  type="button"
-                  onClick={applyShellyPreset}
-                  className="h-7 px-2.5 text-[11px] rounded border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100 transition-colors"
-                >
-                  Usar padrão Shelly Gen4 (Switch.Set)
-                </button>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={applyShellyPreset}
+                    className="h-7 px-2.5 text-[11px] rounded border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100 transition-colors"
+                  >
+                    Padrão Shelly Gen4 (Switch.Set)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyAerisPreset('force')}
+                    className="h-7 px-2.5 text-[11px] rounded border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100 transition-colors"
+                    title="Canal oficial de comando Aeris (set/): publica 0 ou 1 puro em {serial}/set/split/0/force1, com confirmação pelo eco em update/sensor/POWER1."
+                  >
+                    Aeris — force1 (liga/desliga)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => applyAerisPreset('sp')}
+                    className="h-7 px-2.5 text-[11px] rounded border border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100 transition-colors"
+                    title="Canal oficial de comando Aeris (set/): publica o setpoint puro (18–27) em {serial}/set/split/0/sp1, com confirmação pelo eco em config/split/0/sp_val1."
+                  >
+                    Aeris — setpoint (sp1)
+                  </button>
+                </div>
                 <div>
-                  <label className={labelCls}>Sub-tópico de comando (sob …/sensors/) <span className="text-red-500">*</span></label>
+                  <label className={labelCls}>Sub-tópico de comando (sob {prefixLabel}) <span className="text-red-500">*</span></label>
                   <input className={`${inputCls} font-mono`} placeholder="shelly1/rpc" value={commandTopic} onChange={(e) => setCommandTopic(e.target.value)} />
                   {topicPrefix && commandTopic.trim() && (
                     <p className="text-[11px] text-muted-foreground mt-1">Tópico completo: <span className="font-mono break-all">{topicPrefix}{commandTopic.trim()}</span></p>
@@ -327,12 +372,33 @@ export default function AddMqttPointModal({ deviceId, tenantId, gatewayId, open,
                   {writeEnabled && payloadTemplate.trim() && !payloadTemplate.includes('{{value}}') && (
                     <p className="text-[11px] text-amber-700 mt-1">O payload precisa conter o placeholder {'{{value}}'}.</p>
                   )}
+                  {payloadTemplate.includes('{{sh}}') && (
+                    <div className="mt-1 rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800">
+                      <strong>⚠ Campo {'{{sh}}'} pendente:</strong> &quot;sh&quot; é uma assinatura proprietária do canal legado <span className="font-mono">config/</span> do Aeris, cujo algoritmo não foi documentado — o firmware descartará este comando.
+                      Para Aeris, use os presets acima: o canal oficial <span className="font-mono">set/</span> do fabricante aceita o valor puro e não exige assinatura.
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className={labelCls}>Sub-tópico de confirmação (opcional)</label>
                   <input className={`${inputCls} font-mono`} placeholder="shelly1/resp/rpc" value={responseTopic} onChange={(e) => setResponseTopic(e.target.value)} />
+                  {responseTopic.trim() && (
+                    <label className="flex items-center gap-2 mt-1.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="h-3 w-3 accent-amber-600"
+                        checked={matchByValue}
+                        onChange={(e) => setMatchByValue(e.target.checked)}
+                      />
+                      <span className="text-[11px] text-muted-foreground">
+                        Confirmar pelo valor no eco (Aeris sp_val1) em vez do campo <span className="font-mono">id</span> RPC
+                      </span>
+                    </label>
+                  )}
                   <p className="text-[11px] text-muted-foreground mt-1">
-                    Se preenchido, o gateway aguarda a resposta RPC neste tópico para confirmar o comando. Sem ele, o comando é reportado apenas como &quot;enviado&quot;.
+                    {matchByValue && responseTopic.trim()
+                      ? 'O gateway confirmará o comando quando o equipamento publicar o novo valor neste tópico (ex.: sp_val1 ≈ valor comandado).'
+                      : 'Se preenchido, o gateway aguarda a resposta RPC neste tópico para confirmar o comando. Sem ele, o comando é reportado apenas como "enviado".'}
                   </p>
                 </div>
               </>

@@ -24,10 +24,21 @@ import { CurrentUser } from './presentation/decorators/current-user.decorator.js
 import type { AuthenticatedUser, LoginResult } from './domain/interfaces/auth.interface.js';
 import { UserRole } from './domain/interfaces/auth.interface.js';
 import { setSessionCookie, clearSessionCookie } from './session-cookie.js';
+import { TurnstileService } from './application/use-cases/turnstile.service.js';
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly turnstile: TurnstileService,
+  ) {}
+
+  // GET /auth/turnstile-config — pública: o frontend consulta a site key (que
+  // é pública por definição) para decidir se renderiza o widget anti-robô.
+  @Get('turnstile-config')
+  turnstileConfig(): { siteKey: string | null } {
+    return { siteKey: this.turnstile.isEnabled() ? this.turnstile.getSiteKey() : null };
+  }
 
   // POST /auth/login — limite estrito por IP contra força bruta (o guard
   // global usa um teto generoso; aqui o decorator sobrescreve para 10/min).

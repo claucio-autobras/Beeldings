@@ -46,8 +46,8 @@ function Feedback({ type, message }: { type: 'success' | 'error'; message: strin
       className={[
         'flex items-start gap-2 rounded-lg border px-3 py-2 text-sm',
         ok
-          ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-          : 'border-red-200 bg-red-50 text-red-700',
+          ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
+          : 'border-red-200 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300',
       ].join(' ')}
     >
       <Icon className="h-4 w-4 shrink-0 mt-0.5" />
@@ -68,7 +68,7 @@ function Field({ label, icon: Icon, children }: FieldProps) {
   return (
     <label className="block space-y-1.5">
       <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-        <Icon className="h-3.5 w-3.5 text-cyan-600" />
+        <Icon className="h-3.5 w-3.5 text-cyan-600 dark:text-cyan-400" />
         {label}
       </span>
       {children}
@@ -187,20 +187,22 @@ export default function AccountPage() {
   return (
     <div className="space-y-6 max-w-2xl">
       {/* Header */}
-      <div>
-        <h1 className="flex items-center gap-2 text-xl font-semibold text-foreground">
-          <User className="h-5 w-5 text-cyan-600" />
-          Minha Conta
-        </h1>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          Gerencie os dados do seu perfil e a sua senha de acesso
-        </p>
-      </div>
+      <header className="flex items-center gap-3">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-cyan-500/10">
+          <User className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
+        </div>
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight text-foreground">Minha Conta</h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            Gerencie os dados do seu perfil e a sua senha de acesso
+          </p>
+        </div>
+      </header>
 
       {/* Cartão de identidade */}
-      <section className="border border-border rounded-xl overflow-hidden">
+      <section className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
         <div className="flex items-center gap-3 bg-muted/30 border-b border-border px-4 py-3">
-          <div className="h-10 w-10 rounded-full bg-cyan-600 flex items-center justify-center shrink-0 text-sm font-semibold text-white">
+          <div className="h-10 w-10 rounded-full bg-cyan-600 flex items-center justify-center shrink-0 text-sm font-semibold text-white shadow-sm">
             {currentUser.initials}
           </div>
           <div className="min-w-0">
@@ -211,22 +213,25 @@ export default function AccountPage() {
               {profile?.email ?? currentUser.email}
             </p>
           </div>
-          <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full border bg-cyan-100 text-cyan-700 border-cyan-200">
+          <span className="ml-auto inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full border border-cyan-200 bg-cyan-50 text-cyan-700 dark:border-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-300">
             <ShieldCheck className="h-3 w-3" />
             {ROLE_LABELS[role] ?? role}
           </span>
         </div>
         {currentUser.tenantName && (
           <div className="flex items-center gap-2.5 px-4 py-3 text-sm text-muted-foreground">
-            <Building2 className="h-4 w-4 text-cyan-600 shrink-0" />
+            <Building2 className="h-4 w-4 text-cyan-600 dark:text-cyan-400 shrink-0" />
             Cliente / Site: <span className="font-medium text-foreground">{currentUser.tenantName}</span>
           </div>
         )}
       </section>
 
       {/* Dados do perfil */}
-      <section className="border border-border rounded-xl p-5 space-y-4">
-        <h3 className="text-sm font-semibold text-foreground">Dados do perfil</h3>
+      <section className="rounded-xl border border-border bg-card p-5 shadow-sm space-y-4">
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <User className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />
+          Dados do perfil
+        </h3>
         {isLoading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" /> Carregando…
@@ -258,7 +263,7 @@ export default function AccountPage() {
               <button
                 type="submit"
                 disabled={profileMutation.isPending || !profileDirty}
-                className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-cyan-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-cyan-700 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {profileMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
                 Salvar alterações
@@ -269,9 +274,9 @@ export default function AccountPage() {
       </section>
 
       {/* Alterar senha */}
-      <section className="border border-border rounded-xl p-5 space-y-4">
+      <section className="rounded-xl border border-border bg-card p-5 shadow-sm space-y-4">
         <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-          <Lock className="h-4 w-4 text-cyan-600" />
+          <Lock className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />
           Alterar senha
         </h3>
         <form onSubmit={handlePasswordSubmit} className="space-y-4">
@@ -316,7 +321,7 @@ export default function AccountPage() {
                 !newPassword ||
                 !confirmPassword
               }
-              className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-cyan-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex items-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-cyan-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {passwordMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
               Alterar senha

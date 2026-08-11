@@ -46,7 +46,7 @@ function Toggle({
       aria-label={label}
       onClick={() => onChange(!checked)}
       className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
-        checked ? 'bg-cyan-600' : 'bg-slate-300'
+        checked ? 'bg-cyan-600' : 'bg-slate-300 dark:bg-slate-600'
       }`}
     >
       <span
@@ -131,35 +131,39 @@ export default function PreferencesPage() {
   return (
     <div className="space-y-6 max-w-2xl">
       {/* Header */}
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="flex items-center gap-2 text-xl font-semibold text-foreground">
-            <Settings className="h-5 w-5 text-cyan-600" />
-            {t('Configurações da conta')}
-          </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            {t('Preferências pessoais de aparência, notificações e idioma')}
-          </p>
+      <header className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-cyan-500/10">
+            <Settings className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
+          </div>
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight text-foreground">
+              {t('Configurações da conta')}
+            </h1>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              {t('Preferências pessoais de aparência, notificações e idioma')}
+            </p>
+          </div>
         </div>
         {feedback === 'saved' && (
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300">
             <CheckCircle2 className="h-3.5 w-3.5" />
             {t('Salvo')}
           </span>
         )}
         {feedback === 'error' && (
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
             <AlertCircle className="h-3.5 w-3.5" />
             {t('Não foi possível salvar')}
           </span>
         )}
-      </div>
+      </header>
 
       {/* ── Aparência ── */}
-      <section className="border border-border rounded-xl overflow-hidden">
+      <section className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
         <div className="border-b border-border bg-muted/30 px-4 py-3">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            <Sun className="h-4 w-4 text-cyan-600" />
+            <Sun className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />
             {t('Aparência')}
           </h2>
           <p className="text-xs text-muted-foreground mt-0.5">{t('Tema da interface em todo o aplicativo')}</p>
@@ -176,12 +180,20 @@ export default function PreferencesPage() {
                 aria-pressed={active}
                 className={`flex flex-col items-start gap-2 rounded-xl border p-3.5 text-left transition-colors ${
                   active
-                    ? 'border-cyan-500 bg-cyan-50 ring-1 ring-cyan-500'
+                    ? 'border-cyan-500 bg-cyan-50 ring-1 ring-cyan-500 dark:bg-cyan-950/40'
                     : 'border-border hover:bg-muted/40'
                 }`}
               >
-                <Icon size={18} strokeWidth={1.5} className={active ? 'text-cyan-600' : 'text-muted-foreground'} />
-                <span className={`text-sm font-medium ${active ? 'text-cyan-700' : 'text-foreground'}`}>
+                <Icon
+                  size={18}
+                  strokeWidth={1.5}
+                  className={active ? 'text-cyan-600 dark:text-cyan-400' : 'text-muted-foreground'}
+                />
+                <span
+                  className={`text-sm font-medium ${
+                    active ? 'text-cyan-700 dark:text-cyan-300' : 'text-foreground'
+                  }`}
+                >
                   {t(opt.label)}
                 </span>
                 <span className="text-[11px] leading-snug text-muted-foreground">{t(opt.description)}</span>
@@ -192,10 +204,10 @@ export default function PreferencesPage() {
       </section>
 
       {/* ── Notificações ── */}
-      <section className="border border-border rounded-xl overflow-hidden">
+      <section className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
         <div className="border-b border-border bg-muted/30 px-4 py-3">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            <Bell className="h-4 w-4 text-cyan-600" />
+            <Bell className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />
             {t('Notificações')}
           </h2>
           <p className="text-xs text-muted-foreground mt-0.5">{t('O que aparece no sino de notificações')}</p>
@@ -246,11 +258,15 @@ export default function PreferencesPage() {
                     aria-pressed={active}
                     className={`rounded-lg border px-3 py-2 text-left transition-colors ${
                       active
-                        ? 'border-cyan-500 bg-cyan-50 ring-1 ring-cyan-500'
+                        ? 'border-cyan-500 bg-cyan-50 ring-1 ring-cyan-500 dark:bg-cyan-950/40'
                         : 'border-border hover:bg-muted/40'
                     }`}
                   >
-                    <span className={`block text-xs font-semibold ${active ? 'text-cyan-700' : 'text-foreground'}`}>
+                    <span
+                      className={`block text-xs font-semibold ${
+                        active ? 'text-cyan-700 dark:text-cyan-300' : 'text-foreground'
+                      }`}
+                    >
                       {t(opt.label)}
                     </span>
                     <span className="block text-[11px] text-muted-foreground mt-0.5">{t(opt.hint)}</span>
@@ -272,10 +288,10 @@ export default function PreferencesPage() {
       </section>
 
       {/* ── Sessão ── */}
-      <section className="border border-border rounded-xl overflow-hidden">
+      <section className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
         <div className="border-b border-border bg-muted/30 px-4 py-3">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            <Timer className="h-4 w-4 text-cyan-600" />
+            <Timer className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />
             {t('Sessão')}
           </h2>
           <p className="text-xs text-muted-foreground mt-0.5">
@@ -296,7 +312,7 @@ export default function PreferencesPage() {
                   aria-pressed={active}
                   className={`rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
                     active
-                      ? 'border-cyan-500 bg-cyan-50 font-medium text-cyan-700 ring-1 ring-cyan-500'
+                      ? 'border-cyan-500 bg-cyan-50 font-medium text-cyan-700 ring-1 ring-cyan-500 dark:bg-cyan-950/40 dark:text-cyan-300'
                       : 'border-border text-foreground hover:bg-muted/40'
                   }`}
                 >
@@ -314,10 +330,10 @@ export default function PreferencesPage() {
       </section>
 
       {/* ── Idioma ── */}
-      <section className="border border-border rounded-xl overflow-hidden">
+      <section className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
         <div className="border-b border-border bg-muted/30 px-4 py-3">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            <Globe className="h-4 w-4 text-cyan-600" />
+            <Globe className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />
             {t('Idioma')}
           </h2>
           <p className="text-xs text-muted-foreground mt-0.5">{t('Idioma preferido da interface')}</p>
@@ -334,12 +350,12 @@ export default function PreferencesPage() {
                   aria-pressed={active}
                   className={`flex items-center justify-between rounded-lg border px-3.5 py-2.5 text-sm transition-colors ${
                     active
-                      ? 'border-cyan-500 bg-cyan-50 font-medium text-cyan-700 ring-1 ring-cyan-500'
+                      ? 'border-cyan-500 bg-cyan-50 font-medium text-cyan-700 ring-1 ring-cyan-500 dark:bg-cyan-950/40 dark:text-cyan-300'
                       : 'border-border text-foreground hover:bg-muted/40'
                   }`}
                 >
                   {opt.label}
-                  {active && <span className="h-1.5 w-1.5 rounded-full bg-cyan-600" />}
+                  {active && <span className="h-1.5 w-1.5 rounded-full bg-cyan-600 dark:bg-cyan-400" />}
                 </button>
               );
             })}

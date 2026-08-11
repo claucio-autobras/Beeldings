@@ -1,4 +1,4 @@
-import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InfraspeakClient, InfraspeakQuery } from '../infrastructure/infraspeak.client.js';
 
@@ -59,6 +59,67 @@ export interface InfraspeakRequestItem {
   confirmed: boolean | null;
   /** Payload original íntegro, para não perder nenhum campo. */
   raw: InfraspeakFailureRaw;
+}
+
+/**
+ * Entrada para criação de chamado (failure) na Infraspeak.
+ * Contrato confirmado contra o sandbox em 31/07/2026 — ver
+ * `docs/infraspeak-requirements-api.md`, secção "Criação de chamados".
+ */
+export interface CreateInfraspeakRequestInput {
+  /** ID de um problem FOLHA (problem_type). Áreas (problem_area) são recusadas pela API. */
+  problemId: number;
+  /** Local onde o problema ocorre (obrigatório quando não há elementId). */
+  localId?: number;
+  /** Elemento/ativo (alternativa ao localId). */
+  elementId?: number;
+  /** Descrição livre do problema. */
+  description: string;
+  /** Prioridade 1–4 (2 = NORMAL). */
+  priority?: number;
+}
+
+/** Opção de problem (tipo de chamado) para o formulário. */
+export interface InfraspeakProblemOption {
+  id: number;
+  name: string;
+  fullName: string;
+  /** Área (grupo) a que pertence. */
+  areaId: number | null;
+  areaName: string | null;
+  /**
+   * true = problema disponível para qualquer cliente (all_clients=true na API).
+   * false = problema restrito aos clientes em `clientIds`.
+   *
+   * Confirmado no sandbox (05/08/2026): problem_area com all_clients=false
+   * só pode ser usado em failures de clientes na sua lista. A criação com
+   * problema fora do escopo retorna 400 "O tipo de chamado deve existir".
+   */
+  allClients: boolean;
+  /**
+   * IDs dos clientes Infraspeak que têm acesso quando allClients=false.
+   * Vazio quando allClients=true.
+   */
+  clientIds: number[];
+}
+
+/** Opção de local para o formulário. */
+export interface InfraspeakLocalOption {
+  id: number;
+  name: string;
+  fullName: string;
+  /**
+   * client_id do prédio (building) ao qual este local pertence.
+   * Resolvido via root_parent_id → building.client_id.
+   * null quando o local é um prédio-raiz sem client_id ou o prédio não foi encontrado.
+   */
+  clientId: number | null;
+}
+
+/** Dados de apoio para o formulário de abertura de chamado. */
+export interface InfraspeakFormOptions {
+  problems: InfraspeakProblemOption[];
+  locals: InfraspeakLocalOption[];
 }
 
 /** Resultado consolidado dos chamados (failures) obtidos da Infraspeak. */
@@ -180,4 +241,200 @@ export class RequestsService {
       data: mapped,
     };
   }
+
+  /**
+   * Cria um chamado (failure) na Infraspeak.
+   *
+   * Contrato confirmado contra o sandbox: `POST /failures` com
+   * `{ problem_id, local_id | element_id, description, priority }`.
+   * O problem precisa ser um tipo FOLHA (problem_type); prioridade 1–4.
+   */
+  async create(input: CreateInfraspeakRequestInput): Promise<InfraspeakRequestItem> {
+    this.assertResource();
+    const payload = buildCreateFailurePayload(input);
+
+    this.logger.log(
+      `Infraspeak: criando chamado (problem_id=${payload.problem_id}, ` +
+        `${payload.local_id !== undefined ? `local_id=${payload.local_id}` : `element_id=${payload.element_id}`})`,
+    );
+
+    const { data } = await this.client.post(this.resourcePath, payload);
+    const mapped = mapFailure(data);
+    this.logger.log(`Infraspeak: chamado criado com sucesso (#${mapped.id ?? '?'})`);
+    return mapped;
+  }
+
+  /**
+   * Dados de apoio para o formulário de abertura de chamado.
+   *
+   * - Problems folha vêm de `GET /problems?expanded=children,clients`: a lista
+   *   `data` traz as áreas (problem_area) com os atributos `all_clients` e a
+   *   relação `clients`; os tipos folha (problem_type) chegam em `included` —
+   *   só eles são aceitos na criação. Os filhos herdam o escopo da área pai.
+   * - Locais vêm de `GET /locations` (JSON:API). Só entradas `type: "location"`
+   *   são oferecidas: prédios (`building`) e pastas (`location-folder`) são
+   *   recusados pela criação de failure ("O edifício deve existir").
+   *   O campo `clientId` é resolvido via `root_parent_id → building.client_id`
+   *   do mesmo payload — sem requests adicionais.
+   *
+   * Causa raiz do erro de rejeição (confirmado sandbox 05/08/2026):
+   *   problem_area com all_clients=false só pode ser usado em failures cujo
+   *   local pertence a um cliente na sua lista; fora desse escopo a Infraspeak
+   *   retorna HTTP 400 "O tipo de chamado deve existir" / validation.has_access_network.
+   *   A API NÃO oferece filtro nativo por client_id em /problems (retorna 500
+   *   code 42703); o filtro é feito client-side usando a relation `clients`.
+   */
+  async getFormOptions(): Promise<InfraspeakFormOptions> {
+    const [problemsRes, localsRes] = await Promise.all([
+      this.client.get<InfraspeakFailureRaw>('problems', {
+        query: { expanded: 'children,clients', limit: 400 },
+      }),
+      this.client.getAll<InfraspeakFailureRaw>('locations'),
+    ]);
+
+    // ── Índice de áreas: problem_id → { name, allClients, clientIds } ────────
+    const areaById = new Map<
+      number,
+      { name: string; allClients: boolean; clientIds: number[] }
+    >();
+    for (const area of problemsRes.data ?? []) {
+      const attrs = (area?.attributes ?? {}) as Record<string, unknown>;
+      const id = asNumber(attrs.problem_id);
+      const name = asString(attrs.name);
+      if (id === null || !name) continue;
+
+      // all_clients=true → problema disponível a qualquer cliente.
+      const allClients = attrs.all_clients !== false;
+
+      // clients relationship → IDs dos clientes permitidos quando all_clients=false.
+      const rel = (area as Record<string, unknown>).relationships as
+        | Record<string, { data?: Array<{ id: string | number }> }>
+        | undefined;
+      const clientIds: number[] = [];
+      if (!allClients && Array.isArray(rel?.clients?.data)) {
+        for (const c of rel!.clients!.data!) {
+          const cid = asNumber(c.id);
+          if (cid !== null) clientIds.push(cid);
+        }
+      }
+
+      areaById.set(id, { name, allClients, clientIds });
+    }
+
+    const included = Array.isArray((problemsRes as { included?: unknown[] }).included)
+      ? ((problemsRes as { included?: unknown[] }).included as InfraspeakFailureRaw[])
+      : [];
+
+    const problems: InfraspeakProblemOption[] = included
+      .map((item) => {
+        const attrs = (item?.attributes ?? {}) as Record<string, unknown>;
+        const id = asNumber(attrs.problem_id);
+        if (id === null) return null;
+        const parentId = asNumber(attrs.parent_id);
+        const area = parentId !== null ? areaById.get(parentId) : undefined;
+        return {
+          id,
+          name: asString(attrs.name) ?? String(id),
+          fullName: asString(attrs.full_name) ?? asString(attrs.name) ?? String(id),
+          areaId: parentId,
+          areaName: area?.name ?? null,
+          // Herda o escopo de acesso da área pai.
+          allClients: area?.allClients ?? true,
+          clientIds: area?.clientIds ?? [],
+        };
+      })
+      .filter((p): p is InfraspeakProblemOption => p !== null)
+      .sort((a, b) => a.fullName.localeCompare(b.fullName, 'pt'));
+
+    // ── Mapa de prédios → clientId ──────────────────────────────────────────
+    // Buildings têm client_id direto; locations resolvem via root_parent_id.
+    const buildingClientMap = new Map<number, number>();
+    for (const raw of localsRes.data) {
+      if (raw?.type !== 'building') continue;
+      const attrs = (raw?.attributes ?? {}) as Record<string, unknown>;
+      const bid = asNumber(attrs.local_id);
+      const cid = asNumber(attrs.client_id);
+      if (bid !== null && cid !== null) buildingClientMap.set(bid, cid);
+    }
+
+    const locals: InfraspeakLocalOption[] = localsRes.data
+      .filter((raw) => raw?.type === 'location')
+      .map((raw) => {
+        const attrs = (raw?.attributes ?? {}) as Record<string, unknown>;
+        const id = asNumber(attrs.local_id);
+        if (id === null) return null;
+        // Resolve clientId via root_parent_id → building.client_id.
+        const rootParentId = asNumber(attrs.root_parent_id);
+        const clientId = rootParentId !== null ? (buildingClientMap.get(rootParentId) ?? null) : null;
+        return {
+          id,
+          name: asString(attrs.name) ?? String(id),
+          fullName: asString(attrs.full_name) ?? asString(attrs.name) ?? String(id),
+          clientId,
+        };
+      })
+      .filter((l): l is InfraspeakLocalOption => l !== null)
+      .sort((a, b) => a.fullName.localeCompare(b.fullName, 'pt'));
+
+    return { problems, locals };
+  }
+
+  private assertResource(): void {
+    if (!this.resourcePath) {
+      throw new ServiceUnavailableException(
+        'Recurso de chamados não configurado: defina INFRASPEAK_REQUESTS_PATH com o ' +
+          'caminho confirmado na documentação oficial da Infraspeak (ex.: "v3/<recurso>").',
+      );
+    }
+  }
+}
+
+/**
+ * Valida a entrada e monta o payload de criação exatamente como a API espera.
+ * Exportada para testes de unidade.
+ */
+export function buildCreateFailurePayload(
+  input: CreateInfraspeakRequestInput,
+): Record<string, unknown> {
+  const description = typeof input.description === 'string' ? input.description.trim() : '';
+  if (!description) {
+    throw new BadRequestException('Informe a descrição do problema.');
+  }
+  if (description.length > 5000) {
+    throw new BadRequestException('Descrição muito longa (máximo 5000 caracteres).');
+  }
+
+  const problemId = toPositiveInt(input.problemId);
+  if (problemId === null) {
+    throw new BadRequestException('Selecione o tipo de chamado (problema).');
+  }
+
+  const localId = input.localId === undefined ? null : toPositiveInt(input.localId);
+  const elementId = input.elementId === undefined ? null : toPositiveInt(input.elementId);
+  if (localId === null && elementId === null) {
+    throw new BadRequestException('Selecione o local (ou elemento) onde o problema ocorre.');
+  }
+  if (localId !== null && elementId !== null) {
+    throw new BadRequestException('Informe apenas o local OU o elemento, nunca ambos.');
+  }
+
+  let priority: number | undefined;
+  if (input.priority !== undefined) {
+    const p = toPositiveInt(input.priority);
+    if (p === null || p < 1 || p > 4) {
+      throw new BadRequestException('Prioridade inválida: use um valor entre 1 e 4.');
+    }
+    priority = p;
+  }
+
+  const payload: Record<string, unknown> = { problem_id: problemId, description };
+  if (localId !== null) payload.local_id = localId;
+  if (elementId !== null) payload.element_id = elementId;
+  if (priority !== undefined) payload.priority = priority;
+  return payload;
+}
+
+function toPositiveInt(v: unknown): number | null {
+  const n = typeof v === 'number' ? v : typeof v === 'string' && v !== '' ? Number(v) : NaN;
+  return Number.isInteger(n) && n > 0 ? n : null;
 }

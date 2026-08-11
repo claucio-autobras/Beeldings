@@ -3,13 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import { OnEvent } from '@nestjs/event-emitter';
 import { GatewayMqttService } from '../mqtt/gateway-mqtt.service';
 import { PollingMetricsService } from '../observability/polling-metrics.service';
-import { readSnmpOids, readSnmpStrings } from './snmp-read.util';
-import {
-  CameraTelemetryEngine,
-  type EngineTelemetryPoint,
-} from '../cameras/camera-telemetry.engine';
+import { readSnmpOids, readSnmpStrings, readSnmpTable } from './snmp-read.util';
 import { pingPacketLoss } from '../cameras/ping.util';
 import { fetchIsapiUptime } from '../cameras/isapi.util';
+import { SnmpDriver } from '../drivers/snmp.driver';
+import type { DriverTelemetryPoint } from '../drivers/collection-driver.interface';
 
 /** Ponto SNMP de um device (vem do binding cadastrado no backend). */
 interface SnmpPointConfig {
@@ -22,9 +20,19 @@ interface SnmpPointConfig {
   unit: string | null;
   /** OID comprovadamente não suportado (diagnóstico) — excluído do GET. */
   unsupported?: boolean;
+  /**
+   * Para pontos de tabela IF-MIB (switches): índice da linha da tabela.
+   * Ex.: ifIndex=3 → coleta o row .3 da coluna configurada no perfil.
+   */
+  ifIndex?: number;
+  /**
+   * 'table' → ponto coletado via subtree walk (readTable).
+   * Ausente ou 'scalar' → GET escalar em lote (comportamento histórico).
+   */
+  collectionType?: 'scalar' | 'table';
 }
 
-/** Bloco de config de uma câmera SNMP dentro do payload de config do gateway. */
+/** Bloco de config de um device SNMP monitorado dentro do payload de config do gateway. */
 interface SnmpDeviceBlock {
   deviceId: string;
   name: string;
@@ -34,8 +42,14 @@ interface SnmpDeviceBlock {
   snmpVersion: '1' | '2c';
   community: string;
   pollingIntervalMs: number;
+  /** Tipo do dispositivo monitorado: 'CAMERA' | 'SWITCH' | 'NVR' | … */
+  monitoredDeviceType?: string | null;
   /** Fabricante do cadastro (manual/probe) — precedência máxima na identificação. */
   manufacturer?: string | null;
+  /** ID de perfil forçado (Device.config.profileId). */
+  profileId?: string | null;
+  /** Overrides de mapeamento por métrica (Device.config.profileOverrides). */
+  profileOverrides?: Record<string, unknown> | null;
   /** Credenciais HTTP p/ fallback proprietário (ex.: ISAPI Hikvision). */
   http?: { username: string; password: string; port?: number } | null;
   points: SnmpPointConfig[];
@@ -50,21 +64,24 @@ interface GatewayConfigPayload {
 interface ActiveSnmpPoll {
   handle: ReturnType<typeof setInterval>;
   polling: boolean;
-  engine: CameraTelemetryEngine;
+  driver: SnmpDriver;
 }
 
 /**
  * SnmpPollingService
  *
  * Consome a config publicada pelo backend (tópico .../config) e processa os
- * blocos `protocol: 'snmp'` (câmeras CFTV). A coleta é delegada ao motor
- * genérico de 3 camadas (CameraTelemetryEngine + provider-registry): MIB-II
- * padrão → provider do fabricante (SNMP enterprise/ISAPI) → fallback
- * sintético (ping). Publica no tópico canônico de telemetria:
+ * blocos `protocol: 'snmp'` (dispositivos monitorados via SNMP). A coleta é
+ * delegada ao SnmpDriver (motor de perfis declarativos de 3 camadas):
  *
+ *   1. MIB-II padrão (sysUpTime, ifInDiscards/ifInErrors) — universal.
+ *   2. Perfil do fabricante (OIDs enterprise + ISAPI) — via profile-registry.
+ *   3. Fallback sintético (ping).
+ *
+ * Publica no tópico canônico de telemetria:
  *   bluebee/{tenantId}/gateway/{gatewayId}/telemetry
  *
- * Regra central: se a câmera NÃO responde (timeout), publica STATUS=0 e os
+ * Regra central: se o device NÃO responde (timeout), publica STATUS=0 e os
  * demais pontos como null — o "offline" é um dado, não um silêncio.
  */
 @Injectable()
@@ -114,11 +131,11 @@ export class SnmpPollingService implements OnModuleDestroy {
     for (const key of this.dynamicKeys) {
       if (!newKeys.has(key)) {
         this.stopPoll(key);
-        this.logger.log(`Polling SNMP encerrado para ${key} (câmera removida da config)`);
+        this.logger.log(`Polling SNMP encerrado para ${key} (device removido da config)`);
       }
     }
     this.dynamicKeys = newKeys;
-    this.logger.log(`Config dinâmica SNMP aplicada — ${devices.length} câmera(s)`);
+    this.logger.log(`Config dinâmica SNMP aplicada — ${devices.length} device(s)`);
   }
 
   private startPoll(device: SnmpDeviceBlock): void {
@@ -126,19 +143,26 @@ export class SnmpPollingService implements OnModuleDestroy {
 
     const intervalMs = device.pollingIntervalMs || 30_000;
     this.logger.log(
-      `Câmera SNMP ${device.deviceId} (${device.ip}:${device.port}, v${device.snmpVersion}): ` +
+      `SNMP ${device.deviceId} (${device.ip}:${device.port}, v${device.snmpVersion}): ` +
         `polling a cada ${intervalMs}ms — ${device.points.length} ponto(s)` +
-        (device.manufacturer ? `, fabricante=${device.manufacturer}` : ''),
+        (device.manufacturer ? `, fabricante=${device.manufacturer}` : '') +
+        (device.monitoredDeviceType ? `, tipo=${device.monitoredDeviceType}` : ''),
     );
 
     const state: ActiveSnmpPoll = {
       handle: undefined as never,
       polling: false,
-      engine: new CameraTelemetryEngine({
+      driver: new SnmpDriver({
         readNumbers: readSnmpOids,
         readStrings: readSnmpStrings,
         pingLoss: pingPacketLoss,
         isapiUptime: fetchIsapiUptime,
+        // Injeta readTable para devices que usam coleta por subtree walk:
+        //   SWITCH → tabela IF-MIB por porta (ifIndex)
+        //   NVR    → tabelas de disco/canal (slotIndex / channelIndex)
+        ...(device.monitoredDeviceType === 'SWITCH' || device.monitoredDeviceType === 'NVR'
+          ? { readTable: readSnmpTable }
+          : {}),
       }),
     };
     void this.pollDevice(state, device);
@@ -156,22 +180,26 @@ export class SnmpPollingService implements OnModuleDestroy {
     if (state.handle) {
       clearInterval(state.handle);
     }
+    state.driver.dispose();
     this.activePolls.delete(deviceId);
   }
 
-  /** Um ciclo de polling: motor de 3 camadas coleta e o resultado é publicado. */
+  /** Um ciclo de polling: driver coleta com motor de perfis e o resultado é publicado. */
   private async pollDevice(state: ActiveSnmpPoll, device: SnmpDeviceBlock): Promise<void> {
     if (state.polling) {
-      return; // ciclo anterior ainda em andamento (câmera lenta) — pula
+      return; // ciclo anterior ainda em andamento (device lento) — pula
     }
     state.polling = true;
     const startedAt = Date.now();
 
     try {
-      const result = await state.engine.runCycle({
+      const result = await state.driver.runCycle({
         deviceId: device.deviceId,
         ip: device.ip,
+        monitoredDeviceType: device.monitoredDeviceType,
         manufacturer: device.manufacturer ?? null,
+        profileId: device.profileId ?? null,
+        profileOverrides: device.profileOverrides ?? null,
         snmp: {
           ip: device.ip,
           port: device.port,
@@ -182,7 +210,7 @@ export class SnmpPollingService implements OnModuleDestroy {
         points: device.points,
       });
 
-      const points: EngineTelemetryPoint[] = result.points;
+      const points: DriverTelemetryPoint[] = result.points;
       const elapsedMs = Date.now() - startedAt;
       this.pollingMetrics.record({
         protocol: 'snmp',
@@ -195,7 +223,7 @@ export class SnmpPollingService implements OnModuleDestroy {
       });
 
       this.logger.debug(
-        `[${device.deviceId}] Ciclo SNMP (${state.engine.providerId ?? 'sem provider'}): ` +
+        `[${device.deviceId}] Ciclo SNMP (perfil=${state.driver.profileId ?? 'base'}): ` +
           `${result.reachable ? 'online' : 'OFFLINE'} — ${points.length} ponto(s) em ${elapsedMs}ms`,
       );
 

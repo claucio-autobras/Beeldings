@@ -7,6 +7,27 @@ import { KnowledgeService } from '../knowledge/knowledge.service.js';
 import type { KnowledgeSearchHit } from '../knowledge/knowledge.service.js';
 import { AuditService } from '../audit/audit.service.js';
 import type { AuthenticatedUser } from '../auth/domain/interfaces/auth.interface.js';
+import { AlarmEventsService } from '../alarms/alarm-events.service.js';
+import { DeviceStatusService } from '../mqtt/device-status.service.js';
+import { OperationalMemoryService } from './operational-memory.service.js';
+import {
+  buildCasesBlock,
+  inferQuestionDomain,
+  OPERATIONAL_CASES_RULES,
+  sanitizeCaseCitations,
+  type CaseSearchTarget,
+  type SimilarOperationalCase,
+} from './operational-memory.util.js';
+import {
+  buildLiveStatusBlock,
+  detectLiveStatusIntent,
+  deviceKindLabel,
+  LIVE_STATUS_RULES,
+  matchNamedEntity,
+  type LiveAlarmLine,
+  type LiveOfflineDevice,
+  type LiveStatusData,
+} from './live-status.util.js';
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -35,6 +56,11 @@ export interface ChatResult {
   conversationId: string;
   title: string;
   sources: ChatSource[];
+  /**
+   * Casos da memória operacional anônima usados como contexto — SEMPRE os
+   * candidatos efetivamente recuperados pela busca, nunca texto do modelo.
+   */
+  similarCases: SimilarOperationalCase[];
 }
 
 export interface SuggestionAlarm {
@@ -51,6 +77,8 @@ export interface SuggestionResult {
   alarms: SuggestionAlarm[];
   suggestion: string;
   sources: ChatSource[];
+  /** Casos anônimos da memória operacional usados como contexto adicional. */
+  similarCases: SimilarOperationalCase[];
 }
 
 // ─── Primeira ação sugerida (ativo crítico em falha) ─────────────────────────
@@ -98,12 +126,15 @@ export interface FirstActionResult {
   suggestion: FirstActionSuggestion | null;
   aiError: boolean;
   sources: ChatSource[];
+  /** Casos anônimos da memória operacional usados como contexto adicional. */
+  similarCases: SimilarOperationalCase[];
 }
 
 // Persona base. As regras anti-alucinação são acrescentadas em buildSystemPrompt
 // junto com o contexto recuperado da base de conhecimento (RAG).
-const BASE_PROMPT = `Você é o assistente especialista do BlueBee, uma plataforma multi-tenant de supervisão predial (BMS/SCADA).
+const BASE_PROMPT = `Você é o Bluebee, assistente especialista da plataforma Beeldings — uma plataforma multi-tenant de supervisão predial (BMS/SCADA).
 Ajuda operadores e gestores com alarmes, dispositivos/gateways, telemetria, tendências (trends), automações e relatórios.
+Quando se apresentar ou for perguntado sobre sua identidade, diga que é o Bluebee, assistente da plataforma Beeldings.
 Responda SEMPRE em português do Brasil, de forma clara, objetiva e técnica.`;
 
 const RAG_RULES = `Regras importantes (aterramento — siga estritamente):
@@ -121,7 +152,7 @@ const NO_CONTEXT_RULES = `Regras importantes (aterramento — siga estritamente)
 - NÃO invente dados específicos (valores, modelos, números de série, procedimentos proprietários). Se não souber, diga que não sabe.`;
 
 const SUGGEST_RULES = `Tarefa: sugerir ações de manutenção/operação para um equipamento.
-- Baseie as recomendações EXCLUSIVAMENTE nos playbooks/documentos do CONTEXTO abaixo. NÃO invente passos, valores ou procedimentos.
+- Baseie as recomendações EXCLUSIVAMENTE nos playbooks/documentos do CONTEXTO abaixo e, quando presentes, nos "CASOS SEMELHANTES JÁ RESOLVIDOS" (precedentes anônimos do sistema). NÃO invente passos, valores ou procedimentos.
 - Apresente as ações como uma lista enumerada, ordenadas da mais provável/segura para a menos.
 - Para cada ação, cite a fonte entre colchetes pelo título, ex.: [Playbook Chiller — Alta Pressão].
 - Deixe explícito que são SUGESTÕES; a decisão e a execução são responsabilidade do operador.
@@ -140,6 +171,7 @@ const FIRST_ACTION_RULES = (locale: 'pt' | 'en') => `Tarefa: sugerir a PRIMEIRA 
 - Se não houver contexto aplicável, sugira com base no tipo de alarme/ponto e no histórico, use "confidence":"low" e explique em "note" que não há manual aplicável na base.
 - Use "confidence":"high" apenas quando os passos vierem de documento que cobre exatamente este equipamento/falha.
 - Se houver "Motivos de reconhecimentos anteriores" no contexto, trate-os como relatos do operador sobre ocorrências passadas do MESMO alarme: podem indicar causa/solução recorrente, mas NÃO são verdade absoluta — use-os para orientar os passos (ex.: verificar primeiro a causa relatada) e, quando usá-los, mencione em "note" que o histórico de reconhecimentos foi considerado.
+- Se houver "CASOS SEMELHANTES JÁ RESOLVIDOS" no contexto, trate-os como precedentes ANÔNIMOS do sistema (podem vir de qualquer cliente): podem orientar os passos, mas NUNCA mencione ou infira local/cliente/equipamento de origem, e só mencione precedente se um caso listado for de fato semelhante.
 - NUNCA sugira ações destrutivas ou irreversíveis (excluir, resetar de fábrica, desabilitar proteções) nem envio de comandos de escrita como passo executável direto — no máximo "avalie, conforme procedimento local, ...".
 - São sugestões de apoio: a decisão e a execução são do operador.
 - Escreva os textos em ${locale === 'en' ? 'inglês' : 'português do Brasil'}.`;
@@ -166,7 +198,27 @@ export class AiService {
     private readonly prisma: PrismaService,
     private readonly knowledge: KnowledgeService,
     private readonly audit: AuditService,
+    private readonly operationalMemory: OperationalMemoryService,
+    private readonly alarmEvents: AlarmEventsService,
+    private readonly deviceStatus: DeviceStatusService,
   ) {}
+
+  /**
+   * Busca casos semelhantes na memória operacional anônima. Degrada com
+   * segurança: qualquer falha retorna lista vazia (comportamento atual
+   * permanece intacto — a IA nunca inventa precedente).
+   */
+  private async findSimilarCases(
+    query: string,
+    target: Parameters<OperationalMemoryService['findSimilar']>[1] = {},
+  ): Promise<SimilarOperationalCase[]> {
+    try {
+      return await this.operationalMemory.findSimilar(query, target);
+    } catch (err) {
+      this.logger.warn(`Memória operacional indisponível: ${(err as Error).message}`);
+      return [];
+    }
+  }
 
   private getClient(): Anthropic {
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -228,6 +280,14 @@ export class AiService {
     tenantId: string | null,
     conversationId: string | null,
     content: string,
+    options: {
+      /**
+       * Habilita o contexto factual ao vivo (diagnóstico/offline/tempo em
+       * falha). O controller só liga quando o escopo é seguro: usuário com
+       * tenant OU papel global — nunca escopo global "por acidente".
+       */
+      liveData?: boolean;
+    } = {},
   ): Promise<ChatResult> {
     let conversation:
       | { id: string; title: string }
@@ -282,7 +342,49 @@ export class AiService {
       this.logger.warn(`Busca na base de conhecimento indisponível: ${(err as Error).message}`);
     }
 
-    const reply = await this.complete(contextMessages, hits);
+    // Resolve entidades do tenant citadas na pergunta (site/equipamento por
+    // nome) e, quando a pergunta pede estado do sistema, monta o bloco factual
+    // ao vivo. Qualquer falha degrada: chat segue como hoje, sem o bloco.
+    let liveStatusBlock: string | null = null;
+    let mentionedDevice: {
+      monitoredDeviceType: string | null;
+      protocol: string;
+    } | null = null;
+    if (options.liveData) {
+      try {
+        const resolved = await this.resolveLiveChatContext(tenantId, content);
+        liveStatusBlock = resolved.block;
+        mentionedDevice = resolved.mentionedDevice;
+      } catch (err) {
+        this.logger.warn(`Contexto ao vivo indisponível no chat: ${(err as Error).message}`);
+      }
+    }
+
+    // Memória operacional anônima: casos semelhantes já resolvidos em toda a
+    // plataforma entram como contexto adicional (nunca identificam a origem).
+    // Modo ESTRITO no chat: o alvo vem do equipamento do tenant citado na
+    // pergunta ou do domínio inferido do texto (câmera/BMS/switch/acesso);
+    // sem domínio inferível, só entra caso com similaridade bem mais alta —
+    // pergunta de câmera nunca traz precedente de chiller.
+    const caseTarget: CaseSearchTarget = mentionedDevice
+      ? {
+          monitoredDeviceType: mentionedDevice.monitoredDeviceType,
+          protocol: mentionedDevice.protocol,
+          strict: true,
+        }
+      : { domain: inferQuestionDomain(content), strict: true };
+    const similarCases = await this.findSimilarCases(content, caseTarget);
+
+    const rawReply = await this.complete(
+      contextMessages,
+      hits,
+      undefined,
+      similarCases,
+      liveStatusBlock,
+    );
+    // Anti-alucinação: citações [Caso N] fora dos candidatos recuperados são
+    // neutralizadas — a IA só afirma precedente que a busca de fato encontrou.
+    const reply = sanitizeCaseCitations(rawReply, similarCases.length);
     const sources = this.dedupeSources(hits);
 
     await this.prisma.$transaction([
@@ -299,7 +401,134 @@ export class AiService {
       }),
     ]);
 
-    return { reply, conversationId: conversation.id, title: conversation.title, sources };
+    return {
+      reply,
+      conversationId: conversation.id,
+      title: conversation.title,
+      sources,
+      similarCases,
+    };
+  }
+
+  /**
+   * Resolve o contexto ao vivo de um turno do chat: casa site/equipamento do
+   * tenant citados na pergunta e, quando a pergunta pede estado do sistema,
+   * monta o bloco factual (alarmes ativos com duração + offline com "desde
+   * quando"), sempre no escopo do tenant. Lança em falha — o chamador degrada.
+   */
+  private async resolveLiveChatContext(
+    tenantId: string | null,
+    content: string,
+  ): Promise<{
+    block: string | null;
+    mentionedDevice: { monitoredDeviceType: string | null; protocol: string } | null;
+  }> {
+    const tenantWhere = tenantId ? { tenantId } : {};
+    const [sites, devices] = await Promise.all([
+      this.prisma.site.findMany({
+        where: tenantWhere,
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      }),
+      this.prisma.device.findMany({
+        where: { ...tenantWhere, ...EXCLUDE_VIRTUAL_DEVICES },
+        select: {
+          id: true,
+          name: true,
+          protocol: true,
+          monitoredDeviceType: true,
+          siteId: true,
+          gatewayId: true,
+          site: { select: { name: true } },
+        },
+      }),
+    ]);
+
+    const matchedDevice = matchNamedEntity(content, devices);
+    const matchedSite = matchedDevice ? null : matchNamedEntity(content, sites);
+    const mentionedDevice = matchedDevice
+      ? { monitoredDeviceType: matchedDevice.monitoredDeviceType, protocol: matchedDevice.protocol }
+      : null;
+
+    if (!detectLiveStatusIntent(content)) {
+      return { block: null, mentionedDevice };
+    }
+
+    // Escopo: equipamento citado > site citado > cliente inteiro.
+    const scopeDevices = matchedDevice
+      ? [matchedDevice]
+      : matchedSite
+        ? devices.filter((d) => d.siteId === matchedSite.id)
+        : devices;
+    const scopeLabel = matchedDevice
+      ? `equipamento "${matchedDevice.name}"`
+      : matchedSite
+        ? `site "${matchedSite.name}"`
+        : tenantId
+          ? 'todos os sites e equipamentos do cliente'
+          : 'toda a plataforma (papel global)';
+
+    // Alarmes ativos no escopo — reusa o serviço da tela de alarmes (ordena
+    // por severidade e atividade; tenant sempre respeitado).
+    const alarmDtos = await this.alarmEvents.findAll({
+      tenantId: tenantId ?? undefined,
+      open: true,
+      ...(matchedDevice ? { deviceId: matchedDevice.id } : {}),
+      ...(matchedSite ? { siteId: matchedSite.id } : {}),
+    });
+    const alarms: LiveAlarmLine[] = alarmDtos.map((a) => ({
+      name: a.name,
+      message: a.message ?? null,
+      severity: a.severity,
+      state: a.state,
+      deviceName: a.deviceName,
+      siteName: a.siteName,
+      activatedAt: new Date(a.activatedAt),
+      reactivationCount: a.reactivationCount,
+      lastReactivatedAt: a.lastReactivatedAt ? new Date(a.lastReactivatedAt) : null,
+    }));
+
+    // Equipamentos offline no escopo — status ao vivo (LWT/heartbeat/telemetria)
+    // com "visto por último" durável (nunca datas de cadastro).
+    const offlineRaw = scopeDevices.filter((d) => this.deviceStatus.getStatus(d.id) === 'offline');
+    const lastSeenMap = await this.deviceStatus.resolveLastSeenMany(offlineRaw.map((d) => d.id));
+    const offlineDevices: LiveOfflineDevice[] = offlineRaw.map((d) => {
+      const iso = lastSeenMap.get(d.id) ?? null;
+      return {
+        name: d.name,
+        kindLabel: deviceKindLabel(d.monitoredDeviceType, d.protocol),
+        siteName: d.site?.name ?? null,
+        lastSeen: iso ? new Date(iso) : null,
+      };
+    });
+
+    // Gateways do escopo: os referenciados pelos equipamentos do escopo quando
+    // há site/equipamento citado; senão todos os do tenant.
+    const scopeGatewayIds = new Set(
+      scopeDevices.map((d) => d.gatewayId).filter((g): g is string => Boolean(g)),
+    );
+    const gateways = await this.prisma.gateway.findMany({
+      where: {
+        ...tenantWhere,
+        ...(matchedDevice || matchedSite ? { id: { in: [...scopeGatewayIds] } } : {}),
+      },
+      select: { id: true, status: true, lastSeen: true },
+    });
+    const offlineGateways = gateways
+      .filter((g) => g.status !== 'online')
+      .map((g) => ({ id: g.id, lastSeen: g.lastSeen }));
+
+    const data: LiveStatusData = {
+      now: new Date(),
+      scopeLabel,
+      siteNames: sites.map((s) => s.name),
+      alarms,
+      offlineDevices,
+      totalDevicesInScope: scopeDevices.length,
+      offlineGateways,
+      totalGatewaysInScope: gateways.length,
+    };
+    return { block: buildLiveStatusBlock(data), mentionedDevice };
   }
 
   /**
@@ -317,7 +546,7 @@ export class AiService {
     // Só a Bancada (virtual) fica de fora — nunca é equipamento real.
     const device = await this.prisma.device.findFirst({
       where: { id: deviceId, ...(tenantId ? { tenantId } : {}), ...EXCLUDE_VIRTUAL_DEVICES },
-      select: { id: true, name: true, protocol: true },
+      select: { id: true, name: true, protocol: true, monitoredDeviceType: true },
     });
     if (!device) {
       throw new NotFoundException('Equipamento não encontrado.');
@@ -370,7 +599,21 @@ export class AiService {
       }
     }
 
-    if (hits.length === 0) {
+    // Memória operacional anônima: casos resolvidos semelhantes de toda a
+    // plataforma entram como contexto adicional (sem sintoma/alarmes só o
+    // nome ajudaria pouco — a consulta reusa a mesma query semântica).
+    // Modo ESTRITO (mesma regra do chat): o domínio vem do equipamento
+    // concreto — sugestão de câmera nunca traz precedente de chiller.
+    const similarCases = query
+      ? await this.findSimilarCases(query, {
+          monitoredDeviceType: device.monitoredDeviceType,
+          protocol: device.protocol,
+          strict: true,
+        })
+      : [];
+
+    // Sem playbook E sem caso semelhante: comportamento atual intacto.
+    if (hits.length === 0 && similarCases.length === 0) {
       return {
         deviceId: device.id,
         deviceName: device.name,
@@ -378,6 +621,7 @@ export class AiService {
         suggestion:
           'Ainda não há playbooks na base de conhecimento aplicáveis a este equipamento/sintoma. Registre a experiência para que o assistente passe a recomendar ações aqui.',
         sources: [],
+        similarCases: [],
       };
     }
 
@@ -389,11 +633,13 @@ export class AiService {
 Sintoma informado: ${symptom?.trim() || '(não informado)'}.
 Alarmes recentes:\n${alarmsText}\n\nComo agir?`;
 
-    const suggestion = await this.complete(
+    const rawSuggestion = await this.complete(
       [{ role: 'user', content: userPrompt }],
       hits,
       SUGGEST_RULES,
+      similarCases,
     );
+    const suggestion = sanitizeCaseCitations(rawSuggestion, similarCases.length);
 
     return {
       deviceId: device.id,
@@ -401,6 +647,7 @@ Alarmes recentes:\n${alarmsText}\n\nComo agir?`;
       alarms,
       suggestion,
       sources: this.dedupeSources(hits),
+      similarCases,
     };
   }
 
@@ -425,6 +672,7 @@ Alarmes recentes:\n${alarmsText}\n\nComo agir?`;
         id: true,
         name: true,
         protocol: true,
+        monitoredDeviceType: true,
         config: true,
         tenantId: true,
         points: {
@@ -452,7 +700,7 @@ Alarmes recentes:\n${alarmsText}\n\nComo agir?`;
           select: {
             state: true,
             activatedAt: true,
-            alarmRule: { select: { id: true, name: true, message: true, severity: true, pointId: true } },
+            alarmRule: { select: { id: true, name: true, message: true, type: true, severity: true, pointId: true } },
           },
         })
       : null;
@@ -463,7 +711,7 @@ Alarmes recentes:\n${alarmsText}\n\nComo agir?`;
         select: {
           state: true,
           activatedAt: true,
-          alarmRule: { select: { id: true, name: true, message: true, severity: true, pointId: true } },
+          alarmRule: { select: { id: true, name: true, message: true, type: true, severity: true, pointId: true } },
         },
       });
       const rank: Record<string, number> = { HIGH: 3, MEDIUM: 2, LOW: 1 };
@@ -578,6 +826,17 @@ Alarmes recentes:\n${alarmsText}\n\nComo agir?`;
       this.logger.warn(`Busca na base indisponível (primeira ação): ${(err as Error).message}`);
     }
 
+    // Memória operacional anônima: precedentes resolvidos de toda a plataforma
+    // como contexto adicional (mesma regra de anonimato dos demais fluxos).
+    // Modo ESTRITO (mesma regra do chat): o domínio deriva do tipo de
+    // equipamento monitorado — alarme de câmera nunca mostra caso BMS solto.
+    const similarCases = await this.findSimilarCases(queryParts.join('. '), {
+      monitoredDeviceType: device.monitoredDeviceType,
+      protocol: device.protocol,
+      alarmType: event?.alarmRule?.type ?? null,
+      strict: true,
+    });
+
     const pointsText = device.points
       .map((p) => `- ${p.objectName || p.tag}${p.opRole ? ` [${p.opRole}]` : ''}${p.unit ? ` (${p.unit})` : ''}`)
       .join('\n');
@@ -614,8 +873,21 @@ ${
         [{ role: 'user', content: userPrompt }],
         hits,
         FIRST_ACTION_RULES(locale),
+        similarCases,
       );
       suggestion = this.parseFirstAction(raw, hits.length > 0);
+      if (suggestion) {
+        suggestion = {
+          ...suggestion,
+          steps: suggestion.steps.map((s) => ({
+            ...s,
+            text: sanitizeCaseCitations(s.text, similarCases.length),
+          })),
+          note: suggestion.note
+            ? sanitizeCaseCitations(suggestion.note, similarCases.length)
+            : suggestion.note,
+        };
+      }
     } catch (err) {
       this.logger.warn(`IA indisponível (primeira ação): ${(err as Error).message}`);
       aiError = true;
@@ -637,7 +909,7 @@ ${
       result: aiError ? 'FAILURE' : 'SUCCESS',
     });
 
-    return { context, suggestion, aiError, sources: this.dedupeSources(hits) };
+    return { context, suggestion, aiError, sources: this.dedupeSources(hits), similarCases };
   }
 
   /**
@@ -732,17 +1004,33 @@ ${
     messages: ChatMessage[],
     hits: KnowledgeSearchHit[],
     rulesOverride?: string,
+    similarCases: SimilarOperationalCase[] = [],
+    liveStatusBlock: string | null = null,
   ): Promise<string> {
     const client = this.getClient();
 
     // rulesOverride (ex.: primeira ação) vale SEMPRE — inclusive sem hits da
     // base — para manter o contrato JSON e a proibição de ações destrutivas.
-    const system =
+    let system =
       hits.length > 0
         ? `${BASE_PROMPT}\n\n${rulesOverride ?? RAG_RULES}\n\n=== CONTEXTO DA BASE DE CONHECIMENTO ===\n${this.buildContext(
             hits,
           )}\n=== FIM DO CONTEXTO ===`
         : `${BASE_PROMPT}\n\n${rulesOverride ?? NO_CONTEXT_RULES}`;
+
+    // Memória operacional anônima: bloco + regras SOMENTE quando há casos
+    // recuperados — sem casos, o prompt (e o comportamento) fica idêntico ao
+    // atual, e a IA não tem como "citar" precedente inexistente.
+    if (similarCases.length > 0) {
+      system += `\n\n${buildCasesBlock(similarCases)}\n\n${OPERATIONAL_CASES_RULES}`;
+    }
+
+    // Contexto factual ao vivo (diagnóstico/offline/tempo em falha): bloco +
+    // regras SOMENTE quando o chamador montou o bloco — sem ele, o prompt
+    // fica idêntico ao atual (a IA continua sem "acesso" a tempo real).
+    if (liveStatusBlock) {
+      system += `\n\n${liveStatusBlock}\n\n${LIVE_STATUS_RULES}`;
+    }
 
     const chatMessages: MessageParam[] = messages.map((m) => ({
       role: m.role,

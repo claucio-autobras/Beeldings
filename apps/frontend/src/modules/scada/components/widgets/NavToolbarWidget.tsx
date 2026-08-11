@@ -1,6 +1,7 @@
 'use client';
 
 import type { NavToolbarWidget } from '@/mocks/data/scada.mock';
+import { scadaBackgroundStyle } from '../../types/scada.types';
 import { ScadaNavGlyph } from './scadaIcons';
 
 interface Props {
@@ -20,7 +21,7 @@ export function NavToolbarWidgetView({ widget, currentScreenId, currentScreenNam
       style={{
         width: '100%',
         height: '100%',
-        backgroundColor: widget.backgroundColor,
+        ...scadaBackgroundStyle(widget.backgroundColor),
         display: 'flex',
         flexDirection: 'row',
         alignItems: 'center',

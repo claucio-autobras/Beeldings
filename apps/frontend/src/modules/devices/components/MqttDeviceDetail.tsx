@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, ArrowLeft, Bell, ChevronDown, ChevronRight, Clock, Globe, LineChart, Loader2, Pencil, Plus, Radio, Trash2, Wifi, WifiOff } from 'lucide-react';
 import type { DeviceStatus, MqttDevice, MqttPoint } from '@/mocks/data/devices.mock';
 import { formatLastCommunication } from '../utils/formatters';
-import { deleteMqttPoint, getDeviceHeartbeat, getDevices, renameDevicePoint, setPointCritical, type PointOpRole } from '../services/devices.service';
+import { deleteMqttPoint, getDeviceHeartbeat, getDevices, renameDevicePoint, setPointCritical, setPointOpRole, type PointOpRole } from '../services/devices.service';
 import { CriticalStarButton } from '@/components/CriticalStarButton';
 import { translateDeviceError } from '../utils/device-errors';
 import AddMqttPointModal from './AddMqttPointModal';
@@ -13,6 +13,7 @@ import { useBacnetTelemetry } from '@/hooks/useBacnetTelemetry';
 import { getTrends } from '@/modules/trends/services/trends-api.service';
 import { getAlarmRules } from '@/modules/alarms/services/alarms-api.service';
 import { PointConfigPanel } from '@/modules/trends/components/PointConfigPanel';
+import { OpRoleBadge } from './OpRoleBadge';
 import { AlarmGroupsSection } from './AlarmGroupsSection';
 import { DeviceTimelineTab } from './DeviceTimelineTab';
 import {
@@ -81,6 +82,13 @@ export default function MqttDeviceDetail({ device, onBack }: Props) {
     } catch {
       setCriticalById((m) => ({ ...m, [pointId]: current }));
     }
+  }
+
+  async function handleSetStatusRole(pointId: string) {
+    await setPointOpRole(device.id, pointId, 'status');
+    setOpRoleById((m) => ({ ...m, [pointId]: 'status' }));
+    qc.invalidateQueries({ queryKey: ['devices'] });
+    qc.invalidateQueries({ queryKey: ['dashboard-critical-assets'] });
   }
 
   async function handleDeletePoint(pointId: string) {
@@ -277,7 +285,7 @@ export default function MqttDeviceDetail({ device, onBack }: Props) {
     refetchInterval: 30_000,
   });
   // Stale = último heartbeat mais velho que 2× a janela configurada (mín. 3 min):
-  // os campos voltam a "sem dados" em vez de exibir diagnóstico antigo.
+  // os valores continuam visíveis, mas marcados como "visto por último às ...".
   const heartbeatStale = (() => {
     if (!heartbeatDiag) return true;
     const windowMs = Math.max((heartbeatDiag.timeoutSeconds ?? 90) * 2 * 1000, 180_000);
@@ -298,10 +306,54 @@ export default function MqttDeviceDetail({ device, onBack }: Props) {
     return parts.join(' ');
   }
 
-  // Célula do diagnóstico: valor quando presente e fresco, senão "sem dados".
+  // Formata um valor numérico de ponto (compartilhado entre live e seed).
+  function formatNumericValue(value: number, digital: boolean, unit: string): string {
+    if (digital) return value === 1 ? 'ATIVO' : 'INATIVO';
+    return `${value.toFixed(2)}${unit ? ` ${unit}` : ''}`;
+  }
+
+  // Célula "Valor atual": telemetria ao vivo vence sempre; sem live, semeia com
+  // o último valor persistido (com "há X min"); nunca inventa valor — ponto que
+  // nunca teve leitura continua em "Aguardando leitura…".
+  function renderCurrentValue(p: MqttPoint, liveLabel: string | null) {
+    if (liveLabel !== null) {
+      return (
+        <span className="flex items-center gap-1.5 min-w-0">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+          <span className="font-medium text-foreground">{liveLabel}</span>
+        </span>
+      );
+    }
+    // Seed: último valor conhecido persistido no backend (sobrevive a restart).
+    // lastValueState ≠ null = leitura não-real (erro/aguardando evento) → não semeia.
+    if (p.lastValue !== null && p.lastValue !== undefined && !p.lastValueState) {
+      const digital = p.valueType === 'boolean';
+      return (
+        <span className="flex items-center gap-1.5 min-w-0" title="Último valor conhecido — aguardando telemetria ao vivo">
+          <span className="h-1.5 w-1.5 rounded-full bg-slate-400 shrink-0" />
+          <span className="font-medium text-muted-foreground">
+            {formatNumericValue(p.lastValue, digital, p.unit)}
+            {p.lastValueAt ? (
+              <span className="font-normal text-xs"> · {formatLastCommunication(p.lastValueAt)}</span>
+            ) : null}
+          </span>
+        </span>
+      );
+    }
+    if (awaitingFirstRead) {
+      return <span className="text-muted-foreground text-xs italic">Aguardando leitura…</span>;
+    }
+    return <span className={`${NO_COMM_TEXT_CLASS} text-xs italic`}>Sem resposta do equipamento</span>;
+  }
+
+  // Célula do diagnóstico: valor quando presente (esmaecido se stale, como
+  // último valor conhecido), senão "sem dados" — nunca valores fake.
   function renderDiagValue(value: string | null) {
-    if (heartbeatStale || value === null) {
+    if (value === null) {
       return <span className="text-xs italic text-muted-foreground">sem dados</span>;
+    }
+    if (heartbeatStale) {
+      return <span className="text-sm font-medium text-muted-foreground">{value}</span>;
     }
     return <span className="text-sm font-medium text-foreground">{value}</span>;
   }
@@ -394,8 +446,10 @@ export default function MqttDeviceDetail({ device, onBack }: Props) {
           <div className="mb-2 flex items-center gap-2 flex-wrap">
             <h2 className="text-sm font-medium text-foreground">Diagnóstico do equipamento</h2>
             <span className="text-xs text-muted-foreground">
-              {heartbeatDiag && !heartbeatStale
-                ? `último heartbeat ${new Date(heartbeatDiag.receivedAt).toLocaleTimeString('pt-BR')}`
+              {heartbeatDiag
+                ? heartbeatStale
+                  ? `visto por último às ${new Date(heartbeatDiag.receivedAt).toLocaleString('pt-BR')}`
+                  : `último heartbeat ${new Date(heartbeatDiag.receivedAt).toLocaleTimeString('pt-BR')}`
                 : 'aguardando heartbeat do equipamento'}
             </span>
           </div>
@@ -506,13 +560,14 @@ export default function MqttDeviceDetail({ device, onBack }: Props) {
                           />
                         )}
                         <span className="min-w-0 break-words">{p.displayName || p.tag}</span>
+                        <OpRoleBadge role={pointOpRole(p)} />
                       </div>
                       {p.displayName && (
                         <div className="font-mono text-xs text-muted-foreground mt-0.5 break-all">{p.tag}</div>
                       )}
                     </div>
                     <span className="inline-flex items-center gap-1 shrink-0 text-muted-foreground">
-                      <CriticalStarButton critical={isCritical(p)} size={16} onToggle={() => handleToggleCritical(p.id, isCritical(p))} markHint={pointOpRole(p) !== 'status' ? CRITICAL_MARK_HINT : undefined} />
+                      <CriticalStarButton critical={isCritical(p)} size={16} onToggle={() => handleToggleCritical(p.id, isCritical(p))} markHint={pointOpRole(p) !== 'status' ? CRITICAL_MARK_HINT : undefined} onSetStatusRole={pointOpRole(p) !== 'status' && p.valueType === 'boolean' ? () => handleSetStatusRole(p.id) : undefined} />
                       <button
                         type="button"
                         title="Editar ponto"
@@ -539,16 +594,7 @@ export default function MqttDeviceDetail({ device, onBack }: Props) {
                     <span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-medium border capitalize ${pointStatusBadge[p.status] ?? ''}`}>
                       {p.status}
                     </span>
-                    {liveLabel !== null ? (
-                      <span className="flex items-center gap-1.5 min-w-0">
-                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-                        <span className="font-medium text-foreground">{liveLabel}</span>
-                      </span>
-                    ) : awaitingFirstRead ? (
-                      <span className="text-muted-foreground text-xs italic">Aguardando leitura…</span>
-                    ) : (
-                      <span className={`${NO_COMM_TEXT_CLASS} text-xs italic`}>Sem resposta do equipamento</span>
-                    )}
+                    {renderCurrentValue(p, liveLabel)}
                   </div>
 
                   <div className="flex items-center gap-x-3 gap-y-1 flex-wrap text-xs text-muted-foreground">
@@ -624,29 +670,25 @@ export default function MqttDeviceDetail({ device, onBack }: Props) {
                       {p.tag}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-foreground whitespace-nowrap">{p.displayName}</td>
+                  <td className="px-4 py-3 text-foreground whitespace-nowrap">
+                    <span className="flex items-center gap-1.5">
+                      {p.displayName}
+                      <OpRoleBadge role={pointOpRole(p)} />
+                    </span>
+                  </td>
                   <td className="px-4 py-3 font-mono text-xs text-muted-foreground whitespace-nowrap max-w-[200px] truncate" title={p.sourceTopic}>{p.sourceTopic}</td>
                   <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{p.jsonPath || '—'}</td>
                   <td className="px-4 py-3 text-xs text-muted-foreground">{p.valueType}</td>
                   <td className="px-4 py-3 text-muted-foreground">{p.unit || '—'}</td>
                   <td className="px-4 py-3 font-medium text-foreground">
-                    {liveLabel !== null ? (
-                      <span className="flex items-center gap-1.5">
-                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-                        <span>{liveLabel}</span>
-                      </span>
-                    ) : awaitingFirstRead ? (
-                      <span className="text-muted-foreground text-xs italic">Aguardando leitura…</span>
-                    ) : (
-                      <span className={`${NO_COMM_TEXT_CLASS} text-xs italic`}>Sem resposta do equipamento</span>
-                    )}
+                    {renderCurrentValue(p, liveLabel)}
                   </td>
                   <td className="px-4 py-3">
                     <span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-medium border capitalize ${pointStatusBadge[p.status] ?? ''}`}>{p.status}</span>
                   </td>
                   <td className="px-4 py-3 text-right text-muted-foreground">
                     <span className="inline-flex items-center gap-1">
-                      <CriticalStarButton critical={isCritical(p)} size={16} className="!p-1" onToggle={() => handleToggleCritical(p.id, isCritical(p))} markHint={pointOpRole(p) !== 'status' ? CRITICAL_MARK_HINT : undefined} />
+                      <CriticalStarButton critical={isCritical(p)} size={16} className="!p-1" onToggle={() => handleToggleCritical(p.id, isCritical(p))} markHint={pointOpRole(p) !== 'status' ? CRITICAL_MARK_HINT : undefined} onSetStatusRole={pointOpRole(p) !== 'status' && p.valueType === 'boolean' ? () => handleSetStatusRole(p.id) : undefined} />
                       <button
                         type="button"
                         title="Editar ponto"

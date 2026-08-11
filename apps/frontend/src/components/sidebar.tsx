@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import {
   Bell,
@@ -26,6 +25,7 @@ import {
 } from 'lucide-react';
 import { useCurrentUser, type UserRole } from '@/hooks/useCurrentUser';
 import { useT } from '@/lib/i18n';
+import { useGatewayUpdateBadge } from '@/hooks/useGatewayUpdateBadge';
 
 // ─── Tipos de navegação ──────────────────────────────────────────────────────
 
@@ -35,6 +35,11 @@ interface NavItem {
   icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
   /** Item ainda não disponível — renderizado desabilitado com selo "em breve". */
   comingSoon?: boolean;
+  /**
+   * Quando fornecido e > 0, exibe um badge âmbar discreto com esse valor.
+   * Usado para indicar gateways com atualização disponível.
+   */
+  badge?: number;
 }
 
 interface NavGroup {
@@ -62,7 +67,7 @@ const NAV_ADMIN: NavGroup[] = [
       { label: 'Relatórios', href: '/reports',    icon: FileBarChart },
       { label: 'Automações', href: '/automation', icon: Zap },
       { label: 'Chamados (Infraspeak)', href: '/infraspeak', icon: ClipboardList },
-      { label: 'Chat IA',    href: '/ai',         icon: MessageSquare },
+      { label: 'Bluebee',    href: '/ai',         icon: MessageSquare },
     ],
   },
   {
@@ -97,7 +102,7 @@ const NAV_CCO: NavGroup[] = [
       { label: 'Relatórios', href: '/reports',    icon: FileBarChart },
       { label: 'Automações', href: '/automation', icon: Zap },
       { label: 'Chamados (Infraspeak)', href: '/infraspeak', icon: ClipboardList },
-      { label: 'Chat IA',    href: '/ai',         icon: MessageSquare },
+      { label: 'Bluebee',    href: '/ai',         icon: MessageSquare },
     ],
   },
   {
@@ -138,7 +143,7 @@ const NAV_CLIENTE: NavGroup[] = [
     group: 'Monitoramento',
     items: [
       { label: 'Relatórios', href: '/reports', icon: FileBarChart },
-      { label: 'Chat IA',    href: '/ai',      icon: MessageSquare },
+      { label: 'Bluebee',    href: '/ai',      icon: MessageSquare },
     ],
   },
   {
@@ -189,8 +194,26 @@ interface SidebarProps {
 export function Sidebar({ onClose, pinned }: SidebarProps) {
   const pathname   = usePathname();
   const user       = useCurrentUser();
-  const navigation = getNavForRole(user.role);
   const t          = useT();
+
+  // Only admins, CCOs and supervisors see the Gateways item — gate polling to avoid
+  // spurious 403s for CLIENTE users (who have no tenant scope on that endpoint).
+  const canSeeGateways = user.role === 'ADMIN' || user.role === 'CCO' || user.role === 'SUPERVISOR';
+  const gatewayBadge   = useGatewayUpdateBadge(canSeeGateways);
+
+  const baseNavigation = getNavForRole(user.role);
+
+  // Inject the live badge value into the Gateways nav item without mutating shared config.
+  const navigation: NavGroup[] = canSeeGateways && gatewayBadge > 0
+    ? baseNavigation.map((group) => ({
+        ...group,
+        items: group.items.map((item) =>
+          item.href === '/admin/gateways'
+            ? { ...item, badge: gatewayBadge }
+            : item,
+        ),
+      }))
+    : baseNavigation;
 
   // O estado de foco é local: expande temporariamente enquanto o cursor estiver sobre a barra lateral recolhida.
   const [hovered, setHovered] = useState(false);
@@ -229,16 +252,25 @@ export function Sidebar({ onClose, pinned }: SidebarProps) {
           isExpanded ? 'justify-start px-4 gap-2.5' : 'justify-center px-0',
         ].join(' ')}
       >
-        {/* Ícone BlueBee — sempre visível */}
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center">
-          <Image
-            src="/bluebee-logo.png"
-            alt="BlueBee"
-            width={40}
-            height={40}
-            priority
-            className="h-10 w-10 object-contain"
-          />
+        {/* Ícone hexagonal — sempre visível */}
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center text-cyan-400">
+          <svg viewBox="0 0 32 32" fill="none" className="h-8 w-8" aria-hidden>
+            <path
+              d="M16 2.5 27.5 9v14L16 29.5 4.5 23V9L16 2.5Z"
+              fill="currentColor"
+              fillOpacity="0.18"
+            />
+            <path
+              d="M16 2.5 27.5 9v14L16 29.5 4.5 23V9L16 2.5Z"
+              stroke="currentColor"
+              strokeWidth="1.75"
+              strokeLinejoin="round"
+            />
+            <path
+              d="M16 10.5 21 13.5v5L16 21.5 11 18.5v-5L16 10.5Z"
+              fill="currentColor"
+            />
+          </svg>
         </div>
 
         {/* Texto — desvanece & recolhe quando a barra lateral é estreita */}
@@ -248,7 +280,9 @@ export function Sidebar({ onClose, pinned }: SidebarProps) {
             isExpanded ? 'opacity-100 max-w-[10rem]' : 'opacity-0 max-w-0',
           ].join(' ')}
         >
-          <span className="whitespace-nowrap text-lg font-semibold text-white">BlueBee</span>
+          <span className="whitespace-nowrap text-lg font-semibold text-white">
+            <span className="text-white">Beel</span><span className="text-cyan-400">dings</span>
+          </span>
           <span className="whitespace-nowrap text-xs text-slate-400">Autobras</span>
         </div>
       </div>
@@ -275,8 +309,15 @@ export function Sidebar({ onClose, pinned }: SidebarProps) {
               )}
 
               <ul className="space-y-0.5">
-                {items.map(({ label, href, icon: Icon, comingSoon }) => {
+                {items.map(({ label, href, icon: Icon, comingSoon, badge }) => {
                   const active = isActive(href);
+                  // Build tooltip: badge info is appended when collapsed.
+                  const tooltipLabel = !isExpanded
+                    ? badge
+                      ? `${t(label)} — ${badge} gateway(s) ${t('com atualização disponível')}`
+                      : t(label)
+                    : undefined;
+
                   if (comingSoon) {
                     return (
                       <li key={href}>
@@ -309,9 +350,9 @@ export function Sidebar({ onClose, pinned }: SidebarProps) {
                       <Link
                         href={href}
                         onClick={() => onClose?.()}
-                        title={!isExpanded ? t(label) : undefined}
+                        title={tooltipLabel}
                         className={[
-                          'flex items-center rounded-md py-2 text-sm font-medium',
+                          'relative flex items-center rounded-md py-2 text-sm font-medium',
                           'transition-all duration-200',
                           isExpanded ? 'gap-2.5 px-2' : 'justify-center px-0',
                           active
@@ -319,18 +360,35 @@ export function Sidebar({ onClose, pinned }: SidebarProps) {
                             : 'text-slate-300 hover:bg-slate-800 hover:text-white',
                         ].join(' ')}
                       >
-                        <Icon
-                          className={`h-4 w-4 shrink-0 ${active ? 'text-white' : 'text-slate-400'}`}
-                          strokeWidth={1.5}
-                        />
+                        {/* Icon wrapper with update-available dot badge */}
+                        <span className="relative shrink-0">
+                          <Icon
+                            className={`h-4 w-4 ${active ? 'text-white' : 'text-slate-400'}`}
+                            strokeWidth={1.5}
+                          />
+                          {!!badge && (
+                            <span
+                              aria-label={`${badge} ${t('com atualização disponível')}`}
+                              className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-amber-400 ring-1 ring-slate-900"
+                            />
+                          )}
+                        </span>
                         {/* Rótulo — desvanece & recolhe quando a barra lateral é recolhida */}
                         <span
                           className={[
-                            'whitespace-nowrap overflow-hidden transition-all duration-200',
+                            'flex min-w-0 flex-1 items-center gap-1.5 whitespace-nowrap overflow-hidden transition-all duration-200',
                             isExpanded ? 'max-w-full opacity-100' : 'max-w-0 w-0 opacity-0',
                           ].join(' ')}
                         >
-                          {t(label)}
+                          <span className="truncate">{t(label)}</span>
+                          {!!badge && (
+                            <span
+                              title={`${badge} gateway(s) ${t('com atualização disponível')}`}
+                              className="ml-auto shrink-0 rounded-full bg-amber-400 px-1.5 py-0.5 text-[9px] font-bold leading-none text-slate-900"
+                            >
+                              {badge}
+                            </span>
+                          )}
                         </span>
                       </Link>
                     </li>

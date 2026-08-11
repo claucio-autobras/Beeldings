@@ -1,5 +1,5 @@
 import type { Device } from '@/modules/devices/services/devices.service';
-import type { Camera } from '@/modules/cftv/services/cftv.service';
+import type { Camera, ManagedSwitch } from '@/modules/cftv/services/cftv.service';
 
 /** Tipo de um ponto virtual (bancada de testes do SCADA). */
 export type VirtualKind = 'analog' | 'digital' | 'multistate';
@@ -56,13 +56,23 @@ export interface NewVirtualPoint {
 }
 
 /**
- * Dispositivo de uma tela SCADA: real (Device), virtual (bancada) ou câmera
- * CFTV (protocol 'snmp'/'onvif' — fora das listagens BMS, mas vinculável ao
- * widget de câmera; a telemetria casa por device+tag, como na área CFTV).
+ * Dispositivo de uma tela SCADA: real (Device), virtual (bancada), câmera
+ * CFTV (protocol 'snmp'/'onvif') ou switch gerenciável (monitoredDeviceType
+ * 'SWITCH'). A telemetria casa por device+tag em todos os casos.
  */
-export type ScreenDevice = Device | VirtualDevice | Camera;
+export type ScreenDevice = Device | VirtualDevice | Camera | ManagedSwitch;
 
-/** True quando o dispositivo é uma câmera CFTV (SNMP/ONVIF). */
+/** True quando o dispositivo é um switch gerenciável SNMP. */
+export function isSwitchDevice(dev: ScreenDevice): dev is ManagedSwitch {
+  return (dev as ManagedSwitch).monitoredDeviceType === 'SWITCH';
+}
+
+/**
+ * True quando o dispositivo é uma câmera CFTV (SNMP/ONVIF).
+ * Exclui explicitamente switches (monitoredDeviceType='SWITCH') que também
+ * têm protocol='snmp'.
+ */
 export function isCameraDevice(dev: ScreenDevice): dev is Camera {
+  if (isSwitchDevice(dev)) return false;
   return dev.protocol === 'snmp' || dev.protocol === 'onvif';
 }

@@ -12,6 +12,8 @@ interface Props {
   onCommand?: SendCommand;
   isEditor?: boolean;
   staticRender?: boolean;
+  /** Ponto sem comunicação (viewer): bloqueia o envio de comandos. */
+  commOffline?: boolean;
 }
 
 type Phase = 'idle' | 'sending' | 'error';
@@ -22,7 +24,7 @@ type Phase = 'idle' | 'sending' | 'error';
  * pending-commands, embutido no getValue — mesmo padrão do botão de comando).
  * Na renderização estática (modo edição), mostra a aparência de projeto (ligado).
  */
-export function ToggleSwitchWidgetView({ widget, getValue, onCommand, isEditor, staticRender }: Props) {
+export function ToggleSwitchWidgetView({ widget, getValue, onCommand, isEditor, staticRender, commOffline }: Props) {
   const [phase, setPhase] = useState<Phase>('idle');
   const [errMsg, setErrMsg] = useState<string | null>(null);
 
@@ -33,11 +35,12 @@ export function ToggleSwitchWidgetView({ widget, getValue, onCommand, isEditor, 
   const isOn = staticRender ? true : effective !== null && effective !== widget.offValue;
 
   const bound = Boolean(widget.deviceId && widget.tag);
-  const disabled = isEditor || !bound || phase === 'sending';
+  const disabled = isEditor || !bound || phase === 'sending' || Boolean(commOffline);
   const error = phase === 'error';
 
   async function toggle(): Promise<void> {
-    if (isEditor || !onCommand || !bound) return;
+    // Ponto sem comunicação: não dispara comando sobre estado visual defasado.
+    if (isEditor || !onCommand || !bound || commOffline) return;
     // toggle a partir do valor EFETIVO (otimista pendente ?? telemetria) — cliques
     // em sequência invertem corretamente sem esperar o vivo confirmar.
     const value = isOn ? widget.offValue : widget.onValue;
@@ -71,7 +74,8 @@ export function ToggleSwitchWidgetView({ widget, getValue, onCommand, isEditor, 
     <button
       type="button"
       onClick={() => void toggle()}
-      title={errMsg ?? (bound ? widget.tag : 'Vincule um ponto comandável')}
+      disabled={!isEditor && (commOffline || !bound)}
+      title={commOffline ? 'Sem comunicação — comando bloqueado' : (errMsg ?? (bound ? widget.tag : 'Vincule um ponto comandável'))}
       style={{
         width: '100%', height: '100%',
         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4,

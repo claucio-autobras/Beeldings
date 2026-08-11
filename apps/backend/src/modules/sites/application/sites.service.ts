@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException, BadRequestException } from '@nes
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { EmqxProvisioningService } from './emqx-provisioning.service.js';
 import type { CreateSiteDto } from './dtos/create-site.dto.js';
+import type { UpdateSiteDto } from './dtos/update-site.dto.js';
 import type { Site } from '@prisma/client';
 
 @Injectable()
@@ -30,10 +31,15 @@ export class SitesService {
       throw new NotFoundException(`Tenant ${dto.tenantId} não encontrado`);
     }
 
+    const location = dto.location?.trim() || null;
+    const responsibleName = dto.responsibleName?.trim() || null;
+
     return this.prisma.site.create({
       data: {
         name: dto.name.trim(),
         tenantId: dto.tenantId,
+        location,
+        responsibleName,
       },
     });
   }
@@ -58,6 +64,30 @@ export class SitesService {
     }
 
     return site;
+  }
+
+  async update(id: string, tenantId: string | undefined, dto: UpdateSiteDto): Promise<Site> {
+    const site = await this.prisma.site.findFirst({
+      where: tenantId ? { id, tenantId } : { id },
+    });
+    if (!site) throw new NotFoundException(`Site ${id} não encontrado`);
+
+    const data: { name?: string; location?: string | null; responsibleName?: string | null } = {};
+    if (dto.name !== undefined) {
+      const trimmed = dto.name.trim();
+      if (trimmed.length === 0) throw new BadRequestException('name não pode ser vazio');
+      data.name = trimmed;
+    }
+    if (dto.location !== undefined) {
+      data.location = dto.location === '' ? null : (dto.location?.trim() ?? null);
+    }
+    if (dto.responsibleName !== undefined) {
+      data.responsibleName = dto.responsibleName === '' ? null : (dto.responsibleName?.trim() ?? null);
+    }
+
+    if (Object.keys(data).length === 0) return site;
+
+    return this.prisma.site.update({ where: { id }, data });
   }
 
   async delete(id: string, tenantId: string | undefined): Promise<void> {

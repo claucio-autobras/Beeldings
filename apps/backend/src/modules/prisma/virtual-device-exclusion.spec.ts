@@ -268,7 +268,14 @@ describe('Bancada de Testes (virtual) nunca conta como equipamento', () => {
     const { realDevice, virtualDevice } = makeDevices();
     const prisma = makeFakePrisma([realDevice, virtualDevice]);
     const fakeKnowledge = { search: async () => [] } as AnyRecord;
-    const ai = new AiService(prisma, fakeKnowledge, { record: jest.fn() } as never);
+    const ai = new AiService(
+      prisma as never,
+      fakeKnowledge as never,
+      { record: jest.fn() } as never,
+      { findSimilar: jest.fn(async () => []) } as never,
+      { findAll: jest.fn(async () => []) } as never,
+      { getStatus: jest.fn(() => 'online'), resolveLastSeenMany: jest.fn(async () => new Map()) } as never,
+    );
 
     await expect(ai.suggestForDevice('t1', 'dev-virtual')).rejects.toBeInstanceOf(
       NotFoundException,

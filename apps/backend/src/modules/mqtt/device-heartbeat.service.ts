@@ -1,4 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service.js';
 
 /**
  * Diagnóstico extraído do último heartbeat de um dispositivo MQTT.
@@ -23,32 +25,93 @@ const IP_KEYS = ['ip', 'ip_address', 'ipaddress', 'local_ip', 'localip', 'ipaddr
 const UPTIME_KEYS = ['uptime', 'uptime_s', 'uptime_sec', 'uptime_seconds', 'uptimeseconds'];
 
 /**
+ * Intervalo mínimo entre escritas duráveis por dispositivo. Heartbeats chegam
+ * a cada ~15–90s; a cópia durável só existe para sobreviver a restart/cluster,
+ * então uma escrita por minuto é suficiente e não pesa na ingestão.
+ */
+const PERSIST_MIN_INTERVAL_MS = 60_000;
+
+/**
  * DeviceHeartbeatService
  *
- * Guarda, EM MEMÓRIA, o diagnóstico do ÚLTIMO heartbeat de cada dispositivo
- * MQTT (mesmo padrão do GatewayHealthService). Aditivo: não afeta presença
- * (DeviceStatusService continua sendo a fonte de online/offline).
+ * Guarda o diagnóstico do ÚLTIMO heartbeat de cada dispositivo MQTT:
+ * memória (rápido, por instância) + cópia durável em devices.last_heartbeat
+ * (sobrevive a restart e vale em qualquer instância do cluster).
+ * Aditivo: não afeta presença (DeviceStatusService continua sendo a fonte
+ * de online/offline).
  */
 @Injectable()
 export class DeviceHeartbeatService {
+  private readonly logger = new Logger(DeviceHeartbeatService.name);
   private readonly last = new Map<string, DeviceHeartbeatDiag>();
+  /** Última escrita durável por device (coalescência: no máx. 1/min). */
+  private readonly lastPersistAt = new Map<string, number>();
+
+  constructor(private readonly prisma: PrismaService) {}
 
   /** Aplica o payload do heartbeat recebido (qualquer shape; extrai o que der). */
   apply(deviceId: string, payload: unknown, timeoutSeconds: number | null): void {
     if (!deviceId) return;
     const flat = this.flatten(payload);
-    this.last.set(deviceId, {
+    const diag: DeviceHeartbeatDiag = {
       receivedAt: new Date().toISOString(),
       timeoutSeconds,
       rssi: this.pickNumber(flat, RSSI_KEYS),
       ip: this.pickIp(flat),
       uptimeSeconds: this.pickNumber(flat, UPTIME_KEYS),
-    });
+    };
+    const prev = this.last.get(deviceId);
+    this.last.set(deviceId, diag);
+
+    // Cópia durável coalescida: grava logo no primeiro heartbeat ou quando os
+    // valores mudaram; senão, no máximo a cada PERSIST_MIN_INTERVAL_MS.
+    const now = Date.now();
+    const lastAt = this.lastPersistAt.get(deviceId) ?? 0;
+    const changed =
+      !prev || prev.rssi !== diag.rssi || prev.ip !== diag.ip;
+    if (!changed && now - lastAt < PERSIST_MIN_INTERVAL_MS) return;
+    this.lastPersistAt.set(deviceId, now);
+    void this.prisma.device
+      .update({
+        where: { id: deviceId },
+        data: { lastHeartbeat: diag as unknown as Prisma.InputJsonValue },
+      })
+      .catch((err: unknown) => {
+        this.logger.warn(
+          `Falha ao persistir heartbeat do device ${deviceId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
   }
 
-  /** Último diagnóstico conhecido de um dispositivo, ou null. */
-  get(deviceId: string): DeviceHeartbeatDiag | null {
-    return this.last.get(deviceId) ?? null;
+  /**
+   * Último diagnóstico conhecido de um dispositivo, ou null.
+   * Fallback durável: sem valor em memória (restart/outra instância), lê a
+   * cópia persistida em devices.last_heartbeat.
+   */
+  async get(deviceId: string): Promise<DeviceHeartbeatDiag | null> {
+    const mem = this.last.get(deviceId);
+    if (mem) return mem;
+    const row = await this.prisma.device.findUnique({
+      where: { id: deviceId },
+      select: { lastHeartbeat: true },
+    });
+    return this.parseStored(row?.lastHeartbeat ?? null);
+  }
+
+  /** Valida o JSON persistido (defensivo: nunca retorna shape inválido). */
+  private parseStored(raw: unknown): DeviceHeartbeatDiag | null {
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
+    const o = raw as Record<string, unknown>;
+    if (typeof o.receivedAt !== 'string' || !o.receivedAt) return null;
+    const num = (v: unknown): number | null =>
+      typeof v === 'number' && Number.isFinite(v) ? v : null;
+    return {
+      receivedAt: o.receivedAt,
+      timeoutSeconds: num(o.timeoutSeconds),
+      rssi: num(o.rssi),
+      ip: typeof o.ip === 'string' && o.ip ? o.ip : null,
+      uptimeSeconds: num(o.uptimeSeconds),
+    };
   }
 
   /** Achata o payload (até 2 níveis) em chaves lower-case → valor primitivo. */

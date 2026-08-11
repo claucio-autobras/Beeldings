@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
 import { MqttModule } from '../mqtt/mqtt.module';
 import { ObservabilityModule } from '../observability/observability.module';
+import { DriversModule } from '../drivers/drivers.module';
 import { OnvifDiscoveryService } from './onvif-discovery.service';
+import { OnvifLiveViewService } from './onvif-live-view.service';
 import { OnvifPollingService } from './onvif-polling.service';
 import { OnvifProbeService } from './onvif-probe.service';
 
@@ -18,7 +20,12 @@ import { OnvifProbeService } from './onvif-probe.service';
  *     'command.onvif.scan') — descobre câmeras ONVIF na rede sem credenciais.
  */
 @Module({
-  imports: [MqttModule, ObservabilityModule],
-  providers: [OnvifPollingService, OnvifProbeService, OnvifDiscoveryService],
+  imports: [MqttModule, ObservabilityModule, DriversModule],
+  providers: [
+    OnvifPollingService,
+    OnvifProbeService,
+    OnvifDiscoveryService,
+    OnvifLiveViewService,
+  ],
 })
 export class OnvifModule {}

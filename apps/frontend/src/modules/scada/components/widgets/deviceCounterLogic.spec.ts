@@ -1,4 +1,4 @@
-import { countDevices, countPoints, formatCount, listCounterPoints } from './deviceCounterLogic';
+import { countDevices, countPoints, formatCount, listCounterPoints, type GetCameraHealth } from './deviceCounterLogic';
 import type { DeviceCounterWidget } from '../../types/scada.types';
 import type { ScreenDevice } from '../../types/virtual.types';
 import type { PointStatus } from '../../hooks/useScreenTelemetry';
@@ -203,5 +203,50 @@ describe('retrocompatibilidade dos modos existentes', () => {
     const w = widget({ points: [] });
     expect(countDevices(w, [ctrl], getValue({}), getStatus({})))
       .toEqual({ on: 0, off: 0, noData: 0, total: 0 });
+  });
+});
+
+describe('connectivity + getCameraHealth (gateway offline)', () => {
+  const ctrl = dev('ctrl1', 'bacnet', ['relay']);
+  const cam1 = dev('cam1', 'snmp', ['STATUS']);
+  const cam2 = dev('cam2', 'onvif', ['STATUS']);
+  const virt = dev('virt1', 'virtual', ['V1']);
+
+  /** Simula getCameraHealth: cam1 → offline (gateway offline), cam2 → online. */
+  const healthMap: Record<string, 'online' | 'offline' | 'unknown'> = {
+    cam1: 'offline',
+    cam2: 'online',
+  };
+  const getCameraHealth: GetCameraHealth = (camera) => healthMap[camera.id] ?? 'unknown';
+
+  it('câmera com gateway offline é contada como offline, não online', () => {
+    const w = widget({ mode: 'connectivity', points: undefined });
+    // Sem getCameraHealth (retrocompat): STATUS=1 faz cam1 contar como online.
+    const values: Values = { 'cam1:STATUS': 1, 'cam2:STATUS': 1 };
+    const statuses: Statuses = { 'ctrl1:relay': 'live' };
+    const resultLegacy = countDevices(w, [ctrl, cam1, cam2, virt], getValue(values), getStatus(statuses));
+    expect(resultLegacy).toEqual({ on: 3, off: 0, noData: 0, total: 3 });
+
+    // Com getCameraHealth: cam1 conta como offline (gateway offline).
+    const resultNew = countDevices(w, [ctrl, cam1, cam2, virt], getValue(values), getStatus(statuses), getCameraHealth);
+    expect(resultNew).toEqual({ on: 2, off: 1, noData: 0, total: 3 });
+  });
+
+  it('câmera com saúde desconhecida (gateway sem dados) conta como sem-dados', () => {
+    const w = widget({ mode: 'connectivity', points: undefined });
+    const unknownHealth: GetCameraHealth = () => 'unknown';
+    const values: Values = { 'cam1:STATUS': 1 };
+    const statuses: Statuses = {};
+    const r = countDevices(w, [cam1], getValue(values), getStatus(statuses), unknownHealth);
+    expect(r).toEqual({ on: 0, off: 0, noData: 1, total: 1 });
+  });
+
+  it('dispositivos não-câmera não são afetados pelo getCameraHealth', () => {
+    const w = widget({ mode: 'connectivity', points: undefined });
+    const alwaysOffline: GetCameraHealth = () => 'offline';
+    const statuses: Statuses = { 'ctrl1:relay': 'live' };
+    const r = countDevices(w, [ctrl], getValue({}), getStatus(statuses), alwaysOffline);
+    // ctrl1 é BACnet — ignora getCameraHealth, usa frescor da telemetria (live → on)
+    expect(r).toEqual({ on: 1, off: 0, noData: 0, total: 1 });
   });
 });

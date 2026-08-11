@@ -25,6 +25,7 @@ import { HealthModule } from './modules/health/health.module';
 import { AiModule } from './modules/ai/ai.module';
 import { KnowledgeModule } from './modules/knowledge/knowledge.module';
 import { AutomationModule } from './modules/automation/automation.module';
+import { NotificationRecipientsModule } from './modules/notification-recipients/notification-recipients.module';
 
 @Module({
   imports: [
@@ -64,6 +65,7 @@ import { AutomationModule } from './modules/automation/automation.module';
     KnowledgeModule,
     AiModule,
     AutomationModule,
+    NotificationRecipientsModule,
   ],
   controllers: [AppController],
   providers: [

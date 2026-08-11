@@ -41,6 +41,8 @@ import {
   DeviceAreaTable,
   QuickAccess,
   OperationalSummaryCard,
+  TopOffendersCard,
+  AdminTrendCard,
 } from '../components/dashboard.component';
 
 const IS_MOCK = process.env.NEXT_PUBLIC_USE_MOCK === 'true';
@@ -202,6 +204,8 @@ function AdminDashboardView({ period }: { period: DashboardPeriod }) {
               isLoading={loadingCritical}
             />
           </div>
+
+          <AdminTrendCard trend={overview?.trend} period={period} isLoading={loadingOverview} />
 
           <GatewaysHealthTable tenantNameById={tenantNameById} />
 
@@ -399,8 +403,14 @@ function ClientDashboardView({ tenantId, siteId, period }: ClientDashboardViewPr
             pendingAck={pendingAck}
             resolvedInPeriod={overview?.current.resolved ?? null}
             periodLabel={t(PERIOD_LABEL[period])}
-            devicesOnline={onlineDevices}
-            devicesTotal={allDevices.length}
+            availability={overview?.availability}
+          />
+          <TopOffendersCard
+            offenders={overview?.topOffenders}
+            from={overview?.from}
+            to={overview?.to}
+            periodLabel={t(PERIOD_LABEL[period])}
+            isLoading={loadingOverview}
           />
         </div>
       </div>

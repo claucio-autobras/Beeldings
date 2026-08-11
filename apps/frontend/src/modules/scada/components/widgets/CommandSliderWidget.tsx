@@ -11,9 +11,11 @@ interface Props {
   onCommand?: SendCommand;
   isEditor?: boolean;
   staticRender?: boolean;
+  /** Ponto sem comunicação (viewer): bloqueia o envio de comandos. */
+  commOffline?: boolean;
 }
 
-export function CommandSliderWidgetView({ widget, getValue, onCommand, isEditor, staticRender }: Props) {
+export function CommandSliderWidgetView({ widget, getValue, onCommand, isEditor, staticRender, commOffline }: Props) {
   // Valor que o operador ajustou/comandou (otimista). Tem prioridade sobre a
   // telemetria até o vivo confirmar (dentro de meio passo); enquanto null, reflete o vivo.
   const [draft, setDraft] = useState<number | null>(null);
@@ -33,6 +35,8 @@ export function CommandSliderWidgetView({ widget, getValue, onCommand, isEditor,
 
   async function commit(value: number): Promise<void> {
     if (isEditor || !onCommand) return;
+    // Ponto sem comunicação: não envia comando (o slider já fica desabilitado).
+    if (commOffline) { setDraft(null); return; }
     setDraft(value); // mantém o valor comandado na tela de imediato
     setPhase('sending');
     setErrMsg(null);
@@ -63,7 +67,7 @@ export function CommandSliderWidgetView({ widget, getValue, onCommand, isEditor,
     const pctLabel = staticRender ? '––' : hasLive ? `${Math.round(pct)}%` : 'sem dados';
     return (
       <div
-        title={errMsg ?? (bound ? widget.tag : 'Vincule um ponto analógico comandável (AO)')}
+        title={commOffline ? 'Sem comunicação — comando bloqueado' : (errMsg ?? (bound ? widget.tag : 'Vincule um ponto analógico comandável (AO)'))}
         style={{
           width: '100%', height: '100%', boxSizing: 'border-box',
           display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 8,
@@ -94,14 +98,14 @@ export function CommandSliderWidgetView({ widget, getValue, onCommand, isEditor,
           max={widget.maxValue}
           step={widget.step || 1}
           value={clamped}
-          disabled={isEditor || staticRender || !bound}
+          disabled={isEditor || staticRender || !bound || commOffline}
           onChange={(e) => setDraft(Number(e.target.value))}
           onPointerUp={() => { if (!isEditor && draft !== null) void commit(draft); }}
           onKeyUp={() => { if (!isEditor && draft !== null) void commit(draft); }}
           style={{
             width: '100%',
             accentColor: accent,
-            cursor: isEditor || staticRender || !bound ? 'default' : 'pointer',
+            cursor: isEditor || staticRender || !bound || commOffline ? 'default' : 'pointer',
             background: `linear-gradient(to right, ${accent} ${pct}%, rgba(148,163,184,0.3) ${pct}%)`,
             height: 4, borderRadius: 4, appearance: 'none', WebkitAppearance: 'none',
           }}
@@ -112,7 +116,7 @@ export function CommandSliderWidgetView({ widget, getValue, onCommand, isEditor,
 
   return (
     <div
-      title={errMsg ?? (bound ? widget.tag : 'Vincule um ponto analógico comandável (AO)')}
+      title={commOffline ? 'Sem comunicação — comando bloqueado' : (errMsg ?? (bound ? widget.tag : 'Vincule um ponto analógico comandável (AO)'))}
       style={{
         width: '100%', height: '100%',
         display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4,
@@ -141,14 +145,14 @@ export function CommandSliderWidgetView({ widget, getValue, onCommand, isEditor,
         max={widget.maxValue}
         step={widget.step || 1}
         value={clamped}
-        disabled={isEditor || !bound}
+        disabled={isEditor || !bound || commOffline}
         onChange={(e) => setDraft(Number(e.target.value))}
         onPointerUp={() => { if (!isEditor && draft !== null) void commit(draft); }}
         onKeyUp={() => { if (!isEditor && draft !== null) void commit(draft); }}
         style={{
           width: '100%',
           accentColor: accent,
-          cursor: isEditor || !bound ? 'default' : 'pointer',
+          cursor: isEditor || !bound || commOffline ? 'default' : 'pointer',
           background: `linear-gradient(to right, ${accent} ${pct}%, rgba(148,163,184,0.25) ${pct}%)`,
           height: 4, borderRadius: 4, appearance: 'none', WebkitAppearance: 'none',
         }}

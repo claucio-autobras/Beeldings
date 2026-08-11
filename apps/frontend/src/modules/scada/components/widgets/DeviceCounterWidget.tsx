@@ -3,10 +3,14 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { MonitorSmartphone, X } from 'lucide-react';
+import { useMemo } from 'react';
 import type { DeviceCounterWidget } from '../../types/scada.types';
+import { scadaBackgroundStyle } from '../../types/scada.types';
 import type { PointStatus } from '../../hooks/useScreenTelemetry';
 import type { ScreenDevice } from '../../types/virtual.types';
+import { isCameraDevice } from '../../types/virtual.types';
 import { countDevices, formatCount, listCounterPoints, type CountState } from './deviceCounterLogic';
+import { cameraHealthFromReader } from '@/modules/cftv/utils/telemetry-format';
 import { usePortalContainer } from '../../hooks/usePortalContainer';
 
 // Lógica pura de contagem (testável sem React) vive em deviceCounterLogic.ts.
@@ -17,6 +21,12 @@ interface Props {
   devices: ScreenDevice[];
   getValue: (deviceId: string, tag: string) => number | boolean | string | null;
   getTagStatus?: (deviceId: string, tag: string) => PointStatus;
+  /**
+   * Leitura completa (valor + timestamp) de um ponto. Quando fornecida, o modo
+   * 'connectivity' usa o critério canônico CFTV para câmeras: STATUS + gateway
+   * liveness + frescor de 5 min (em vez do valor bruto do STATUS).
+   */
+  getTagReading?: (deviceId: string, tag: string) => { value: number | boolean | string | null; timestamp: string | null } | null;
   /** Render estático (editor fora do Preview): aparência de projeto, sem telemetria. */
   staticRender?: boolean;
   /**
@@ -130,9 +140,19 @@ function PointListPopup({
   );
 }
 
-export function DeviceCounterWidgetView({ widget, devices, getValue, getTagStatus, staticRender, interactive }: Props) {
+export function DeviceCounterWidgetView({ widget, devices, getValue, getTagStatus, getTagReading, staticRender, interactive }: Props) {
   const [open, setOpen] = useState(false);
-  const result = staticRender ? null : countDevices(widget, devices, getValue, getTagStatus);
+
+  // Build the canonical camera-health callback from getTagReading (when available).
+  // This ensures connectivity mode uses STATUS + gateway liveness + 5-min staleness,
+  // matching the CFTV module — a frozen STATUS on an offline gateway won't count online.
+  const getCameraHealth = useMemo(() => {
+    if (!getTagReading) return undefined;
+    return (camera: Parameters<typeof cameraHealthFromReader>[0]) =>
+      cameraHealthFromReader(camera, getTagReading).health;
+  }, [getTagReading]);
+
+  const result = staticRender ? null : countDevices(widget, devices, getValue, getTagStatus, getCameraHealth);
 
   // "Sem dados": render estático, nenhum dispositivo elegível ou nenhum com informação.
   const hasData = Boolean(result && result.total > 0 && result.noData < result.total);
@@ -156,7 +176,7 @@ export function DeviceCounterWidgetView({ widget, devices, getValue, getTagStatu
           gap: 8,
           padding: '0 10px',
           boxSizing: 'border-box',
-          backgroundColor: widget.backgroundColor,
+          ...scadaBackgroundStyle(widget.backgroundColor),
           border: `1px solid ${accent}`,
           borderRadius: widget.borderRadius,
           color: widget.textColor,

@@ -1,0 +1,74 @@
+// Dicionário pt-BR → en do módulo Ajustes (settings) — destinatários de notificação.
+export const DICT_SETTINGS: Record<string, string> = {
+  // ── Seção destinatários ──
+  'Destinatários de Notificação': 'Notification Recipients',
+  'Quem deve receber alarmes e insights por e-mail ou WhatsApp': 'Who should receive alarms and insights by email or WhatsApp',
+  'Novo destinatário': 'New recipient',
+  'Nenhum destinatário cadastrado.': 'No recipients registered.',
+  'Carregando destinatários…': 'Loading recipients…',
+  'Não foi possível carregar os destinatários.': 'Could not load recipients.',
+
+  // ── Tabela ──
+  'Nome': 'Name',
+  'Contato': 'Contact',
+  'Canais': 'Channels',
+  'Categorias': 'Categories',
+  'Escopo': 'Scope',
+  'Todas as unidades': 'All sites',
+  'unidade': 'site',
+  'unidades': 'sites',
+  'destinatário': 'recipient',
+  'destinatários': 'recipients',
+  'Ativo': 'Active',
+  'Inativo': 'Inactive',
+  'Editar': 'Edit',
+  'Excluir': 'Delete',
+
+  // ── Diálogo criar/editar ──
+  'Novo Destinatário': 'New Recipient',
+  'Editar Destinatário': 'Edit Recipient',
+  'Nome do destinatário': "Recipient's name",
+  'Ex.: João Silva': 'e.g. John Smith',
+  'E-mail': 'Email',
+  'voce@empresa.com': 'you@company.com',
+  'Telefone (WhatsApp)': 'Phone (WhatsApp)',
+  'Ex.: +5511912345678': 'e.g. +5511912345678',
+  'Digite DDD e número. Para internacional, comece com + e o código do país.': 'Type area code and number. For international, start with + and the country code.',
+  'Canais habilitados': 'Enabled channels',
+  'Categorias de notificação': 'Notification categories',
+  'Alarmes': 'Alarms',
+  'Insights da IA': 'AI Insights',
+  'Escopo de unidades': 'Site scope',
+  'Todas as unidades do cliente': 'All client sites',
+  'Unidades específicas': 'Specific sites',
+  'Selecione ao menos uma unidade': 'Select at least one site',
+  'Carregando unidades…': 'Loading sites…',
+  'Nenhuma unidade disponível': 'No sites available',
+  'Destinatário ativo': 'Active recipient',
+  'Salvar': 'Save',
+  'Criar': 'Create',
+  'Cancelar': 'Cancel',
+
+  // ── Confirmação de exclusão ──
+  'Excluir destinatário': 'Delete recipient',
+  'Tem certeza que deseja excluir': 'Are you sure you want to delete',
+  'Esta ação não pode ser desfeita.': 'This action cannot be undone.',
+  'Excluindo…': 'Deleting…',
+
+  // ── Mensagens de feedback ──
+  'Destinatário criado com sucesso.': 'Recipient created successfully.',
+  'Destinatário atualizado com sucesso.': 'Recipient updated successfully.',
+  'Destinatário excluído com sucesso.': 'Recipient deleted successfully.',
+  'Não foi possível salvar o destinatário.': 'Could not save the recipient.',
+  'Não foi possível excluir o destinatário.': 'Could not delete the recipient.',
+
+  // ── Validação ──
+  'Informe ao menos um contato: e-mail ou telefone': 'Provide at least one contact: email or phone',
+  'Habilite ao menos um canal: E-mail ou WhatsApp': 'Enable at least one channel: Email or WhatsApp',
+  'Informe um e-mail válido': 'Provide a valid email address',
+  'Telefone incompleto ou inválido. Ex.: (11) 91234-5678': 'Phone number incomplete or invalid. E.g. (11) 91234-5678',
+  'Telefone incompleto ou inválido. Ex.: (11) 91234-5678.': 'Phone number incomplete or invalid. E.g. (11) 91234-5678.',
+  'Canal E-mail habilitado, mas e-mail não informado': 'Email channel enabled but no email provided',
+  'Canal WhatsApp habilitado, mas telefone não informado': 'WhatsApp channel enabled but no phone provided',
+  'Informe ao menos uma unidade quando "Todas as unidades" estiver desabilitado': 'Provide at least one site when "All sites" is disabled',
+};

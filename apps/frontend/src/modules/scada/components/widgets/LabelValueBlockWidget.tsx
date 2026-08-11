@@ -1,6 +1,7 @@
 'use client';
 
 import type { LabelValueBlockWidget } from '@/mocks/data/scada.mock';
+import { scadaBackgroundStyle } from '../../types/scada.types';
 
 interface Props {
   widget: LabelValueBlockWidget;
@@ -40,7 +41,7 @@ export function LabelValueBlockWidgetView({ widget, getValue, colorOverride, tex
         justifyContent: 'center',
         // Padding interno configurável; ausente = legado '8px 12px'.
         padding: widget.padding !== undefined ? Math.max(0, widget.padding) : '8px 12px',
-        backgroundColor: widget.backgroundColor,
+        ...scadaBackgroundStyle(widget.backgroundColor),
         borderRadius: widget.borderRadius,
         overflow: 'hidden',
         userSelect: 'none',

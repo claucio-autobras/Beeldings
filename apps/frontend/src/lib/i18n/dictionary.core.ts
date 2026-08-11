@@ -11,6 +11,7 @@ export const DICT_CORE: Record<string, string> = {
   'Relatórios': 'Reports',
   'Automações': 'Automations',
   'Chat IA': 'AI Chat',
+  'Bluebee': 'Bluebee',
   'Clientes': 'Clients',
   'Usuários': 'Users',
   'Agente de Gateway': 'Gateway Agent',

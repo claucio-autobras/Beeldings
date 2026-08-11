@@ -3,7 +3,13 @@
 import { useQuery } from '@tanstack/react-query';
 import { getProject } from '@/modules/projects/services/projects.service';
 import { getDevices, type Device } from '@/modules/devices/services/devices.service';
-import { getCameras, type Camera } from '@/modules/cftv/services/cftv.service';
+import {
+  getCameras,
+  getSwitches,
+  type Camera,
+  type ManagedSwitch,
+  type SwitchScalarPoint,
+} from '@/modules/cftv/services/cftv.service';
 import { getProjectVirtualDevices } from '../services/simulator.service';
 import type { ScreenDevice, VirtualDevice } from '../types/virtual.types';
 
@@ -14,6 +20,60 @@ interface UseScreenDevicesResult {
   /** Gateway resolvido a partir do projeto (para diagnóstico/empty-state). */
   gatewayId: string | null;
 }
+
+// ─── Switch flattening ────────────────────────────────────────────────────────
+
+/**
+ * Converte um ponto de porta (embutido em SwitchPortEntry) no mesmo formato de
+ * SwitchScalarPoint para que o BindingSelector possa listá-lo junto dos
+ * pontos escalares (STATUS / UPTIME / CPU).
+ *
+ * Os campos `metric` e `unit` são inferidos a partir do objectType de origem:
+ *   sw-state → if_oper_status (sem unidade)
+ *   sw-in    → if_in_octets  (B/s)
+ *   sw-out   → if_out_octets (B/s)
+ */
+function portPointAsScalar(
+  p: { id: string; tag: string; objectName: string; lastValue: number | null; lastValueAt: string | null },
+  metric: string,
+  unit: string,
+): SwitchScalarPoint {
+  return {
+    id: p.id,
+    tag: p.tag,
+    objectName: p.objectName,
+    metric,
+    oid: null,
+    unsupported: false,
+    unit,
+    critical: false,
+    lastValue: p.lastValue,
+    lastValueAt: p.lastValueAt,
+    lastValueState: null,
+  };
+}
+
+/**
+ * Retorna uma cópia do switch com todos os pontos de porta achatados em
+ * `points` (além dos pontos escalares já presentes). Usado apenas para o
+ * SCADA — a página CFTV continua lendo `sw.ports` do seu próprio cache.
+ */
+function flattenSwitchForScada(sw: ManagedSwitch): ManagedSwitch {
+  const portPoints: SwitchScalarPoint[] = sw.ports.flatMap((port) => {
+    const pts: SwitchScalarPoint[] = [];
+    if (port.statePoint)
+      pts.push(portPointAsScalar(port.statePoint, 'if_oper_status', ''));
+    if (port.inPoint)
+      pts.push(portPointAsScalar(port.inPoint, 'if_in_octets', 'B/s'));
+    if (port.outPoint)
+      pts.push(portPointAsScalar(port.outPoint, 'if_out_octets', 'B/s'));
+    return pts;
+  });
+  // Porta points appended after scalars; sw.ports preserved (same reference).
+  return { ...sw, points: [...sw.points, ...portPoints] };
+}
+
+// ─── Hook ─────────────────────────────────────────────────────────────────────
 
 /**
  * Resolve as controladoras reais de uma tela SCADA: tela → projeto → gateway →
@@ -52,13 +112,25 @@ export function useScreenDevices(
     enabled: Boolean(tenantId),
   });
 
+  // Switches gerenciáveis — pontos escalares + pontos de porta achatados para
+  // que o BindingSelector possa vinculá-los a widgets genéricos.
+  const { data: switches = [], isLoading: loadingSwitches } = useQuery<ManagedSwitch[]>({
+    queryKey: ['cftv-switches', tenantId],
+    queryFn: () => getSwitches(tenantId),
+    enabled: Boolean(tenantId),
+  });
+
   const scoped = gatewayId ? devices.filter((d) => d.gatewayId === gatewayId) : [];
   const scopedCameras = gatewayId ? cameras.filter((c) => c.gatewayId === gatewayId) : [];
-  const merged: ScreenDevice[] = [...scoped, ...scopedCameras, ...virtualDevices];
+  // flattenSwitchForScada appends port points to sw.points for the selector.
+  const scopedSwitches = gatewayId
+    ? switches.filter((s) => s.gatewayId === gatewayId).map(flattenSwitchForScada)
+    : [];
+  const merged: ScreenDevice[] = [...scoped, ...scopedCameras, ...scopedSwitches, ...virtualDevices];
 
   return {
     devices: merged,
     gatewayId,
-    loading: loadingProject || loadingDevices || loadingVirtual || loadingCameras,
+    loading: loadingProject || loadingDevices || loadingVirtual || loadingCameras || loadingSwitches,
   };
 }

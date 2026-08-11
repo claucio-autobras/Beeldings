@@ -76,6 +76,7 @@ const AUDIT_ROUTES: Record<string, AuditRoute> = {
   'DELETE /projects/:id': { action: 'DELETE', entity: 'Projeto' },
   'DELETE /gateways/:id': { action: 'DELETE', entity: 'Gateway' },
   'POST /gateways/:id/reprovision': { action: 'UPDATE', entity: 'Gateway' },
+  'POST /gateways/:id/update/cancel': { action: 'UPDATE', entity: 'Atualização do gateway' },
 
   // SCADA
   'POST /scada/screens': { action: 'CREATE', entity: 'Tela SCADA' },
@@ -90,6 +91,9 @@ const AUDIT_ROUTES: Record<string, AuditRoute> = {
   'POST /cftv/cameras': { action: 'CREATE', entity: 'Câmera CFTV' },
   'PATCH /cftv/cameras/:id': { action: 'UPDATE', entity: 'Câmera CFTV', captureDevice: true },
   'DELETE /cftv/cameras/:id': { action: 'DELETE', entity: 'Câmera CFTV', captureDevice: true },
+
+  // Infraspeak (abertura de chamado na API externa)
+  'POST /infraspeak/requests': { action: 'CREATE', entity: 'Chamado Infraspeak' },
 
   // Bancada de Testes (pontos virtuais)
   'POST /scada/simulator/:deviceId/points': { action: 'CREATE', entity: 'Ponto virtual (bancada)' },

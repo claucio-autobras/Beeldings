@@ -4,6 +4,7 @@ import { Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Cctv, DoorOpen } from 'lucide-react';
 import CftvPage from './cftv.page';
+import ScaPage from '@/modules/sca/pages/sca.page';
 
 type TabKey = 'cftv' | 'sca';
 
@@ -12,9 +13,9 @@ function CftvScaContent() {
   const initialTab: TabKey = searchParams.get('tab') === 'sca' ? 'sca' : 'cftv';
   const [tab, setTab] = useState<TabKey>(initialTab);
 
-  const tabs: { key: TabKey; label: string; icon: typeof Cctv; comingSoon?: boolean }[] = [
+  const tabs: { key: TabKey; label: string; icon: typeof Cctv }[] = [
     { key: 'cftv', label: 'CFTV', icon: Cctv },
-    { key: 'sca', label: 'SCA', icon: DoorOpen, comingSoon: true },
+    { key: 'sca', label: 'SCA', icon: DoorOpen },
   ];
 
   return (
@@ -28,7 +29,7 @@ function CftvScaContent() {
 
       {/* Abas */}
       <div className="flex items-center gap-1 border-b border-border">
-        {tabs.map(({ key, label, icon: Icon, comingSoon }) => {
+        {tabs.map(({ key, label, icon: Icon }) => {
           const active = tab === key;
           return (
             <button
@@ -43,11 +44,6 @@ function CftvScaContent() {
             >
               <Icon className="h-4 w-4" strokeWidth={1.5} />
               {label}
-              {comingSoon && (
-                <span className="rounded-full bg-muted px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  em breve
-                </span>
-              )}
             </button>
           );
         })}
@@ -56,13 +52,7 @@ function CftvScaContent() {
       {tab === 'cftv' ? (
         <CftvPage embedded />
       ) : (
-        <div className="rounded-lg border border-border bg-card py-16 text-center">
-          <DoorOpen className="mx-auto mb-3 h-8 w-8 text-muted-foreground opacity-40" />
-          <p className="text-sm font-medium text-foreground">SCA — Controle de Acesso</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Esta funcionalidade está em desenvolvimento e será disponibilizada em breve.
-          </p>
-        </div>
+        <ScaPage embedded />
       )}
     </div>
   );

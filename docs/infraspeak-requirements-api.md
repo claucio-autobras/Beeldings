@@ -580,6 +580,142 @@ Configuração ativa: `INFRASPEAK_API_BASE_URL=https://api.sandbox.infraspeak.co
 
 ---
 
+## Criação de chamados (`POST /failures`) — contrato confirmado no sandbox (31/07/2026)
+
+Descoberto por sondagem real (POST vazio → erros de validação por campo; criação de teste bem-sucedida → chamado `#710185`).
+
+- **Endpoint:** `POST /failures` com `Content-Type: application/json`.
+- **Payload:** `{ "problem_id": <int>, "local_id": <int> | "element_id": <int>, "description": "<texto>", "priority": 1–4 }`.
+- **Campos obrigatórios (mensagens reais da API):**
+  - `problem_id` — obrigatório; precisa ser um problem **folha** (`problem_type`). Áreas (`problem_area`) são recusadas com `"O tipo de chamado deve existir"`.
+  - `local_id` **ou** `element_id` — exatamente um dos dois é exigido ("obrigatório quando o outro não está presente").
+- **Prioridade:** inteiro 1–4 (validação real: `"O campo priority deverá ter um valor entre 1 - 4"`); 2 = `NORMAL`.
+- **Resposta de sucesso:** `201/200` com envelope de objeto único `{ "data": { "type": "failure", "id": "...", "attributes": { ...mesmos campos do GET... } } }` — estado inicial observado: `WAITING_APPROVAL`.
+- **Erros de validação:** `400` com `error.properties` (mapa campo → lista de mensagens em pt) — o client concatena essas mensagens na exceção para o usuário saber o que corrigir.
+
+### Recursos de apoio ao formulário
+
+- **Problems folha:** `GET /problems?expanded=children,clients` — `data` traz as áreas (`problem_area`, `parent_id: null`) com os atributos `all_clients` (boolean) e a relação `clients` (lista de clientes permitidos quando `all_clients=false`); os tipos folha (`problem_type`, com `parent_id` apontando para a área) chegam no array **`included`** — os filhos herdam o escopo da área pai. Sem `expanded=children`, os folhas não aparecem em lugar nenhum.
+- **Locais:** usar `GET /locations` (JSON:API; `type` ∈ `building` | `location-folder` | `location`) e oferecer **somente `type: "location"`** — a criação recusa prédios/pastas com `"O edifício deve existir"` / `"Building must exist"`. Os prédios (`type: "building"`) têm `client_id` direto; as locations têm `root_parent_id` apontando para o prédio (resolução de client_id sem request adicional). Atenção: `GET /locals` (payload plano) devolve **apenas os prédios raiz**, não serve para o formulário.
+- **Elements:** `GET /elements` — JSON:API (`type: "element"`, `attributes.element_id`, `local_id`).
+
+### Implementação interna
+
+`InfraspeakClient.post()` (sem retry pós-envio, exceto 429), `RequestsService.create()` + `getFormOptions()`, endpoints `POST /infraspeak/requests` e `GET /infraspeak/form-options` (JWT). A criação entra na trilha de auditoria via allowlist do `AuditInterceptor` (`CREATE / Chamado Infraspeak`).
+
+---
+
+## Filtro de problemas por contexto de local — causa raiz e estratégia (05/08/2026)
+
+### Problema reportado
+
+Chamados criados via BlueBee eram rejeitados pelo ambiente do cliente com "Área de Problema / Tipo de Problema não cadastrado naquele ambiente". O formulário carregava `GET /problems?expanded=children` e `GET /locations` sem nenhum filtro por contexto (building/cliente).
+
+### Causa raiz comprovada (sandbox 05/08/2026)
+
+Em produção, `problem_area` com `all_clients=false` possui a relação `clients` preenchida com IDs dos clientes permitidos. A criação de failure com um local de cliente X e um tipo de problema restrito a clientes Y/Z é rejeitada pela Infraspeak com:
+
+```
+POST /failures { "problem_id": <restrito>, "local_id": <cliente X> }
+→ HTTP 400 {
+    "status": "error",
+    "error": {
+      "http_code": 400,
+      "message": "Property validation error.",
+      "properties": {
+        "problem_id": ["O tipo de chamado deve existir", "validation.has_access_network"]
+      }
+    }
+  }
+```
+
+Reprodução adicional capturada (area pai em vez de tipo folha):
+
+```
+POST /failures { "problem_id": 28309, "local_id": 387903 }  ← area, não leaf
+→ HTTP 400 { "properties": { "problem_id": ["O tipo de chamado deve existir"] } }
+```
+
+### Filtros nativos — inexistentes (confirmado sandbox)
+
+| Tentativa | Resultado |
+|---|---|
+| `GET /problems?s_client_id=75472` | HTTP 500, `code: "42703"` (coluna inexistente) |
+| `GET /problems?s_local_id=387903` | HTTP 500, `code: "42703"` |
+| `GET /problems?s_building_id=387904` | HTTP 500, `code: "42703"` |
+| `GET /clients/75472/problems` | HTTP 404 |
+| `GET /buildings/387904/problems` | HTTP 404 |
+| `GET /problems?expanded=children,locations` | HTTP 400 (relação inexistente) |
+
+**Conclusão: a API Infraspeak NÃO oferece filtragem nativa de problems por client_id, local_id ou building. O filtro deve ser feito client-side.**
+
+### Estrutura da relação `clients` em problems (confirmado sandbox)
+
+```
+GET /problems?expanded=children,clients
+→ data[]: problem_area com:
+    attributes.all_clients: true | false
+    relationships.clients.data: [{ type: "client", id: "75473" }, ...]  ← vazio quando all_clients=true
+→ included[]: problem_type (tipos folha) — NÃO têm relação `clients`
+              herdam o escopo via parent_id → area.all_clients/clientIds
+```
+
+### Estrutura de client_id em locations (confirmado sandbox)
+
+```
+GET /locations
+→ type=building:  attributes.client_id = 75472 | 75473 | null
+→ type=location:  attributes.client_id = null
+                  attributes.root_parent_id = <building local_id>  ← resolve clientId
+→ type=location-folder: excluídos do formulário (recusados na criação)
+```
+
+### Estratégia adotada: derivação client-side sem requests extras
+
+1. `GET /problems?expanded=children,clients` (parâmetro `clients` adicionado) — extrai `allClients` + `clientIds` de cada área e propaga para os tipos filhos
+2. `GET /locations` (mesmo payload) — mapeia `building.local_id → client_id`; resolve `location.clientId = buildingMap[root_parent_id]`
+3. No frontend, ao selecionar o local, o `clientId` do local drive a filtragem:
+   - `allClients=true` → problema aparece para qualquer local
+   - `allClients=false` → problema aparece só se `clientId ∈ clientIds`
+   - Sem local selecionado → lista completa (sem filtro)
+  - Local selecionado com `clientId=null` (indeterminado) → modo seguro: só `all_clients=true` + aviso (ver seção "Endurecimento" abaixo)
+4. Reset visível de `problemId` quando a seleção anterior fica inválida ao trocar de local
+5. Mapeamento do erro 400 "O tipo de chamado deve existir" / "validation.has_access_network" → mensagem legível em PT (defesa em profundidade)
+
+### Verificação sandbox pós-implementação (05/08/2026)
+
+```
+# 92 tipos folha — todos com allClients=True no sandbox
+# 217 locations — todos com clientId resolvido via root_parent_id → building
+# Submission válida continua funcionando:
+POST /failures { problem_id: 28310, local_id: 387903 } → 200 (failure #710554)
+POST /failures { problem_id: 28310, local_id: 388053 } → 200 (failure #710555, cliente 75473)
+# Erro de area pai confirmado:
+POST /failures { problem_id: 28309, local_id: 387903 } → 400 "O tipo de chamado deve existir"
+```
+
+### Endurecimento: local com cliente indeterminado (06/08/2026)
+
+Quando o local selecionado no formulário não tem `clientId` resolvível
+(ex.: `root_parent_id` sem prédio correspondente ou prédio sem `client_id`),
+o frontend entra em **modo seguro**: oferece apenas tipos com
+`all_clients=true` e exibe aviso explícito ao usuário — nunca a lista
+completa silenciosa (que permitiria escolher combinação rejeitável).
+Trocar para um local nesses termos também reseta seleção de tipo restrito.
+Ver `filterProblemsForLocal` em `CreateInfraspeakRequestModal.tsx` (+ specs).
+
+### Verificação no ambiente de teste do cliente — PENDENTE
+
+Segundo a Infraspeak, no ambiente de teste do cliente existem somente as
+áreas/tipos permitidos (áreas com `all_clients=false` + relationship
+`clients` populada). A validação ponta a ponta contra esse ambiente
+(inspeção de `/problems?expanded=children,clients`, `/locations` e testes de
+criação com tipo permitido × proibido) **aguarda o PAT e a base URL desse
+ambiente** — o token atual é do sandbox (21 áreas, todas `all_clients=true`,
+verificado em 06/08/2026). Registrar aqui os achados quando executada.
+
+---
+
 ## Tabela de rastreabilidade das fontes
 
 | Secção do relatório | URL oficial | Método | Status |

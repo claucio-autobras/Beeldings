@@ -15,6 +15,8 @@ interface Props {
   onCommand?: SendCommand;
   isEditor?: boolean;
   staticRender?: boolean;
+  /** Ponto sem comunicação (viewer): bloqueia o envio de comandos. */
+  commOffline?: boolean;
 }
 
 type Phase = 'idle' | 'sending' | 'error';
@@ -34,7 +36,7 @@ function withAlpha(hex: string, a: number): string {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
-export function CommandButtonWidgetView({ widget, getValue, onCommand, isEditor, staticRender }: Props) {
+export function CommandButtonWidgetView({ widget, getValue, onCommand, isEditor, staticRender, commOffline }: Props) {
   const [phase, setPhase] = useState<Phase>('idle');
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [pressed, setPressed] = useState(false);
@@ -55,6 +57,9 @@ export function CommandButtonWidgetView({ widget, getValue, onCommand, isEditor,
 
   async function send(value: number): Promise<void> {
     if (isEditor || !onCommand) return;
+    // Ponto sem comunicação: não dispara comando silenciosamente sobre um
+    // estado visual possivelmente defasado (o botão já está desabilitado).
+    if (commOffline) return;
     if (widget.confirm) {
       const verb = value === widget.offValue ? 'DESLIGAR' : 'LIGAR';
       if (!window.confirm(`Confirmar comando: ${verb} "${widget.label}"?`)) return;
@@ -63,7 +68,10 @@ export function CommandButtonWidgetView({ widget, getValue, onCommand, isEditor,
     setErrMsg(null);
     const res = await onCommand(widget.deviceId, widget.tag, value, widget.priority);
     if (res.ok) {
+      // ok com warning = "enviado, sem confirmação": NÃO é erro — o estado
+      // otimista segue até a telemetria de readback confirmar (ou TTL expirar).
       setPhase('idle');
+      setErrMsg(res.warning ?? null);
     } else {
       setPhase('error');
       setErrMsg(res.error ?? 'Falha ao enviar comando');
@@ -85,7 +93,7 @@ export function CommandButtonWidgetView({ widget, getValue, onCommand, isEditor,
   }
 
   // Momentâneo: pulso — liga ao pressionar, desliga ao soltar (ou ao sair do botão).
-  const momentaryHandlers = widget.mode === 'momentary' && !isEditor
+  const momentaryHandlers = widget.mode === 'momentary' && !isEditor && !commOffline
     ? {
         onMouseDown: () => { setPressed(true); void send(widget.onValue); },
         onMouseUp: () => { if (pressed) { setPressed(false); void send(widget.offValue); } },
@@ -93,7 +101,7 @@ export function CommandButtonWidgetView({ widget, getValue, onCommand, isEditor,
       }
     : {};
 
-  const disabled = isEditor || !bound;
+  const disabled = isEditor || !bound || Boolean(commOffline);
   const error = phase === 'error';
 
   // Estilo por variante. `accent` é a cor de estado (on/off); no erro, vermelho.
@@ -128,7 +136,8 @@ export function CommandButtonWidgetView({ widget, getValue, onCommand, isEditor,
       type="button"
       onClick={handleClick}
       {...momentaryHandlers}
-      title={errMsg ?? (bound ? widget.tag : 'Vincule um ponto comandável (DO)')}
+      disabled={!isEditor && (commOffline || !bound)}
+      title={commOffline ? 'Sem comunicação — comando bloqueado' : (errMsg ?? (bound ? widget.tag : 'Vincule um ponto comandável (DO)'))}
       style={{
         width: '100%', height: '100%',
         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2,

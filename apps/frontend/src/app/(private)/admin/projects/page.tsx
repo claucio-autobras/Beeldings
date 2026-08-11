@@ -12,13 +12,11 @@ import { getGatewayConfigText } from '@/modules/projects/services/projects.servi
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-interface SiteItem { id: string; name: string; tenantId: string; }
+interface SiteItem { id: string; name: string; tenantId: string; location?: string | null; }
 interface GatewayInfo { id: string; status: string; mqttUser?: string; mqttPass?: string; lastSeen?: string | null; _count?: { devices: number }; }
 interface ProjectItem {
   id: string;
   name: string;
-  address?: string | null;
-  technicalContact?: string | null;
   siteId: string;
   tenantId: string;
   createdAt: string;
@@ -85,15 +83,13 @@ interface NewProjectModalProps {
 function NewProjectModal({ siteId, tenantId, existingGateways, onClose, onCreated }: NewProjectModalProps) {
   const hasExisting = existingGateways.length > 0;
   const [name, setName] = useState('');
-  const [address, setAddress] = useState('');
-  const [technicalContact, setTechnicalContact] = useState('');
   const [gatewayMode, setGatewayMode] = useState<GatewayMode>('new');
   const [selectedGatewayId, setSelectedGatewayId] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<ProjectWithGateway | null>(null);
 
   const mutation = useMutation({
-    mutationFn: (dto: { name: string; address?: string; technicalContact?: string; siteId: string; tenantId: string; gatewayId?: string }) =>
+    mutationFn: (dto: { name: string; siteId: string; tenantId: string; gatewayId?: string }) =>
       apiPost<ProjectWithGateway>('/projects', dto),
     onSuccess: (proj) => { setCreated(proj); onCreated(); },
     onError: (err: Error) => setError(err.message),
@@ -111,8 +107,6 @@ function NewProjectModal({ siteId, tenantId, existingGateways, onClose, onCreate
 
     mutation.mutate({
       name: name.trim(),
-      address: address.trim() || undefined,
-      technicalContact: technicalContact.trim() || undefined,
       siteId,
       tenantId,
       gatewayId: linkExisting ? selectedGatewayId : undefined,
@@ -140,15 +134,6 @@ function NewProjectModal({ siteId, tenantId, existingGateways, onClose, onCreate
                 autoFocus
               />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-1">Endereço (opcional)</label>
-              <input type="text" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Rua das Flores, 100" className="w-full rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-foreground mb-1">Contato técnico (opcional)</label>
-              <input type="text" value={technicalContact} onChange={(e) => setTechnicalContact(e.target.value)} placeholder="João Silva — (11) 99999-9999" className="w-full rounded-md border border-border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500" />
-            </div>
-
             {/* Gateway: criar novo ou vincular a um existente do mesmo cliente */}
             <div>
               <label className="block text-sm font-medium text-foreground mb-1.5">Gateway</label>
@@ -158,14 +143,14 @@ function NewProjectModal({ siteId, tenantId, existingGateways, onClose, onCreate
                     <button
                       type="button"
                       onClick={() => setGatewayMode('new')}
-                      className={`rounded-md border px-3 py-2 text-xs font-medium transition-colors ${gatewayMode === 'new' ? 'border-cyan-600 bg-cyan-50 text-cyan-700' : 'border-border text-muted-foreground hover:bg-muted/50'}`}
+                      className={`rounded-md border px-3 py-2 text-xs font-medium transition-colors ${gatewayMode === 'new' ? 'border-cyan-600 bg-cyan-50 text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-300' : 'border-border text-muted-foreground hover:bg-muted/50'}`}
                     >
                       Criar novo gateway
                     </button>
                     <button
                       type="button"
                       onClick={() => setGatewayMode('existing')}
-                      className={`rounded-md border px-3 py-2 text-xs font-medium transition-colors ${gatewayMode === 'existing' ? 'border-cyan-600 bg-cyan-50 text-cyan-700' : 'border-border text-muted-foreground hover:bg-muted/50'}`}
+                      className={`rounded-md border px-3 py-2 text-xs font-medium transition-colors ${gatewayMode === 'existing' ? 'border-cyan-600 bg-cyan-50 text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-300' : 'border-border text-muted-foreground hover:bg-muted/50'}`}
                     >
                       Vincular a existente
                     </button>
@@ -202,7 +187,7 @@ function NewProjectModal({ siteId, tenantId, existingGateways, onClose, onCreate
               )}
             </div>
 
-            {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2">{error}</p>}
+            {error && <p className="text-sm text-red-600 dark:text-red-300 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-md px-3 py-2">{error}</p>}
             <div className="flex gap-3 pt-1">
               <button type="button" onClick={onClose} className="flex-1 rounded-md border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/50 transition-colors">Cancelar</button>
               <button type="submit" disabled={mutation.isPending} className="flex-1 rounded-md bg-cyan-700 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-800 disabled:opacity-50 transition-colors flex items-center justify-center gap-2">
@@ -213,9 +198,9 @@ function NewProjectModal({ siteId, tenantId, existingGateways, onClose, onCreate
           </form>
         ) : (
           <div className="px-6 py-5 space-y-4 flex-1 overflow-y-auto">
-            <div className="flex items-center gap-3 p-3 bg-green-50 border border-green-200 rounded-lg">
-              <Check className="h-5 w-5 text-green-600 shrink-0" />
-              <p className="text-sm text-green-800 font-medium">
+            <div className="flex items-center gap-3 p-3 bg-emerald-50 border border-emerald-200 rounded-lg dark:border-emerald-800 dark:bg-emerald-950/40">
+              <Check className="h-5 w-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              <p className="text-sm text-emerald-800 dark:text-emerald-300 font-medium">
                 {gatewayMode === 'existing' && hasExisting
                   ? 'Projeto criado e vinculado ao gateway existente!'
                   : 'Projeto e gateway criados com sucesso!'}
@@ -310,7 +295,7 @@ function ProjectsContent() {
 
   if (!siteId) {
     return (
-      <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+      <div className="mx-auto w-full max-w-6xl rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
         Nenhum site selecionado. Acesse esta tela a partir de um site em{' '}
         <button onClick={() => router.push('/admin/clients')} className="font-medium underline">Clientes → Sites</button>.
       </div>
@@ -318,7 +303,7 @@ function ProjectsContent() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto w-full max-w-6xl space-y-6">
       {/* Breadcrumb / back */}
       <button
         onClick={() => router.push(`/admin/sites${tenantId ? `?tenantId=${tenantId}` : ''}`)}
@@ -329,23 +314,29 @@ function ProjectsContent() {
       </button>
 
       {/* Header */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-xl font-semibold text-foreground">
-            Projetos {site ? `— ${site.name}` : ''}
-          </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Sistemas implantados no site (BMS, CFTV, Energia...)
-          </p>
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-cyan-500/10">
+            <FolderKanban className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
+          </div>
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight text-foreground">
+              Projetos {site ? `— ${site.name}` : ''}
+            </h1>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Sistemas implantados no site (BMS, CFTV, Energia...)
+              {site?.location ? ` · ${site.location}` : ''}
+            </p>
+          </div>
         </div>
         <button
           onClick={() => setModalOpen(true)}
-          className="flex items-center gap-2 h-9 px-4 text-sm rounded-md font-medium bg-cyan-700 text-white hover:bg-cyan-800 transition-colors self-start"
+          className="inline-flex shrink-0 items-center gap-2 self-start rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-cyan-700 sm:self-auto"
         >
           <Plus className="h-4 w-4" />
           Novo Projeto
         </button>
-      </div>
+      </header>
 
       {/* Loading */}
       {isLoading && (
@@ -356,20 +347,27 @@ function ProjectsContent() {
 
       {/* Error */}
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
           Erro ao carregar projetos: {(error as Error).message}
         </div>
       )}
 
       {/* Empty */}
       {!isLoading && !error && projects.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-20 text-center border border-dashed border-border rounded-xl">
-          <FolderKanban className="h-14 w-14 text-muted-foreground/25 mb-4" />
-          <h3 className="text-base font-medium text-foreground mb-1">Nenhum projeto cadastrado</h3>
-          <p className="text-sm text-muted-foreground mb-5 max-w-sm">
-            Crie o primeiro projeto deste site. Um gateway será gerado automaticamente.
-          </p>
-          <button onClick={() => setModalOpen(true)} className="flex items-center gap-2 h-9 px-4 text-sm rounded-md font-medium bg-cyan-700 text-white hover:bg-cyan-800 transition-colors">
+        <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-border bg-card px-6 py-16 text-center shadow-sm">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-cyan-500/10">
+            <FolderKanban className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
+          </div>
+          <div className="space-y-1">
+            <h3 className="text-sm font-medium text-foreground">Nenhum projeto cadastrado</h3>
+            <p className="mx-auto max-w-sm text-xs text-muted-foreground">
+              Crie o primeiro projeto deste site. Um gateway será gerado automaticamente.
+            </p>
+          </div>
+          <button
+            onClick={() => setModalOpen(true)}
+            className="inline-flex items-center gap-2 rounded-lg border border-dashed border-cyan-400 px-4 py-2 text-sm font-medium text-cyan-600 transition-colors hover:bg-cyan-50 dark:text-cyan-400 dark:hover:bg-cyan-950/40"
+          >
             <Plus className="h-4 w-4" />
             Criar Primeiro Projeto
           </button>
@@ -378,15 +376,16 @@ function ProjectsContent() {
 
       {/* List */}
       {!isLoading && !error && projects.length > 0 && (
-        <div className="border border-border rounded-xl overflow-x-auto">
+        <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm transition-shadow duration-200 hover:shadow-md">
+          <div className="overflow-x-auto">
           <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="bg-muted/30 border-b border-border">
-                <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">Projeto</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground hidden sm:table-cell">Gateway</th>
-                <th className="text-center px-4 py-3 text-xs font-medium text-muted-foreground">Dispositivos</th>
-                <th className="text-center px-4 py-3 text-xs font-medium text-muted-foreground">Status</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground">Ações</th>
+                <th className="text-left px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Projeto</th>
+                <th className="text-left px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hidden sm:table-cell">Gateway</th>
+                <th className="text-center px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Dispositivos</th>
+                <th className="text-center px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Status</th>
+                <th className="text-right px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -396,38 +395,37 @@ function ProjectsContent() {
                 return (
                   <tr
                     key={p.id}
-                    className="hover:bg-muted/20 transition-colors cursor-pointer"
+                    className="transition-colors duration-150 hover:bg-muted/30 cursor-pointer"
                     onClick={() => router.push(`/admin/projects/${p.id}`)}
                   >
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2.5">
-                        <FolderKanban className="h-4 w-4 text-slate-400 shrink-0" />
-                        <div>
-                          <span className="font-medium text-foreground block">{p.name}</span>
-                          {p.address && <span className="text-[11px] text-muted-foreground">{p.address}</span>}
+                    <td className="px-5 py-3.5">
+                      <div className="flex items-center gap-3">
+                        <div className="h-8 w-8 rounded-lg flex items-center justify-center shrink-0 bg-cyan-500/10">
+                          <FolderKanban className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />
                         </div>
+                        <span className="font-medium text-foreground">{p.name}</span>
                       </div>
                     </td>
-                    <td className="px-4 py-3 hidden sm:table-cell">
+                    <td className="px-4 py-3.5 hidden sm:table-cell">
                       {gw ? (
-                        <span className="font-mono text-xs bg-muted/40 text-foreground px-2 py-0.5 rounded">{gw.id}</span>
+                        <span className="font-mono text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded">{gw.id}</span>
                       ) : <span className="text-muted-foreground text-xs">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-center">
+                    <td className="px-4 py-3.5 text-center">
                       <span className="inline-flex items-center justify-center gap-1.5 text-xs text-foreground">
-                        <Cpu className="h-3.5 w-3.5 text-slate-400" />
+                        <Cpu className="h-3.5 w-3.5 text-muted-foreground/70" />
                         {gw?._count?.devices ?? 0}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-center">
+                    <td className="px-4 py-3.5 text-center">
                       {gw ? (
-                        <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full ${online ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-slate-100 text-slate-500 border border-slate-200'}`}>
-                          <span className={`h-1.5 w-1.5 rounded-full ${online ? 'bg-green-500' : 'bg-slate-400'}`} />
+                        <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium ${online ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300' : 'border-border bg-muted text-muted-foreground'}`}>
+                          <span className={`h-1.5 w-1.5 rounded-full ${online ? 'bg-emerald-500' : 'bg-muted-foreground/50'}`} />
                           {online ? 'Online' : 'Offline'}
                         </span>
                       ) : <span className="text-xs text-muted-foreground">Sem gateway</span>}
                     </td>
-                    <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                    <td className="px-4 py-3.5 text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-2">
                         <button
                           onClick={() => void downloadGatewayConfig(p.id)}
@@ -457,6 +455,10 @@ function ProjectsContent() {
               })}
             </tbody>
           </table>
+          </div>
+          <div className="border-t border-border bg-muted/20 px-5 py-2.5 text-xs text-muted-foreground">
+            {projects.length} projeto{projects.length !== 1 ? 's' : ''} cadastrado{projects.length !== 1 ? 's' : ''}
+          </div>
         </div>
       )}
 

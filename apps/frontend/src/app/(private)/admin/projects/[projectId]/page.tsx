@@ -1,6 +1,6 @@
 import ProjectDetailClient from './ProjectDetailClient';
 
-export const metadata = { title: 'Projeto — BlueBee IoT' };
+export const metadata = { title: 'Projeto — Beeldings' };
 
 interface Props {
   params: Promise<{ projectId: string }>;

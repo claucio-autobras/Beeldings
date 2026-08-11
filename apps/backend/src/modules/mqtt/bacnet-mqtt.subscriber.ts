@@ -16,6 +16,7 @@ import { TrendRecorderService } from '../trends/trend-recorder.service.js';
 import { AlarmEngineService } from '../alarms/alarm-engine.service.js';
 import { IngestionMetricsService } from './ingestion-metrics.service.js';
 import { CameraLastValueService } from './camera-last-value.service.js';
+import { MqttLastValueService } from './mqtt-last-value.service.js';
 
 interface GatewayStatusPayload {
   status?: string;
@@ -39,6 +40,7 @@ export class BacnetMqttSubscriber implements OnModuleInit {
     private readonly alarmEngine: AlarmEngineService,
     private readonly metrics: IngestionMetricsService,
     private readonly cameraLastValue: CameraLastValueService,
+    private readonly mqttLastValue: MqttLastValueService,
   ) {}
 
   onModuleInit(): void {
@@ -302,6 +304,10 @@ export class BacnetMqttSubscriber implements OnModuleInit {
     // Câmeras CFTV: persiste o último valor lido de cada ponto (status inicial
     // imediato na UI). No-op para os demais dispositivos.
     this.cameraLastValue.consume(data);
+
+    // Dispositivos MQTT comuns (publish-on-change): persiste o último valor
+    // para semear a UI ao abrir a tela. No-op para os demais protocolos.
+    this.mqttLastValue.consume(data);
 
     // Avalia as regras de alarme dos pontos presentes neste ciclo.
     this.alarmEngine.consume(data);

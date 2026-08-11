@@ -18,6 +18,7 @@ import {
   EditBACnetDeviceModal,
   EditModbusDeviceModal,
   EditMqttDeviceModal,
+  FallbackDeviceDeleteDialog,
   ModbusDeviceDetail,
   MqttDeviceDetail,
   type ProtocolFilter,
@@ -307,6 +308,18 @@ export default function DevicesPage() {
           onDeleted={handleDeviceDeleted}
         />
       )}
+
+      {/* Fallback: protocolos sem modal dedicado (ex.: onvif, snmp) */}
+      {deviceToEdit &&
+        deviceToEdit.protocol !== 'bacnet' &&
+        deviceToEdit.protocol !== 'mqtt' &&
+        deviceToEdit.protocol !== 'modbus' && (
+          <FallbackDeviceDeleteDialog
+            device={deviceToEdit}
+            onClose={() => setDeviceToEdit(null)}
+            onDeleted={handleDeviceDeleted}
+          />
+        )}
     </div>
   );
 }

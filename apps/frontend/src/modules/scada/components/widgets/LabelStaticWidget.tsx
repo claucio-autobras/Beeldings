@@ -1,6 +1,7 @@
 'use client';
 
 import type { LabelStaticWidget } from '@/mocks/data/scada.mock';
+import { scadaBackgroundStyle } from '../../types/scada.types';
 
 const WEIGHT_MAP = {
   normal: '400',
@@ -36,7 +37,7 @@ export function LabelStaticWidgetView({ widget, colorOverride, textOverride }: P
         fontWeight: WEIGHT_MAP[widget.fontWeight],
         fontStyle: widget.fontStyle,
         color: colorOverride ?? widget.color,
-        backgroundColor: hasBg ? bg : undefined,
+        ...(hasBg ? scadaBackgroundStyle(bg) : {}),
         borderRadius: widget.borderRadius ?? 0,
         padding: hasBg ? '4px 8px' : undefined,
         whiteSpace: 'pre-wrap',

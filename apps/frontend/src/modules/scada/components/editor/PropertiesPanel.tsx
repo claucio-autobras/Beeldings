@@ -6,7 +6,10 @@ import { useQuery } from '@tanstack/react-query';
 import { useEditorStore } from '../../store/editor.store';
 import { useScreenDevices } from '../../hooks/useScreenDevices';
 import { getScreens, uploadScadaAsset } from '../../services/scada.service';
-import { readWidgetBinding, writeWidgetBinding, CLICK_ACTION_EXCLUDED_TYPES, isTransparentColor, matchOperator, toScadaNumber } from '../../types/scada.types';
+import {
+  readWidgetBinding, writeWidgetBinding, CLICK_ACTION_EXCLUDED_TYPES, isTransparentColor, matchOperator, toScadaNumber,
+  isGradientColor, parseScadaGradient, makeScadaGradient,
+} from '../../types/scada.types';
 import { useScreenTelemetry, formatTelemetryValue } from '../../hooks/useScreenTelemetry';
 import {
   writableDeviceOptions, writableTagOptions, isBacnetDevice,
@@ -28,6 +31,8 @@ import type {
   ClickAction, ClickActionType, ClickActionCommandMode,
   KpiCardWidget, SensorCardWidget, DashChartWidget, BarListWidget, EventFeedWidget,
   PointTableWidget, SegmentedControlWidget, DashCardBase, DashPeriodHours,
+  ValueStepperWidget, SetpointRingWidget, EquipmentCardWidget, EquipmentCardRow,
+  EquipmentCardRowDisplay, ClimateCardWidget,
 } from '../../types/scada.types';
 import { SCADA_ICONS } from '../widgets/scadaIcons';
 import { IconPicker } from './IconPicker';
@@ -52,6 +57,8 @@ const NO_UNIFIED_BINDING = new Set<Widget['type']>([
   'command-button', 'command-slider', 'toggle-switch', 'alarm-group-badge', 'alarm-counter', 'device-counter',
   // Dashboard: multi-ponto (linhas/séries próprias) ou comando com seletor próprio.
   'dash-chart', 'bar-list', 'event-feed', 'point-table', 'segmented-control',
+  // Clima: stepper tem seletor comandável próprio; cards são multi-ponto.
+  'value-stepper', 'equipment-card', 'climate-card',
 ]);
 
 /** Ao definir o ponto único, limpa qualquer ponto legado gravado em status/visibility. */
@@ -223,6 +230,131 @@ function ColorInput({ value, onChange }: { value: string; onChange: (v: string) 
     </div>
   );
 }
+/**
+ * Seletor de cor de preenchimento/fundo com modo "Sólida | Gradiente".
+ * Sólida: comporta-se exatamente como o ColorInput (incl. 'transparent').
+ * Gradiente: duas cores + ângulo, gravado como string CSS
+ * `linear-gradient(<ângulo>deg, c1, c2)` — retrocompatível com telas antigas.
+ * Usado SÓ em campos de preenchimento/fundo; texto/traço/estado seguem sólidos.
+ */
+function FillColorInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const grad = parseScadaGradient(value);
+  const isGrad = isGradientColor(value);
+  const tabBtn = (active: boolean) =>
+    `flex-1 rounded px-2 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors ${
+      active ? 'bg-cyan-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+    }`;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex gap-1 rounded border border-slate-700 bg-slate-900 p-0.5">
+        <button
+          type="button"
+          className={tabBtn(!isGrad)}
+          onClick={() => {
+            if (isGrad) onChange(grad?.from ?? '#06B6D4');
+          }}
+        >
+          Sólida
+        </button>
+        <button
+          type="button"
+          className={tabBtn(isGrad)}
+          onClick={() => {
+            if (!isGrad) {
+              const from = isTransparentColor(value) || !value.startsWith('#') ? '#06B6D4' : value;
+              onChange(makeScadaGradient(90, from, '#3B82F6'));
+            }
+          }}
+        >
+          Gradiente
+        </button>
+      </div>
+      {!isGrad && <ColorInput value={value} onChange={onChange} />}
+      {isGrad && grad && (
+        <>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="flex flex-col gap-0.5">
+              <span className="text-[10px] uppercase tracking-wider text-slate-500">Cor 1</span>
+              <input
+                type="color"
+                value={grad.from.startsWith('#') ? grad.from : '#06B6D4'}
+                onChange={(e) => onChange(makeScadaGradient(grad.angle, e.target.value, grad.to))}
+                className="h-6 w-full cursor-pointer rounded border-0 bg-transparent p-0"
+              />
+            </label>
+            <label className="flex flex-col gap-0.5">
+              <span className="text-[10px] uppercase tracking-wider text-slate-500">Cor 2</span>
+              <input
+                type="color"
+                value={grad.to.startsWith('#') ? grad.to : '#3B82F6'}
+                onChange={(e) => onChange(makeScadaGradient(grad.angle, grad.from, e.target.value))}
+                className="h-6 w-full cursor-pointer rounded border-0 bg-transparent p-0"
+              />
+            </label>
+          </div>
+          <label className="flex flex-col gap-0.5">
+            <span className="text-[10px] uppercase tracking-wider text-slate-500">Ângulo ({Math.round(grad.angle)}°)</span>
+            <div className="flex items-center gap-2">
+              <input
+                type="range" min={0} max={360} step={15} value={((grad.angle % 360) + 360) % 360}
+                onChange={(e) => onChange(makeScadaGradient(Number(e.target.value), grad.from, grad.to))}
+                className="flex-1 accent-cyan-500"
+              />
+              <input
+                type="number" min={0} max={360} value={Math.round(grad.angle)}
+                onChange={(e) => onChange(makeScadaGradient(Math.max(0, Math.min(360, Number(e.target.value))), grad.from, grad.to))}
+                className="w-14 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 outline-none focus:border-cyan-500"
+              />
+            </div>
+          </label>
+          {/* Pré-visualização do gradiente no próprio seletor */}
+          <div className="h-6 w-full rounded border border-slate-600" style={{ background: value }} />
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Rotação base do widget (graus) — seção comum de Aparência, vale para todo
+ * tipo de widget. Atalhos rápidos 0/90/180/270 + entrada numérica livre.
+ */
+function RotationRow({ w, upd }: { w: Widget; upd: (p: Partial<Widget>) => void }) {
+  const value = w.rotation ?? 0;
+  const quick = [0, 90, 180, 270];
+  return (
+    <Row label="Rotação (graus)">
+      <div className="flex items-center gap-1.5">
+        <input
+          type="number"
+          value={Math.round(value)}
+          min={-360}
+          max={360}
+          onChange={(e) => {
+            const n = Number(e.target.value);
+            upd({ rotation: Number.isFinite(n) ? n : 0 });
+          }}
+          className="w-16 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 outline-none focus:border-cyan-500"
+        />
+        {quick.map((q) => (
+          <button
+            key={q}
+            type="button"
+            onClick={() => upd({ rotation: q })}
+            className={`flex-1 rounded border px-1 py-1 text-[10px] transition-colors ${
+              ((value % 360) + 360) % 360 === q
+                ? 'border-cyan-400 text-cyan-400'
+                : 'border-slate-700 text-slate-400 hover:border-cyan-500 hover:text-cyan-400'
+            }`}
+          >
+            {q}°
+          </button>
+        ))}
+      </div>
+    </Row>
+  );
+}
+
 function SelectInput({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: { value: string; label: string }[] }) {
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)} className="w-full rounded border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 outline-none focus:border-cyan-500">
@@ -286,7 +418,7 @@ function LabelStaticProps({ w, upd }: { w: LabelStaticWidget; upd: (p: Partial<W
       <Row label="Peso"><SelectInput value={w.fontWeight} onChange={(v) => upd({ fontWeight: v as LabelStaticWidget['fontWeight'] })} options={WEIGHT_OPTIONS} /></Row>
       <Row label="Cor"><ColorInput value={w.color} onChange={(v) => upd({ color: v })} /></Row>
       <Row label="Alinhamento"><SelectInput value={w.align} onChange={(v) => upd({ align: v as LabelStaticWidget['align'] })} options={[{ value: 'left', label: 'Esquerda' }, { value: 'center', label: 'Centro' }, { value: 'right', label: 'Direita' }]} /></Row>
-      <Row label="Cor de fundo"><ColorInput value={w.backgroundColor ?? 'transparent'} onChange={(v) => upd({ backgroundColor: v })} /></Row>
+      <Row label="Cor de fundo"><FillColorInput value={w.backgroundColor ?? 'transparent'} onChange={(v) => upd({ backgroundColor: v })} /></Row>
       <Row label="Raio da borda"><NumInput value={w.borderRadius ?? 0} onChange={(v) => upd({ borderRadius: v })} min={0} max={999} /></Row>
     </Section>
   );
@@ -327,7 +459,7 @@ function LabelValueBlockProps({ w, upd }: { w: LabelValueBlockWidget; upd: (p: P
         <Row label="Casas decimais"><NumInput value={w.decimals} onChange={(v) => upd({ decimals: v })} min={0} max={4} /></Row>
         <Row label="Tamanho"><NumInput value={w.fontSize} onChange={(v) => upd({ fontSize: v })} min={12} max={96} /></Row>
         <Row label="Cor normal"><ColorInput value={w.colorNormal} onChange={(v) => upd({ colorNormal: v })} /></Row>
-        <Row label="Cor fundo"><ColorInput value={w.backgroundColor} onChange={(v) => upd({ backgroundColor: v })} /></Row>
+        <Row label="Cor fundo"><FillColorInput value={w.backgroundColor} onChange={(v) => upd({ backgroundColor: v })} /></Row>
         <Row label="Borda arred."><NumInput value={w.borderRadius} onChange={(v) => upd({ borderRadius: v })} min={0} max={32} /></Row>
         {/* Legado (sem campo): padding fixo 8px vertical / 12px horizontal. */}
         <PaddingRow w={w} upd={upd} legacyDefault={10} />
@@ -734,7 +866,7 @@ function ShapeProps({ w, upd }: { w: ShapeWidgetBase & { type: Widget['type'] };
     <>
       <Section title="Forma">
         <Row label="Preenchimento (cor de fundo)"><ToggleInput value={filled} onChange={(v) => upd({ fillEnabled: v })} /></Row>
-        {filled && <Row label="Cor de fundo"><ColorInput value={w.fillColor} onChange={(v) => upd({ fillColor: v })} /></Row>}
+        {filled && <Row label="Cor de fundo"><FillColorInput value={w.fillColor} onChange={(v) => upd({ fillColor: v })} /></Row>}
         <Row label={filled ? 'Cor da borda' : 'Cor da linha'}><ColorInput value={w.strokeColor} onChange={(v) => upd({ strokeColor: v })} /></Row>
         <Row label="Espessura"><NumInput value={w.strokeWidth} onChange={(v) => upd({ strokeWidth: v })} min={0} max={20} /></Row>
         {isRectLike && <Row label="Borda arred."><NumInput value={w.borderRadius} onChange={(v) => upd({ borderRadius: v })} min={0} max={64} /></Row>}
@@ -798,7 +930,7 @@ function TitledAreaProps({ w, upd }: { w: TitledAreaWidget; upd: (p: Partial<Wid
   return (
     <Section title="Área com Título">
       <Row label="Título"><TextInput value={w.title} onChange={(v) => upd({ title: v })} /></Row>
-      <Row label="Cor de fundo"><ColorInput value={w.fillColor} onChange={(v) => upd({ fillColor: v })} /></Row>
+      <Row label="Cor de fundo"><FillColorInput value={w.fillColor} onChange={(v) => upd({ fillColor: v })} /></Row>
       <Row label="Cor da borda"><ColorInput value={w.borderColor} onChange={(v) => upd({ borderColor: v })} /></Row>
       <Row label="Cor do título"><ColorInput value={w.titleColor} onChange={(v) => upd({ titleColor: v })} /></Row>
       <Row label="Tam. fonte"><NumInput value={w.titleFontSize ?? 11} onChange={(v) => upd({ titleFontSize: v })} min={8} max={48} /></Row>
@@ -858,7 +990,7 @@ function HotspotProps({ w, upd, screenOpts }: { w: HotspotWidget; upd: (p: Parti
       <Section title="Forma">
         <Row label="Tipo"><SelectInput value={w.shape} onChange={(v) => upd({ shape: v as HotspotWidget['shape'] })} options={[{ value: 'rectangle', label: 'Retângulo' }, { value: 'circle', label: 'Círculo' }, { value: 'ellipse', label: 'Elipse' }, { value: 'invisible', label: 'Invisível' }]} /></Row>
         {w.shape !== 'invisible' && <>
-          <Row label="Cor de fundo"><ColorInput value={w.fillColor} onChange={(v) => upd({ fillColor: v })} /></Row>
+          <Row label="Cor de fundo"><FillColorInput value={w.fillColor} onChange={(v) => upd({ fillColor: v })} /></Row>
           <Row label="Opacidade fundo"><div className="flex items-center gap-2"><input type="range" min={0} max={1} step={0.05} value={w.fillOpacity} onChange={(e) => upd({ fillOpacity: parseFloat(e.target.value) })} className="flex-1 accent-cyan-500" /><span className="text-xs text-slate-400 tabular-nums w-8">{Math.round(w.fillOpacity * 100)}%</span></div></Row>
           <Row label="Cor da borda"><ColorInput value={w.borderColor} onChange={(v) => upd({ borderColor: v })} /></Row>
           <Row label="Espessura borda"><NumInput value={w.borderWidth} onChange={(v) => upd({ borderWidth: v })} min={0} max={8} /></Row>
@@ -980,7 +1112,7 @@ function NavSidebarProps({ w, upd, screenOpts, canPin, unpinSiblings }: { w: Nav
   return (
     <Section title="Sidebar de Navegação">
       <Row label="Posição"><SelectInput value={w.position} onChange={(v) => upd({ position: v as NavSidebarWidget['position'] })} options={[{ value: 'left', label: 'Esquerda' }, { value: 'right', label: 'Direita' }]} /></Row>
-      <Row label="Cor de fundo"><ColorInput value={w.backgroundColor} onChange={(v) => upd({ backgroundColor: v })} /></Row>
+      <Row label="Cor de fundo"><FillColorInput value={w.backgroundColor} onChange={(v) => upd({ backgroundColor: v })} /></Row>
       <Row label="Cor do texto"><ColorInput value={w.textColor} onChange={(v) => upd({ textColor: v })} /></Row>
       <Row label="Cor ativo"><ColorInput value={w.activeColor} onChange={(v) => upd({ activeColor: v })} /></Row>
       <PinToProjectRow w={w} upd={upd} canPin={canPin} unpinSiblings={unpinSiblings} />
@@ -995,7 +1127,7 @@ function NavToolbarProps({ w, upd, screenOpts, canPin, unpinSiblings }: { w: Nav
   return (
     <Section title="Toolbar de Navegação">
       <Row label="Posição"><SelectInput value={w.position} onChange={(v) => upd({ position: v as NavToolbarWidget['position'] })} options={[{ value: 'top', label: 'Topo' }, { value: 'bottom', label: 'Rodapé' }]} /></Row>
-      <Row label="Cor de fundo"><ColorInput value={w.backgroundColor} onChange={(v) => upd({ backgroundColor: v })} /></Row>
+      <Row label="Cor de fundo"><FillColorInput value={w.backgroundColor} onChange={(v) => upd({ backgroundColor: v })} /></Row>
       <Row label="Cor do texto"><ColorInput value={w.textColor} onChange={(v) => upd({ textColor: v })} /></Row>
       <Row label="Cor ativo"><ColorInput value={w.activeColor} onChange={(v) => upd({ activeColor: v })} /></Row>
       <PinToProjectRow w={w} upd={upd} canPin={canPin} unpinSiblings={unpinSiblings} />
@@ -1013,7 +1145,7 @@ function NavButtonProps({ w, upd, screenOpts }: { w: NavButtonWidget; upd: (p: P
       <Row label="Texto"><TextInput value={w.label} onChange={(v) => upd({ label: v })} /></Row>
       <Row label="Ícone"><IconPicker value={w.iconName ?? ''} assetUrl={w.iconAssetUrl} onChange={(p) => upd(p)} allowNone allowUpload /></Row>
       <TileRows enabled={Boolean(w.tileEnabled)} color={w.tileColor ?? '#38BDF8'} onChange={(p) => upd(p)} />
-      <Row label="Cor de fundo"><ColorInput value={w.backgroundColor} onChange={(v) => upd({ backgroundColor: v })} /></Row>
+      <Row label="Cor de fundo"><FillColorInput value={w.backgroundColor} onChange={(v) => upd({ backgroundColor: v })} /></Row>
       <Row label="Cor do texto"><ColorInput value={w.textColor} onChange={(v) => upd({ textColor: v })} /></Row>
       <Row label="Borda arred."><NumInput value={w.borderRadius} onChange={(v) => upd({ borderRadius: v })} min={0} max={32} /></Row>
       <Row label="Tamanho fonte"><NumInput value={w.fontSize} onChange={(v) => upd({ fontSize: v })} min={10} max={32} /></Row>
@@ -1227,7 +1359,7 @@ function AlarmGroupBadgeProps({
           <Row label="Cor em alarme"><ColorInput value={w.colorAlarm} onChange={(v) => upd({ colorAlarm: v })} /></Row>
         )}
         <Row label="Cor do texto"><ColorInput value={w.textColor} onChange={(v) => upd({ textColor: v })} /></Row>
-        <Row label="Cor de fundo"><ColorInput value={w.backgroundColor} onChange={(v) => upd({ backgroundColor: v })} /></Row>
+        <Row label="Cor de fundo"><FillColorInput value={w.backgroundColor} onChange={(v) => upd({ backgroundColor: v })} /></Row>
         <Row label="Tamanho da fonte"><NumInput value={w.fontSize} onChange={(v) => upd({ fontSize: v })} min={8} max={64} /></Row>
         <Row label="Raio da borda"><NumInput value={w.borderRadius} onChange={(v) => upd({ borderRadius: v })} min={0} max={999} /></Row>
       </Section>
@@ -1425,7 +1557,7 @@ function DeviceCounterProps({ w, upd, devices }: { w: DeviceCounterWidget; upd: 
         <Row label="Mostrar rótulo"><ToggleInput value={w.showLabel} onChange={(v) => upd({ showLabel: v })} /></Row>
         <Row label="Cor do número"><ColorInput value={w.colorOn} onChange={(v) => upd({ colorOn: v })} /></Row>
         <Row label="Cor do texto"><ColorInput value={w.textColor} onChange={(v) => upd({ textColor: v })} /></Row>
-        <Row label="Cor de fundo"><ColorInput value={w.backgroundColor} onChange={(v) => upd({ backgroundColor: v })} /></Row>
+        <Row label="Cor de fundo"><FillColorInput value={w.backgroundColor} onChange={(v) => upd({ backgroundColor: v })} /></Row>
         <Row label="Tamanho da fonte"><NumInput value={w.fontSize} onChange={(v) => upd({ fontSize: v })} min={8} max={64} /></Row>
         <Row label="Raio da borda"><NumInput value={w.borderRadius} onChange={(v) => upd({ borderRadius: v })} min={0} max={999} /></Row>
       </Section>
@@ -1604,7 +1736,7 @@ const SEVERITY_OPTS: Opt[] = [
 function DashCardStyleSection({ w, upd }: { w: DashCardBase; upd: (p: Partial<Widget>) => void }) {
   return (
     <Section title="Estilo do cartão">
-      <Row label="Fundo"><ColorInput value={w.backgroundColor} onChange={(v) => upd({ backgroundColor: v } as Partial<Widget>)} /></Row>
+      <Row label="Fundo"><FillColorInput value={w.backgroundColor} onChange={(v) => upd({ backgroundColor: v } as Partial<Widget>)} /></Row>
       <Row label="Texto"><ColorInput value={w.textColor} onChange={(v) => upd({ textColor: v } as Partial<Widget>)} /></Row>
       <Row label="Texto secundário"><ColorInput value={w.mutedColor} onChange={(v) => upd({ mutedColor: v } as Partial<Widget>)} /></Row>
       <Row label="Borda"><ColorInput value={w.borderColor} onChange={(v) => upd({ borderColor: v } as Partial<Widget>)} /></Row>
@@ -2012,6 +2144,10 @@ export function PropertiesPanel() {
         {widget.type === 'event-feed' && <EventFeedProps w={widget} upd={upd} />}
         {widget.type === 'point-table' && <PointTableProps w={widget} upd={upd} devices={devices} />}
         {widget.type === 'segmented-control' && <SegmentedControlProps w={widget} upd={upd} devices={devices} />}
+        {widget.type === 'value-stepper' && <ValueStepperProps w={widget} upd={upd} devices={devices} />}
+        {widget.type === 'setpoint-ring' && <SetpointRingProps w={widget} upd={upd} />}
+        {widget.type === 'equipment-card' && <EquipmentCardProps w={widget} upd={upd} devices={devices} />}
+        {widget.type === 'climate-card' && <ClimateCardProps w={widget} upd={upd} devices={devices} />}
 
         {/* Ação ao clicar — qualquer widget visual sem interação própria */}
         {!CLICK_ACTION_EXCLUDED_TYPES.has(widget.type) && (
@@ -2029,6 +2165,7 @@ export function PropertiesPanel() {
               <span className="w-8 text-right text-xs tabular-nums text-slate-400">{Math.round(widget.opacity * 100)}%</span>
             </div>
           </Row>
+          <RotationRow w={widget} upd={upd} />
           <Row label="Visível"><ToggleInput value={widget.visible} onChange={(v) => upd({ visible: v })} /></Row>
           <Row label="Z-Index"><NumInput value={widget.zIndex} onChange={(v) => upd({ zIndex: v })} min={0} max={100} /></Row>
         </Section>
@@ -2037,5 +2174,227 @@ export function PropertiesPanel() {
         <VisibilitySection widget={widget} onChange={upd} />
       </div>
     </aside>
+  );
+}
+
+// ─── Widgets de controle de clima ────────────────────────────────────────────
+
+/** Estilo compartilhado dos widgets/cards de clima (fundo/texto/borda/raio + acento). */
+function ClimateStyleRows({ w, upd }: { w: DashCardBase & { accentColor?: string }; upd: (p: Partial<Widget>) => void }) {
+  return (
+    <Section title="Estilo do cartão">
+      {w.accentColor !== undefined && <Row label="Cor de acento"><ColorInput value={w.accentColor} onChange={(v) => upd({ accentColor: v } as Partial<Widget>)} /></Row>}
+      <Row label="Fundo"><FillColorInput value={w.backgroundColor} onChange={(v) => upd({ backgroundColor: v } as Partial<Widget>)} /></Row>
+      <Row label="Texto"><ColorInput value={w.textColor} onChange={(v) => upd({ textColor: v } as Partial<Widget>)} /></Row>
+      <Row label="Texto secundário"><ColorInput value={w.mutedColor} onChange={(v) => upd({ mutedColor: v } as Partial<Widget>)} /></Row>
+      <Row label="Borda"><ColorInput value={w.borderColor} onChange={(v) => upd({ borderColor: v } as Partial<Widget>)} /></Row>
+      <Row label="Raio da borda"><NumInput value={w.borderRadius} onChange={(v) => upd({ borderRadius: Math.max(0, v) } as Partial<Widget>)} min={0} max={32} /></Row>
+    </Section>
+  );
+}
+
+/** Cabeçalho comum dos cards de clima: título/subtítulo + ponto e regras de status. */
+function ClimateHeaderSection({ w, upd, devices }: { w: EquipmentCardWidget | ClimateCardWidget; upd: (p: Partial<Widget>) => void; devices: ScreenDevice[] }) {
+  return (
+    <Section title="Cabeçalho">
+      <Row label="Título"><TextInput value={w.title} onChange={(v) => upd({ title: v })} /></Row>
+      <Row label="Subtítulo"><TextInput value={w.subtitle} onChange={(v) => upd({ subtitle: v })} /></Row>
+      <Row label="Controladora (status)"><SelectInput value={w.statusDeviceId} onChange={(v) => upd({ statusDeviceId: v, statusTag: '' })} options={deviceOptions(devices)} /></Row>
+      <Row label="Ponto (status)"><SelectInput value={w.statusTag} onChange={(v) => upd({ statusTag: v })} options={tagOptions(devices, w.statusDeviceId)} /></Row>
+      <p className="pt-1 text-[10px] text-slate-500">Regras (valor → cor / texto da pill)</p>
+      <StateRulesEditor rules={w.statusRules} onChange={(rules) => upd({ statusRules: rules })} showText />
+    </Section>
+  );
+}
+
+function ValueStepperProps({ w, upd, devices }: { w: ValueStepperWidget; upd: (p: Partial<Widget>) => void; devices: ScreenDevice[] }) {
+  return (
+    <>
+      <Section title="Ponto comandável (analógico)">
+        <Row label="Controladora"><SelectInput value={w.deviceId} onChange={(v) => upd({ deviceId: v, tag: '' })} options={writableDeviceOptions(devices, true)} /></Row>
+        <Row label="Ponto (analógico)"><SelectInput value={sanitizeCommandTag(devices, w.deviceId, w.tag, true)} onChange={(v) => upd({ tag: v })} options={writableTagOptions(devices, w.deviceId, true)} /></Row>
+        <CommandPointNotes devices={devices} deviceId={w.deviceId} savedTag={w.tag} analogOnly />
+      </Section>
+      <Section title="Comando">
+        <div className="grid grid-cols-3 gap-2">
+          <Row label="Mín"><NumInput value={w.minValue} onChange={(v) => upd({ minValue: v })} /></Row>
+          <Row label="Máx"><NumInput value={w.maxValue} onChange={(v) => upd({ maxValue: v })} /></Row>
+          <Row label="Passo"><NumInput value={w.step} onChange={(v) => upd({ step: Math.max(0, v) })} min={0} /></Row>
+        </div>
+        {isBacnetDevice(devices, w.deviceId) && (
+          <Row label="Prioridade (1–16)"><NumInput value={w.priority} onChange={(v) => upd({ priority: Math.min(16, Math.max(1, v)) })} min={1} max={16} /></Row>
+        )}
+      </Section>
+      <Section title="Aparência">
+        <div className="grid grid-cols-2 gap-2">
+          <Row label="Unidade"><TextInput value={w.unit} onChange={(v) => upd({ unit: v })} /></Row>
+          <Row label="Casas decimais"><NumInput value={w.decimals} onChange={(v) => upd({ decimals: Math.min(4, Math.max(0, v)) })} min={0} max={4} /></Row>
+        </div>
+        <Row label="Tamanho do valor"><NumInput value={w.valueFontSize} onChange={(v) => upd({ valueFontSize: Math.max(12, v) })} min={12} max={48} /></Row>
+        <Row label="Fundo"><FillColorInput value={w.backgroundColor} onChange={(v) => upd({ backgroundColor: v })} /></Row>
+        <Row label="Fundo dos botões"><ColorInput value={w.buttonColor} onChange={(v) => upd({ buttonColor: v })} /></Row>
+        <Row label="Texto"><ColorInput value={w.textColor} onChange={(v) => upd({ textColor: v })} /></Row>
+        <Row label="Texto secundário"><ColorInput value={w.mutedColor} onChange={(v) => upd({ mutedColor: v })} /></Row>
+        <Row label="Borda"><ColorInput value={w.borderColor} onChange={(v) => upd({ borderColor: v })} /></Row>
+        <Row label="Cor de acento"><ColorInput value={w.accentColor} onChange={(v) => upd({ accentColor: v })} /></Row>
+        <Row label="Raio da borda"><NumInput value={w.borderRadius} onChange={(v) => upd({ borderRadius: Math.max(0, v) })} min={0} max={32} /></Row>
+      </Section>
+    </>
+  );
+}
+
+function SetpointRingProps({ w, upd }: { w: SetpointRingWidget; upd: (p: Partial<Widget>) => void }) {
+  return (
+    <>
+      <Section title="Anel de setpoint">
+        <div className="grid grid-cols-2 gap-2">
+          <Row label="Mín"><NumInput value={w.minValue} onChange={(v) => upd({ minValue: v })} /></Row>
+          <Row label="Máx"><NumInput value={w.maxValue} onChange={(v) => upd({ maxValue: v })} /></Row>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <Row label="Unidade"><TextInput value={w.unit} onChange={(v) => upd({ unit: v })} /></Row>
+          <Row label="Casas decimais"><NumInput value={w.decimals} onChange={(v) => upd({ decimals: Math.min(4, Math.max(0, v)) })} min={0} max={4} /></Row>
+        </div>
+        <Row label="Rótulo"><TextInput value={w.label} onChange={(v) => upd({ label: v })} placeholder="ex.: AMBIENTE" /></Row>
+        <Row label="Mostrar rótulo"><ToggleInput value={w.showLabel} onChange={(v) => upd({ showLabel: v })} /></Row>
+      </Section>
+      <Section title="Aparência">
+        <Row label="Cor do anel"><ColorInput value={w.ringColor} onChange={(v) => upd({ ringColor: v })} /></Row>
+        <Row label="Cor da trilha"><ColorInput value={w.trackColor} onChange={(v) => upd({ trackColor: v })} /></Row>
+        <Row label="Texto"><ColorInput value={w.textColor} onChange={(v) => upd({ textColor: v })} /></Row>
+        <Row label="Texto secundário"><ColorInput value={w.mutedColor} onChange={(v) => upd({ mutedColor: v })} /></Row>
+        <Row label="Fundo"><FillColorInput value={w.backgroundColor} onChange={(v) => upd({ backgroundColor: v })} /></Row>
+        <Row label="Raio da borda"><NumInput value={w.borderRadius} onChange={(v) => upd({ borderRadius: Math.max(0, v) })} min={0} max={32} /></Row>
+      </Section>
+    </>
+  );
+}
+
+const ROW_DISPLAY_OPTS: Opt[] = [
+  { value: 'value', label: 'Valor ao vivo' },
+  { value: 'toggle', label: 'Toggle (digital comandável)' },
+  { value: 'slider', label: 'Slider (analógico comandável)' },
+];
+
+function EquipmentCardProps({ w, upd, devices }: { w: EquipmentCardWidget; upd: (p: Partial<Widget>) => void; devices: ScreenDevice[] }) {
+  function setRow(id: string, patch: Partial<EquipmentCardRow>) {
+    upd({ rows: w.rows.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
+  }
+  function addRow() {
+    const row: EquipmentCardRow = {
+      id: nanoid(6), deviceId: '', tag: '', iconName: 'thermometer', label: '', subtitle: '',
+      display: 'value', unit: '', decimals: 1, valueColor: '',
+      onValue: 1, offValue: 0, minValue: 0, maxValue: 100, step: 1,
+    };
+    upd({ rows: [...w.rows, row] });
+  }
+  return (
+    <>
+      <ClimateHeaderSection w={w} upd={upd} devices={devices} />
+      <Section title={`Linhas de pontos (${w.rows.length})`}>
+        {w.rows.map((r, i) => {
+          const writable = r.display !== 'value';
+          const analog = r.display === 'slider';
+          return (
+            <div key={r.id} className="rounded border border-slate-700 p-2 flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-semibold text-slate-400">Linha {i + 1}</span>
+                <button type="button" onClick={() => upd({ rows: w.rows.filter((x) => x.id !== r.id) })} className="rounded p-0.5 text-slate-500 hover:text-red-400"><Trash2 className="h-3 w-3" /></button>
+              </div>
+              <Row label="Exibição"><SelectInput value={r.display} onChange={(v) => setRow(r.id, { display: v as EquipmentCardRowDisplay, deviceId: '', tag: '' })} options={ROW_DISPLAY_OPTS} /></Row>
+              <Row label="Controladora"><SelectInput value={r.deviceId} onChange={(v) => setRow(r.id, { deviceId: v, tag: '' })} options={writable ? writableDeviceOptions(devices, analog) : deviceOptions(devices)} /></Row>
+              <Row label="Ponto"><SelectInput value={writable ? sanitizeCommandTag(devices, r.deviceId, r.tag, analog) : r.tag} onChange={(v) => setRow(r.id, { tag: v })} options={writable ? writableTagOptions(devices, r.deviceId, analog) : tagOptions(devices, r.deviceId)} /></Row>
+              <div className="grid grid-cols-2 gap-2">
+                <Row label="Nome"><TextInput value={r.label} onChange={(v) => setRow(r.id, { label: v })} /></Row>
+                <Row label="Subtítulo"><TextInput value={r.subtitle} onChange={(v) => setRow(r.id, { subtitle: v })} /></Row>
+              </div>
+              <Row label="Ícone"><IconPicker value={r.iconName} onChange={(p) => setRow(r.id, { iconName: (p as { iconName?: string }).iconName ?? '' })} allowNone /></Row>
+              {r.display === 'value' && (
+                <div className="grid grid-cols-2 gap-2">
+                  <Row label="Unidade"><TextInput value={r.unit} onChange={(v) => setRow(r.id, { unit: v })} /></Row>
+                  <Row label="Casas decimais"><NumInput value={r.decimals} onChange={(v) => setRow(r.id, { decimals: Math.min(4, Math.max(0, v)) })} min={0} max={4} /></Row>
+                </div>
+              )}
+              {r.display === 'toggle' && (
+                <div className="grid grid-cols-2 gap-2">
+                  <Row label="Valor ligado"><NumInput value={r.onValue} onChange={(v) => setRow(r.id, { onValue: v })} /></Row>
+                  <Row label="Valor desligado"><NumInput value={r.offValue} onChange={(v) => setRow(r.id, { offValue: v })} /></Row>
+                </div>
+              )}
+              {r.display === 'slider' && (
+                <div className="grid grid-cols-3 gap-2">
+                  <Row label="Mín"><NumInput value={r.minValue} onChange={(v) => setRow(r.id, { minValue: v })} /></Row>
+                  <Row label="Máx"><NumInput value={r.maxValue} onChange={(v) => setRow(r.id, { maxValue: v })} /></Row>
+                  <Row label="Passo"><NumInput value={r.step} onChange={(v) => setRow(r.id, { step: Math.max(0, v) })} min={0} /></Row>
+                </div>
+              )}
+              <Row label="Cor da linha (vazio = acento)"><ColorInput value={r.valueColor || w.accentColor} onChange={(v) => setRow(r.id, { valueColor: v })} /></Row>
+            </div>
+          );
+        })}
+        <button type="button" onClick={addRow} className="w-full rounded border border-dashed border-slate-600 py-1.5 text-[11px] text-slate-400 hover:border-cyan-500 hover:text-cyan-400">
+          + Adicionar linha
+        </button>
+        {w.rows.some((r) => r.display !== 'value') && isBacnetDevice(devices, w.rows.find((r) => r.display !== 'value')?.deviceId ?? '') && (
+          <Row label="Prioridade (1–16)"><NumInput value={w.priority} onChange={(v) => upd({ priority: Math.min(16, Math.max(1, v)) })} min={1} max={16} /></Row>
+        )}
+      </Section>
+      <ClimateStyleRows w={w} upd={upd} />
+    </>
+  );
+}
+
+function ClimateCardProps({ w, upd, devices }: { w: ClimateCardWidget; upd: (p: Partial<Widget>) => void; devices: ScreenDevice[] }) {
+  return (
+    <>
+      <ClimateHeaderSection w={w} upd={upd} devices={devices} />
+      <Section title="Leitura principal">
+        <Row label="Controladora"><SelectInput value={w.readingDeviceId} onChange={(v) => upd({ readingDeviceId: v, readingTag: '' })} options={deviceOptions(devices)} /></Row>
+        <Row label="Ponto"><SelectInput value={w.readingTag} onChange={(v) => upd({ readingTag: v })} options={tagOptions(devices, w.readingDeviceId)} /></Row>
+        <Row label="Rótulo"><TextInput value={w.readingLabel} onChange={(v) => upd({ readingLabel: v })} /></Row>
+        <div className="grid grid-cols-2 gap-2">
+          <Row label="Unidade"><TextInput value={w.readingUnit} onChange={(v) => upd({ readingUnit: v })} /></Row>
+          <Row label="Casas decimais"><NumInput value={w.readingDecimals} onChange={(v) => upd({ readingDecimals: Math.min(4, Math.max(0, v)) })} min={0} max={4} /></Row>
+        </div>
+        <Row label="Mostrar sparkline"><ToggleInput value={w.showSparkline} onChange={(v) => upd({ showSparkline: v })} /></Row>
+        {w.showSparkline && (
+          <>
+            <Row label="Cor da sparkline"><ColorInput value={w.sparkColor} onChange={(v) => upd({ sparkColor: v })} /></Row>
+            <Row label="Período"><SelectInput value={String(w.periodHours)} onChange={(v) => upd({ periodHours: Number(v) as DashPeriodHours })} options={PERIOD_OPTS} /></Row>
+            <p className="text-[10px] text-slate-500">O histórico vem das trends do ponto — crie uma trend para a sparkline aparecer.</p>
+          </>
+        )}
+      </Section>
+      <Section title="Setpoint (analógico comandável)">
+        <Row label="Controladora"><SelectInput value={w.setpointDeviceId} onChange={(v) => upd({ setpointDeviceId: v, setpointTag: '' })} options={writableDeviceOptions(devices, true)} /></Row>
+        <Row label="Ponto (analógico)"><SelectInput value={sanitizeCommandTag(devices, w.setpointDeviceId, w.setpointTag, true)} onChange={(v) => upd({ setpointTag: v })} options={writableTagOptions(devices, w.setpointDeviceId, true)} /></Row>
+        <Row label="Rótulo"><TextInput value={w.setpointLabel} onChange={(v) => upd({ setpointLabel: v })} /></Row>
+        <div className="grid grid-cols-3 gap-2">
+          <Row label="Mín"><NumInput value={w.minValue} onChange={(v) => upd({ minValue: v })} /></Row>
+          <Row label="Máx"><NumInput value={w.maxValue} onChange={(v) => upd({ maxValue: v })} /></Row>
+          <Row label="Passo"><NumInput value={w.step} onChange={(v) => upd({ step: Math.max(0, v) })} min={0} /></Row>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <Row label="Unidade"><TextInput value={w.setpointUnit} onChange={(v) => upd({ setpointUnit: v })} /></Row>
+          <Row label="Casas decimais"><NumInput value={w.setpointDecimals} onChange={(v) => upd({ setpointDecimals: Math.min(4, Math.max(0, v)) })} min={0} max={4} /></Row>
+        </div>
+      </Section>
+      <Section title="Liga/desliga (digital comandável)">
+        <Row label="Controladora"><SelectInput value={w.powerDeviceId} onChange={(v) => upd({ powerDeviceId: v, powerTag: '' })} options={writableDeviceOptions(devices)} /></Row>
+        <Row label="Ponto"><SelectInput value={sanitizeCommandTag(devices, w.powerDeviceId, w.powerTag)} onChange={(v) => upd({ powerTag: v })} options={writableTagOptions(devices, w.powerDeviceId)} /></Row>
+        <div className="grid grid-cols-2 gap-2">
+          <Row label="Valor ligado"><NumInput value={w.onValue} onChange={(v) => upd({ onValue: v })} /></Row>
+          <Row label="Valor desligado"><NumInput value={w.offValue} onChange={(v) => upd({ offValue: v })} /></Row>
+        </div>
+        <Row label="Pedir confirmação"><ToggleInput value={w.powerConfirm} onChange={(v) => upd({ powerConfirm: v })} /></Row>
+        {(isBacnetDevice(devices, w.setpointDeviceId) || isBacnetDevice(devices, w.powerDeviceId)) && (
+          <Row label="Prioridade (1–16)"><NumInput value={w.priority} onChange={(v) => upd({ priority: Math.min(16, Math.max(1, v)) })} min={1} max={16} /></Row>
+        )}
+      </Section>
+      <Section title="Rodapé">
+        <Row label="Texto de origem"><TextInput value={w.footerText} onChange={(v) => upd({ footerText: v })} placeholder="ex.: MQTT · aeris/008065" /></Row>
+      </Section>
+      <ClimateStyleRows w={w} upd={upd} />
+    </>
   );
 }

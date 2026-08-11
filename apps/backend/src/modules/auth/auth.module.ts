@@ -6,6 +6,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthController } from './auth.controller.js';
 import { AccountController } from './account.controller.js';
 import { AuthService } from './application/use-cases/auth.service.js';
+import { TurnstileService } from './application/use-cases/turnstile.service.js';
 import { JwtStrategy } from './infrastructure/jwt.strategy.js';
 import { TenantMiddleware } from './presentation/middleware/tenant.middleware.js';
 
@@ -24,7 +25,7 @@ import { TenantMiddleware } from './presentation/middleware/tenant.middleware.js
     }),
   ],
   controllers: [AuthController, AccountController],
-  providers: [AuthService, JwtStrategy],
+  providers: [AuthService, JwtStrategy, TurnstileService],
   exports: [AuthService, JwtModule, PassportModule],
 })
 export class AuthModule implements NestModule {

@@ -3,8 +3,12 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import type { BacnetTelemetryPayload } from './telemetry.gateway.js';
 import { AvailabilityRecorderService } from './availability-recorder.service.js';
 
-/** Protocolos de câmera CFTV — únicos com persistência de último valor. */
-const CFTV_PROTOCOLS = new Set(['snmp', 'onvif']);
+/**
+ * Protocolos de dispositivos monitorados por ponto — câmeras CFTV e
+ * controladoras de acesso têm persistência de último valor e disponibilidade
+ * derivada do ponto STATUS.
+ */
+const MONITORED_PROTOCOLS = new Set(['snmp', 'onvif']);
 
 /** TTL do cache deviceId → é câmera CFTV? (evita query por ciclo de telemetria). */
 const PROTOCOL_CACHE_TTL_MS = 5 * 60_000;
@@ -27,6 +31,12 @@ export class CameraLastValueService {
 
   /** deviceId → { isCamera, expiresAt } */
   private readonly protocolCache = new Map<string, { isCamera: boolean; expiresAt: number }>();
+
+  /**
+   * deviceId → monitoredDeviceType (preenchido junto com o protocolCache).
+   * Usado para escolher o entityType correto na chamada de disponibilidade.
+   */
+  private readonly _monitoredDeviceTypeCache = new Map<string, string | null>();
 
   /**
    * deviceId → último STATUS visto (0/1) — detecta transições offline→online
@@ -83,7 +93,10 @@ export class CameraLastValueService {
       if (p.tag === 'STATUS' && value !== null) {
         await this.trackAvailability(deviceId, value, validAt);
         // Histórico durável de transições (relatório de disponibilidade).
-        this.availability.noteCameraStatus(deviceId, value, validAt);
+        // Controladoras de acesso são gravadas como 'device', câmeras como 'camera'.
+        const monitoredType = this._monitoredDeviceTypeCache.get(deviceId);
+        const entityType = monitoredType === 'ACCESS_CONTROLLER' ? 'device' : 'camera';
+        this.availability.noteCameraStatus(deviceId, value, validAt, entityType);
       }
     }
   }
@@ -138,13 +151,18 @@ export class CameraLastValueService {
     }
     const device = await this.prisma.device.findUnique({
       where: { id: deviceId },
-      select: { protocol: true },
+      select: { protocol: true, monitoredDeviceType: true },
     });
-    const isCamera = Boolean(device && CFTV_PROTOCOLS.has(device.protocol));
+    // Persiste lastValue para câmeras CFTV e controladoras de acesso (ambas têm ponto STATUS).
+    const isCamera = Boolean(device && MONITORED_PROTOCOLS.has(device.protocol));
     this.protocolCache.set(deviceId, {
       isCamera,
       expiresAt: Date.now() + PROTOCOL_CACHE_TTL_MS,
     });
+    // Guarda o monitoredDeviceType para uso na linha de disponibilidade.
+    if (device) {
+      this._monitoredDeviceTypeCache.set(deviceId, device.monitoredDeviceType ?? null);
+    }
     return isCamera;
   }
 }

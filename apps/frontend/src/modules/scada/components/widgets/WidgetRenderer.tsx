@@ -46,6 +46,10 @@ import { BarListWidgetView } from './BarListWidget';
 import { EventFeedWidgetView } from './EventFeedWidget';
 import { PointTableWidgetView } from './PointTableWidget';
 import { SegmentedControlWidgetView } from './SegmentedControlWidget';
+import { ValueStepperWidgetView } from './ValueStepperWidget';
+import { SetpointRingWidgetView } from './SetpointRingWidget';
+import { EquipmentCardWidgetView } from './EquipmentCardWidget';
+import { ClimateCardWidgetView } from './ClimateCardWidget';
 
 interface WidgetRendererProps {
   widget: Widget;
@@ -219,6 +223,12 @@ function RendererInner({
       return;
     }
     if (a.type !== 'command' || !onCommand || !a.deviceId || !a.tag) return;
+    // Ponto sem comunicação: NÃO envia comando silenciosamente — o operador
+    // estaria comandando em cima de um estado visual possivelmente defasado.
+    if (getTagStatus && getTagStatus(a.deviceId, a.tag) !== 'live') {
+      useEditorStore.getState().addToast('error', 'Ponto sem comunicação — comando bloqueado');
+      return;
+    }
     // Toggle (binários): alterna a partir do valor atual do ponto.
     let value: number;
     if ((a.commandMode ?? 'set') === 'toggle') {
@@ -237,7 +247,8 @@ function RendererInner({
     setActionSending(true);
     try {
       const res = await onCommand(a.deviceId, a.tag, value, a.priority ?? 8);
-      if (res.ok) addToast('success', `Comando enviado: ${a.tag} = ${value}`);
+      if (res.ok && res.warning) addToast('success', res.warning);
+      else if (res.ok) addToast('success', `Comando enviado: ${a.tag} = ${value}`);
       else addToast('error', res.error ?? 'Falha ao enviar comando');
     } finally {
       setActionSending(false);
@@ -254,7 +265,11 @@ function RendererInner({
   // então o widget de câmera pinta o próprio estado e NÃO recebe o overlay cinza.
   const binding =
     !isEditor && getTagStatus && widget.type !== 'camera' ? widgetBinding(widget) : null;
+  // Nota: o status ignora o valor otimista pendente de propósito — um comando
+  // recém-enviado NÃO remove o overlay/badge de offline (não mascara o estado).
   const offline = binding ? getTagStatus!(binding.deviceId, binding.tag) !== 'live' : false;
+  // Widgets de comando: bloqueiam interação quando o ponto está sem comunicação.
+  const commOffline = offline;
 
   // ── Status genérico por ponto (recolore/anima/relabela qualquer widget) ──────
   // Na renderização estática, o status por ponto é ignorado (sem recolor/anim/texto).
@@ -277,6 +292,11 @@ function RendererInner({
     outlineOffset: isSelected ? '2px' : undefined,
     boxSizing: 'border-box',
   };
+
+  // Rotação base do widget (graus, em torno do centro) — vale em editor,
+  // preview e viewer. Ausente/0 = sem transform (legado intacto).
+  const rotation = ((widget.rotation ?? 0) % 360 + 360) % 360;
+  if (rotation !== 0) style.transform = `rotate(${rotation}deg)`;
 
   // Cor transparente na regra de status = "sem cor": borda/brilho desativados.
   if (!isSelected && statusBorder && !isTransparentColor(statusBorder.color)) {
@@ -313,11 +333,11 @@ function RendererInner({
     case 'numeric-display':
       content = <NumericDisplayWidgetView widget={widget} getValue={getValue} colorOverride={contentColor} textOverride={contentText} staticRender={staticRender} />; break;
     case 'command-button':
-      content = <CommandButtonWidgetView widget={widget} getValue={getValue} onCommand={onCommand} isEditor={isEditor} staticRender={staticRender} />; break;
+      content = <CommandButtonWidgetView widget={widget} getValue={getValue} onCommand={onCommand} isEditor={isEditor} staticRender={staticRender} commOffline={commOffline} />; break;
     case 'command-slider':
-      content = <CommandSliderWidgetView widget={widget} getValue={getValue} onCommand={onCommand} isEditor={isEditor} staticRender={staticRender} />; break;
+      content = <CommandSliderWidgetView widget={widget} getValue={getValue} onCommand={onCommand} isEditor={isEditor} staticRender={staticRender} commOffline={commOffline} />; break;
     case 'toggle-switch':
-      content = <ToggleSwitchWidgetView widget={widget} getValue={getValue} onCommand={onCommand} isEditor={isEditor} staticRender={staticRender} />; break;
+      content = <ToggleSwitchWidgetView widget={widget} getValue={getValue} onCommand={onCommand} isEditor={isEditor} staticRender={staticRender} commOffline={commOffline} />; break;
     case 'trend-arrow':
       content = <TrendArrowWidgetView widget={widget} getValue={getValue} staticRender={staticRender} />; break;
     case 'alarm-indicator':
@@ -327,7 +347,7 @@ function RendererInner({
     case 'device-counter':
       // Popup "quais pontos" só quando não há ação de clique configurada nem
       // seleção do editor — mesma precedência do handleClick genérico.
-      content = <DeviceCounterWidgetView widget={widget} devices={devices ?? []} getValue={getValue} getTagStatus={getTagStatus} staticRender={staticRender} interactive={!isEditor && !onClick && !clickActionable} />; break;
+      content = <DeviceCounterWidgetView widget={widget} devices={devices ?? []} getValue={getValue} getTagStatus={getTagStatus} getTagReading={getTagReading} staticRender={staticRender} interactive={!isEditor && !onClick && !clickActionable} />; break;
     case 'line':
       content = <LineWidgetView widget={widget} getValue={getValue} staticRender={staticRender} />; break;
     case 'pipe':
@@ -369,7 +389,16 @@ function RendererInner({
     case 'point-table':
       content = <PointTableWidgetView widget={widget} getValue={getValue} staticRender={staticRender} />; break;
     case 'segmented-control':
-      content = <SegmentedControlWidgetView widget={widget} getValue={getValue} onCommand={onCommand} isEditor={isEditor} staticRender={staticRender} />; break;
+      content = <SegmentedControlWidgetView widget={widget} getValue={getValue} onCommand={onCommand} isEditor={isEditor} staticRender={staticRender} commOffline={commOffline} />; break;
+    case 'value-stepper':
+      content = <ValueStepperWidgetView widget={widget} getValue={getValue} onCommand={onCommand} isEditor={isEditor} staticRender={staticRender} commOffline={commOffline} />; break;
+    case 'setpoint-ring':
+      content = <SetpointRingWidgetView widget={widget} getValue={getValue} staticRender={staticRender} />; break;
+    case 'equipment-card':
+      // Multi-ponto: cada linha resolve o próprio ponto (offline por linha).
+      content = <EquipmentCardWidgetView widget={widget} getValue={getValue} getTagStatus={getTagStatus} onCommand={onCommand} isEditor={isEditor} staticRender={staticRender} />; break;
+    case 'climate-card':
+      content = <ClimateCardWidgetView widget={widget} getValue={getValue} getTagStatus={getTagStatus} getReading={getTagReading} onCommand={onCommand} isEditor={isEditor} staticRender={staticRender} />; break;
     default:
       if (EQUIPMENT_TYPES.has(widget.type)) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

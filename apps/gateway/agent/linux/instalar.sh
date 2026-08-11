@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # ===========================================================================
-#  BlueBee IoT Gateway - Instalacao (npm + servico systemd)
+#  Beeldings IoT Gateway - Instalacao (npm + servico systemd)
 #  Uso: sudo bash instalar.sh
 #  Coloque o gateway-config.env (ou .env) nesta mesma pasta antes de rodar.
 # ===========================================================================
 set -euo pipefail
 
-SERVICE_NAME="bluebee-gateway"
-DISPLAY="BlueBee IoT Gateway"
+SERVICE_NAME="beeldings-gateway"
+LEGACY_SERVICE_NAME="bluebee-gateway"
+DISPLAY="Beeldings IoT Gateway"
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -46,6 +47,15 @@ fi
 if [ ! -f "${DIR}/run.js" ]; then
   echo "[ERRO] run.js (launcher OTA) nao encontrado no pacote."
   exit 1
+fi
+
+# Remove o servico LEGADO (nome antigo BlueBee), se existir — evita dois
+# servicos rodando ao mesmo tempo apos o rename para Beeldings.
+if [ -f "/etc/systemd/system/${LEGACY_SERVICE_NAME}.service" ]; then
+  echo "Removendo servico legado ${LEGACY_SERVICE_NAME} (nome antigo)..."
+  systemctl stop "${LEGACY_SERVICE_NAME}" 2>/dev/null || true
+  systemctl disable "${LEGACY_SERVICE_NAME}" 2>/dev/null || true
+  rm -f "/etc/systemd/system/${LEGACY_SERVICE_NAME}.service"
 fi
 
 echo "Criando o servico systemd ${SERVICE_NAME}..."

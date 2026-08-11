@@ -15,4 +15,29 @@ export const DICT_DEVICES: Record<string, string> = {
   'Entendi': 'Got it',
   'Remover dos ativos críticos': 'Remove from critical assets',
   'Marcar como ativo crítico': 'Mark as critical asset',
+
+  // ── Labels do badge OpRoleBadge nas listas de pontos (Modo já declarado acima) ──
+  'Status':   'Status',
+  'Setpoint': 'Setpoint',
+
+  // ── Botão "Definir papel Status" no popover da estrela ──
+  'Definir papel Status': 'Set Status role',
+  'Definindo papel...': 'Setting role…',
+  'Erro ao definir papel. Tente novamente.': 'Failed to set role. Please try again.',
+
+  // ── Diálogo de fallback (dispositivos sem modal dedicado) ──
+  'Dispositivo': 'Device',
+  'Nome': 'Name',
+  'Protocolo': 'Protocol',
+  'Local': 'Location',
+  'Fechar': 'Close',
+  'Remover dispositivo': 'Remove device',
+  'Remover dispositivo?': 'Remove device?',
+  'Remover': 'Remove',
+  'O dispositivo': 'The device',
+  'e todos os seus pontos, históricos e alarmes serão excluídos permanentemente. Esta ação não pode ser desfeita.':
+    'and all its points, history, and alarms will be permanently deleted. This action cannot be undone.',
+  'Este tipo de dispositivo é gerenciado em outra área do sistema. Aqui você pode apenas remover o registro.':
+    'This device type is managed in another area of the system. Here you can only remove the record.',
+  'Erro ao remover dispositivo. Tente novamente.': 'Failed to remove device. Please try again.',
 };

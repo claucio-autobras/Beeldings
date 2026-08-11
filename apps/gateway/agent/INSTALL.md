@@ -1,7 +1,7 @@
-# BlueBee IoT — Instalação do Gateway (Agente)
+# Beeldings IoT — Instalação do Gateway (Agente)
 
 Este pacote contém o **código-fonte do gateway** que conecta os equipamentos de
-campo (BACnet/Modbus) à plataforma BlueBee via MQTT.
+campo (BACnet/Modbus) à plataforma Beeldings via MQTT.
 
 A instalação roda **`npm install`** na pasta, compila o gateway e o registra como
 **serviço** (Windows ou Linux) para subir sozinho no boot e reiniciar em caso de
@@ -29,7 +29,7 @@ falha.
 
 1. **Baixe** o `.zip` na plataforma (página **Agente de Gateway**).
 2. **Descompacte** a pasta diretamente em **`C:\`** (ex.:
-   `C:\bluebee-gateway-agent`).
+   `C:\beeldings-gateway-agent`).
    > Extrair em `C:\` evita erros de instalação quando o nome do usuário
    > Windows tem acento e facilita encontrar a pasta depois.
 3. Copie o **`gateway-config.env`** (baixado na criação do projeto do cliente)
@@ -42,16 +42,20 @@ O `instalar.bat` faz tudo de uma vez:
 
 - roda `npm install` (baixa as dependências),
 - roda `npm run build` (compila o gateway),
-- registra e inicia o **Serviço do Windows** `BlueBeeGateway` (via NSSM).
+- registra e inicia o **Serviço do Windows** `BeeldingsGateway` (via NSSM).
+
+Se a máquina tinha o agente instalado com o nome antigo (`BlueBeeGateway`), o
+instalador **remove o serviço legado automaticamente** antes de registrar o
+novo — não ficam dois serviços rodando.
 
 **Verificar / acompanhar:**
 
 ```bat
-sc query BlueBeeGateway
+sc query BeeldingsGateway
 REM logs em gateway.log na mesma pasta
 ```
 
-Gerencie também pelo `services.msc` (procure por **"BlueBee IoT Gateway"**).
+Gerencie também pelo `services.msc` (procure por **"Beeldings IoT Gateway"**).
 
 > Em desktop, desative suspensão/hibernação para a coleta não parar.
 
@@ -59,7 +63,7 @@ Gerencie também pelo `services.msc` (procure por **"BlueBee IoT Gateway"**).
 
 ## 3. Passo a passo — Linux (systemd)
 
-1. **Extraia** o `.zip` (ele cria a pasta `bluebee-gateway-agent/`, ex.: em
+1. **Extraia** o `.zip` (ele cria a pasta `beeldings-gateway-agent/`, ex.: em
    `/opt`) e entre na pasta.
 2. Copie o **`gateway-config.env`** para essa pasta (vira `.env`
    automaticamente).
@@ -70,13 +74,14 @@ sudo bash instalar.sh
 ```
 
 O `instalar.sh` roda `npm install`, `npm run build`, cria o serviço
-`bluebee-gateway` no systemd e o inicia.
+`beeldings-gateway` no systemd e o inicia. Se existir o serviço com o nome
+antigo (`bluebee-gateway`), ele é parado e removido automaticamente.
 
 **Verificar / acompanhar:**
 
 ```bash
-systemctl status bluebee-gateway
-journalctl -u bluebee-gateway -f
+systemctl status beeldings-gateway
+journalctl -u beeldings-gateway -f
 ```
 
 ---
@@ -96,14 +101,15 @@ Necessário, por exemplo, quando for reinstalar do zero por causa de algum erro.
 ### Windows (recomendado)
 
 Clique com o botão direito em **`remover.bat`** → **Executar como
-administrador**. Ele para e remove o serviço `BlueBeeGateway`.
+administrador**. Ele para e remove o serviço `BeeldingsGateway` (e também o
+legado `BlueBeeGateway`, se existir).
 
 Se preferir os comandos manuais (PowerShell/CMD **como Admin**):
 
 ```bat
-sc.exe stop BlueBeeGateway
-sc.exe delete BlueBeeGateway
-sc.exe query BlueBeeGateway
+sc.exe stop BeeldingsGateway
+sc.exe delete BeeldingsGateway
+sc.exe query BeeldingsGateway
 ```
 
 > O `remover.bat` faz exatamente isso (via NSSM, com `sc.exe` como reserva), de
@@ -121,7 +127,7 @@ sudo bash remover.sh
 ## 6. Conteúdo do pacote
 
 ```
-bluebee-gateway-agent/
+beeldings-gateway-agent/
 ├─ src/                 # código-fonte do gateway
 ├─ package.json         # dependências (usadas pelo npm install)
 ├─ tsconfig*.json       # configuração de build

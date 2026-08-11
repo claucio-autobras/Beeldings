@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState, useSyncExternalStore } from 'react';
-import { useBacnetTelemetry, telemetryKey, deviceTelemetryKey, deviceTagKey } from '@/hooks/useBacnetTelemetry';
+import { useBacnetTelemetry } from '@/hooks/useBacnetTelemetry';
 import type { TelemetryEntry } from '@/hooks/useBacnetTelemetry';
+import { resolveTelemetryEntry } from './telemetry-lookup';
 import {
   getPendingCommand,
   clearPendingCommand,
@@ -10,11 +11,6 @@ import {
   pendingCommandsVersion,
 } from '../store/pending-commands.store';
 import type { ScreenDevice, VirtualPoint } from '../types/virtual.types';
-
-/** BACnet objectType (string nos pontos) → número usado na chave de telemetria. */
-const OBJECT_TYPE_NUM: Record<string, number> = {
-  AI: 0, AO: 1, AV: 2, BI: 3, BO: 4, BV: 5, MSI: 13, MSO: 14,
-};
 
 /**
  * Janela de frescor: um ponto vira `stale` se a última leitura tiver mais que
@@ -50,14 +46,29 @@ export interface ScreenTelemetry {
 }
 
 /**
- * Seed persistido de um ponto de câmera CFTV (lastValue/lastValueAt) — igual ao
- * `liveOrSeed` da área CFTV: mostra o status imediatamente ao abrir a tela,
- * antes do primeiro pacote de telemetria chegar.
+ * Protocolos cujos pontos têm último valor persistido (DevicePoint.lastValue):
+ * câmeras CFTV (snmp/onvif) e dispositivos MQTT comuns (publish-on-change,
+ * ex.: Aeris — sem seed a tela ficaria "sem dados" por minutos).
  */
-function cameraSeed(point: unknown): PointReading | null {
+function hasPersistedSeed(protocol: string): boolean {
+  return protocol === 'snmp' || protocol === 'onvif' || protocol === 'mqtt';
+}
+
+/**
+ * Seed persistido de um ponto (lastValue/lastValueAt) — igual ao
+ * `liveOrSeed` da área CFTV: mostra o status imediatamente ao abrir a tela,
+ * antes do primeiro pacote de telemetria chegar. Sem leitura persistida
+ * (lastValueAt null), retorna null — nunca inventa valor.
+ */
+function persistedSeed(point: unknown): PointReading | null {
   const p = point as { lastValue?: number | null; lastValueAt?: string | null };
-  if (p && typeof p === 'object' && 'lastValueAt' in p && p.lastValueAt) {
-    return { value: p.lastValue ?? null, timestamp: p.lastValueAt };
+  if (!p || typeof p !== 'object') return null;
+  // Leitura persistida completa (valor + horário).
+  if (p.lastValueAt) return { value: p.lastValue ?? null, timestamp: p.lastValueAt };
+  // lastValue sem lastValueAt (registros antigos/ingestões parciais): ainda é
+  // "com dado" — timestamp null deixa claro que o frescor é desconhecido.
+  if (p.lastValue !== null && p.lastValue !== undefined) {
+    return { value: p.lastValue, timestamp: null };
   }
   return null;
 }
@@ -71,7 +82,7 @@ function cameraSeed(point: unknown): PointReading | null {
  * chave de telemetria → último valor recebido. Sem leitura, retorna null.
  */
 export function useScreenTelemetry(devices: ScreenDevice[], enabled = true): ScreenTelemetry {
-  const { telemetry, byTag, byDevice, connected } = useBacnetTelemetry({ enabled });
+  const { telemetry, byDevice, connected } = useBacnetTelemetry({ enabled });
 
   // Re-renderiza quando um comando pendente (otimista) é registrado/descartado,
   // para que TODOS os widgets do ponto reflitam o valor comandado na hora.
@@ -95,28 +106,14 @@ export function useScreenTelemetry(devices: ScreenDevice[], enabled = true): Scr
     return { dev, point };
   }
 
-  /** Resolve a entrada de telemetria AO VIVO de um ponto (ou null se não houver). */
+  /**
+   * Resolve a entrada de telemetria AO VIVO de um ponto (ou null se não houver).
+   * A regra de resolução (incluindo o isolamento por deviceId+tag que impede
+   * dois devices de mesma tag de vazar valor um no outro) vive na função pura
+   * `resolveTelemetryEntry` — coberta por testes em telemetry-lookup.spec.ts.
+   */
   function lookup(deviceId: string, tag: string): TelemetryEntry | null {
-    const resolved = resolvePoint(deviceId, tag);
-    if (!resolved) return null;
-    const { dev, point } = resolved;
-
-    // BACnet (e pontos virtuais): telemetria indexada por objectType:instance.
-    if ('objectType' in point) {
-      const num = OBJECT_TYPE_NUM[point.objectType];
-      if (num === undefined) return null;
-      // Pontos virtuais (bancada): telemetria ISOLADA por dispositivo, para não
-      // casar (e "seguir") o valor de uma controladora real de mesmo objectType:instance.
-      if (dev.protocol === 'virtual') {
-        return byDevice.get(deviceTelemetryKey(deviceId, num, point.instance)) ?? null;
-      }
-      return telemetry.get(telemetryKey(num, point.instance)) ?? null;
-    }
-
-    // Protocolos sem objectType (SNMP, Modbus): primeiro o índice ISOLADO por
-    // dispositivo (device+tag) — evita colisão entre devices com as mesmas tags
-    // (toda câmera CFTV tem STATUS/UPTIME/...) — com fallback no índice global.
-    return byDevice.get(deviceTagKey(deviceId, tag)) ?? byTag.get(tag) ?? null;
+    return resolveTelemetryEntry({ telemetry, byDevice }, devices, deviceId, tag);
   }
 
   function getValue(deviceId: string, tag: string): number | boolean | string | null {
@@ -150,10 +147,11 @@ export function useScreenTelemetry(devices: ScreenDevice[], enabled = true): Scr
       return vp.currentValue ?? vp.value ?? null;
     }
 
-    // Câmeras CFTV: fallback para o último valor persistido no backend (seed),
-    // como na área CFTV — o STATUS aparece imediatamente ao abrir a tela.
-    if (resolved.dev.protocol === 'snmp' || resolved.dev.protocol === 'onvif') {
-      return cameraSeed(resolved.point)?.value ?? null;
+    // Câmeras CFTV e dispositivos MQTT: fallback para o último valor persistido
+    // no backend (seed) — o valor aparece imediatamente ao abrir a tela e a
+    // telemetria ao vivo sempre sobrescreve (checagem `live` acima).
+    if (hasPersistedSeed(resolved.dev.protocol)) {
+      return persistedSeed(resolved.point)?.value ?? null;
     }
     return null;
   }
@@ -170,8 +168,8 @@ export function useScreenTelemetry(devices: ScreenDevice[], enabled = true): Scr
       const vp = resolved.point as VirtualPoint;
       return { value: vp.currentValue ?? vp.value ?? null, timestamp: null };
     }
-    if (resolved.dev.protocol === 'snmp' || resolved.dev.protocol === 'onvif') {
-      return cameraSeed(resolved.point);
+    if (hasPersistedSeed(resolved.dev.protocol)) {
+      return persistedSeed(resolved.point);
     }
     return null;
   }
@@ -184,11 +182,20 @@ export function useScreenTelemetry(devices: ScreenDevice[], enabled = true): Scr
     if (resolved.dev.protocol === 'virtual') return 'live';
 
     const entry = lookup(deviceId, tag);
-    if (!entry) return 'no-data';
-    if (!connected) return 'stale';
+
+    // Seed persistido (câmeras e MQTT publish-on-change): o ponto TEM dado.
+    // Vale como fallback SEMPRE que a leitura ao vivo estiver ausente, velha
+    // ou o socket ainda estiver (re)conectando — sem isso a tela pisca o
+    // badge de offline ao abrir e entre publicações normais de telemetria,
+    // mesmo com último valor conhecido válido.
+    const seeded = hasPersistedSeed(resolved.dev.protocol) && persistedSeed(resolved.point) !== null;
+
+    if (!entry) return seeded ? 'live' : 'no-data';
+    if (!connected) return seeded ? 'live' : 'stale';
     const ts = Date.parse(entry.timestamp);
-    if (Number.isNaN(ts)) return 'stale';
-    return Date.now() - ts > STALE_AFTER_MS ? 'stale' : 'live';
+    if (Number.isNaN(ts)) return seeded ? 'live' : 'stale';
+    if (Date.now() - ts > STALE_AFTER_MS) return seeded ? 'live' : 'stale';
+    return 'live';
   }
 
   return { getValue, getReading, getPointStatus, connected };

@@ -1,6 +1,7 @@
 'use client';
 
 import type { TitledAreaWidget } from '@/mocks/data/scada.mock';
+import { scadaBackgroundStyle } from '../../types/scada.types';
 
 interface Props { widget: TitledAreaWidget }
 
@@ -35,7 +36,7 @@ export function TitledAreaWidgetView({ widget }: Props) {
   if (position === 'inside') {
     const alignItems = align === 'center' ? 'center' : align === 'right' ? 'flex-end' : 'flex-start';
     return (
-      <div style={{ width: '100%', height: '100%', position: 'relative', backgroundColor: widget.fillColor, border: `1px solid ${widget.borderColor}`, borderRadius: widget.borderRadius, userSelect: 'none', display: 'flex', flexDirection: 'column', alignItems }}>
+      <div style={{ width: '100%', height: '100%', position: 'relative', ...scadaBackgroundStyle(widget.fillColor), border: `1px solid ${widget.borderColor}`, borderRadius: widget.borderRadius, userSelect: 'none', display: 'flex', flexDirection: 'column', alignItems }}>
         <span style={{ ...titleStyle, padding: `${Math.max(4, Math.round(fontSize * 0.5))}px 10px 0` }}>{title}</span>
       </div>
     );
@@ -49,7 +50,7 @@ export function TitledAreaWidgetView({ widget }: Props) {
     : { marginLeft: Math.max(10, widget.borderRadius) };
 
   return (
-    <fieldset style={{ width: '100%', height: '100%', margin: 0, padding: 0, minWidth: 0, backgroundColor: widget.fillColor, border: `1px solid ${widget.borderColor}`, borderRadius: widget.borderRadius, userSelect: 'none' }}>
+    <fieldset style={{ width: '100%', height: '100%', margin: 0, padding: 0, minWidth: 0, ...scadaBackgroundStyle(widget.fillColor), border: `1px solid ${widget.borderColor}`, borderRadius: widget.borderRadius, userSelect: 'none' }}>
       <legend style={{ ...titleStyle, ...legendMargin, padding: '0 6px' }}>{title}</legend>
     </fieldset>
   );

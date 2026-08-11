@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useLayoutEffect } from 'react';
 import { getSession, refreshProfile, purgeLegacySession } from '../services/auth.service';
 import { useAuthStore } from './auth.store';
 
@@ -9,32 +9,39 @@ interface AuthProviderProps {
 }
 
 /**
- * Inicializa o estado de autenticação: hidrata do localStorage (só o usuário —
- * o token vive em cookie HttpOnly) e valida a sessão no backend via
- * GET /auth/profile. Sessões inválidas/expiradas voltam ao login.
+ * Inicializa o estado de autenticação:
+ * - useLayoutEffect: hidrata do localStorage antes do primeiro paint (evita
+ *   flash do spinner quando o usuário já tem sessão cacheada).
+ * - useEffect: valida a sessão no backend via GET /auth/profile. Sessões
+ *   inválidas/expiradas voltam ao login.
  * Deve ser renderizado dentro do layout raiz, acima de qualquer rota protegida.
  */
 export function AuthProvider({ children }: AuthProviderProps) {
   const { setSession, clearAuth, setLoading } = useAuthStore();
 
-  useEffect(() => {
-    // Transição: remove o token legado (localStorage + cookie legível por JS).
+  // ── Passo 1: hidratação síncrona (antes do paint) ─────────────────────────
+  // useLayoutEffect roda no cliente antes de o navegador pintar o frame.
+  // Isso garante que sessões cacheadas nunca mostrem o spinner.
+  useLayoutEffect(() => {
     purgeLegacySession();
-
     const existing = getSession();
     if (existing) {
-      // Hidratação otimista para a UI não piscar; a validação roda em seguida.
-      setSession(existing);
+      setSession(existing); // isLoading → false imediatamente
     } else {
-      setLoading(false);
+      setLoading(false);    // não há sessão cacheada, para o spinner
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
+  // ── Passo 2: validação assíncrona no backend ───────────────────────────────
+  useEffect(() => {
+    const existing = getSession(); // lê de novo para o snapshot correto
     void refreshProfile().then((user) => {
       if (user) {
         setSession({ user });
         return;
       }
-      // Sessão inválida (cookie ausente/expirado): limpa e volta ao login,
+      // Sessão inválida (cookie ausente/expirado): limpa e redireciona ao login,
       // exceto em rotas públicas (a própria tela de login passa por aqui).
       clearAuth();
       const path = window.location.pathname;

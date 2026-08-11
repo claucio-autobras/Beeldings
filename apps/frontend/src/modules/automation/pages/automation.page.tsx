@@ -33,9 +33,9 @@ import type { Automation } from '../types/automation.types';
 const DAY_ABBR = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
 const RESULT_META: Record<string, { label: string; cls: string }> = {
-  SUCCESS: { label: 'OK', cls: 'bg-green-50 text-green-700 border-green-200' },
-  PARTIAL: { label: 'Parcial', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
-  FAILURE: { label: 'Falhou', cls: 'bg-red-50 text-red-700 border-red-200' },
+  SUCCESS: { label: 'OK', cls: 'bg-green-50 text-green-700 border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800' },
+  PARTIAL: { label: 'Parcial', cls: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800' },
+  FAILURE: { label: 'Falhou', cls: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800' },
 };
 
 /** Resumo de uma linha: "Contínuo · reavalia a cada Xs" ou "Agenda · HH:mm". */
@@ -117,8 +117,8 @@ export default function AutomationPage() {
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
         <div className="flex min-w-0 items-start gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-cyan-50">
-            <Zap className="h-5 w-5 text-cyan-700" />
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-cyan-50 dark:bg-cyan-950/40">
+            <Zap className="h-5 w-5 text-cyan-700 dark:text-cyan-400" />
           </div>
           <div className="min-w-0">
             <h1 className="text-xl font-semibold text-foreground">Automações</h1>
@@ -143,10 +143,10 @@ export default function AutomationPage() {
         <div className="flex flex-col items-center justify-center px-4 py-12 text-center">
           {/* Ícone em destaque com badge de prédio */}
           <div className="relative mb-5">
-            <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-cyan-50 ring-1 ring-cyan-100">
-              <Zap className="h-9 w-9 text-cyan-700" />
+            <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-cyan-50 ring-1 ring-cyan-100 dark:bg-cyan-950/40 dark:ring-cyan-900">
+              <Zap className="h-9 w-9 text-cyan-700 dark:text-cyan-400" />
             </div>
-            <div className="absolute -bottom-1.5 -right-1.5 flex h-8 w-8 items-center justify-center rounded-xl border-2 border-white bg-cyan-700 shadow-sm">
+            <div className="absolute -bottom-1.5 -right-1.5 flex h-8 w-8 items-center justify-center rounded-xl border-2 border-white bg-cyan-700 shadow-sm dark:border-slate-900">
               <Building2 className="h-4 w-4 text-white" />
             </div>
           </div>
@@ -158,7 +158,7 @@ export default function AutomationPage() {
             As automações são organizadas por cliente. Basta escolher um no seletor
             &quot;Todos Clientes&quot; no topo para ver e criar as regras dele.
           </p>
-          <div className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-medium text-cyan-800">
+          <div className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-xs font-medium text-cyan-800 dark:border-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-300">
             <span aria-hidden>↑</span> use o seletor no topo
           </div>
 
@@ -185,8 +185,8 @@ export default function AutomationPage() {
                 key={title}
                 className="rounded-xl border border-border bg-card p-4 text-left"
               >
-                <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-cyan-50">
-                  <Icon className="h-4 w-4 text-cyan-700" />
+                <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-cyan-50 dark:bg-cyan-950/40">
+                  <Icon className="h-4 w-4 text-cyan-700 dark:text-cyan-400" />
                 </div>
                 <div className="text-sm font-medium text-foreground">{title}</div>
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{desc}</p>
@@ -235,7 +235,7 @@ export default function AutomationPage() {
 
       {/* Error */}
       {tab === 'rules' && error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-400">
           Erro ao carregar automações: {(error as Error).message}. Se o backend acabou de subir,
           confirme que a migração foi aplicada (<code>prisma migrate deploy</code>).
         </div>
@@ -271,9 +271,9 @@ export default function AutomationPage() {
                 <div className="flex min-w-0 items-center gap-3">
                   <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted/40">
                     {a.mode === 'CONTINUOUS' ? (
-                      <Repeat className="h-4 w-4 text-cyan-700" />
+                      <Repeat className="h-4 w-4 text-cyan-700 dark:text-cyan-400" />
                     ) : (
-                      <Calendar className="h-4 w-4 text-cyan-700" />
+                      <Calendar className="h-4 w-4 text-cyan-700 dark:text-cyan-400" />
                     )}
                   </div>
                   <div className="min-w-0">
@@ -294,7 +294,7 @@ export default function AutomationPage() {
                   <button
                     onClick={() => openHistoryFor(a.id)}
                     title="Ver histórico desta automação"
-                    className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-cyan-50 hover:text-cyan-700"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-cyan-50 hover:text-cyan-700 dark:hover:bg-cyan-950/40 dark:hover:text-cyan-400"
                   >
                     <History className="h-4 w-4" />
                   </button>
@@ -305,7 +305,7 @@ export default function AutomationPage() {
                     disabled={!canEdit || toggle.isPending}
                     title={a.enabled ? 'Desativar' : 'Ativar'}
                     className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 ${
-                      a.enabled ? 'bg-green-500' : 'bg-slate-300'
+                      a.enabled ? 'bg-green-500' : 'bg-slate-300 dark:bg-slate-600'
                     }`}
                   >
                     <span
@@ -319,14 +319,14 @@ export default function AutomationPage() {
                       <button
                         onClick={() => openEdit(a)}
                         title="Editar"
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-cyan-50 hover:text-cyan-700"
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-cyan-50 hover:text-cyan-700 dark:hover:bg-cyan-950/40 dark:hover:text-cyan-400"
                       >
                         <Pencil className="h-4 w-4" />
                       </button>
                       <button
                         onClick={() => setConfirmDelete(a)}
                         title="Excluir"
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-red-50 hover:text-red-600"
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400"
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
@@ -366,8 +366,8 @@ export default function AutomationPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-50">
-                <AlertTriangle className="h-5 w-5 text-red-600" />
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-50 dark:bg-red-950/40">
+                <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400" />
               </div>
               <h2 className="text-sm font-semibold text-foreground">Excluir automação?</h2>
             </div>
@@ -376,7 +376,7 @@ export default function AutomationPage() {
               pontos. Esta ação não pode ser desfeita.
             </p>
             {del.error && (
-              <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
+              <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600 dark:border-red-800 dark:bg-red-950/40 dark:text-red-400">
                 {(del.error as Error).message}
               </p>
             )}

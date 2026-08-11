@@ -49,7 +49,7 @@ export async function getDevices(tenantId?: string): Promise<Device[]> {
 
 // ─── Heartbeat — diagnóstico do dispositivo MQTT ─────────────────────────────
 
-/** Diagnóstico do último heartbeat de um dispositivo MQTT (backend, em memória). */
+/** Diagnóstico do último heartbeat de um dispositivo MQTT (memória + cópia durável). */
 export interface DeviceHeartbeatDiag {
   receivedAt: string;
   timeoutSeconds: number | null;
@@ -559,6 +559,12 @@ export interface WriteBacnetPointParams {
 export interface WritePointResult {
   ok: boolean;
   error?: string;
+  /**
+   * Escritas MQTT com canal de confirmação: false quando o comando foi
+   * publicado mas o dispositivo não confirmou (não é falha dura — o efeito
+   * provavelmente foi aplicado). undefined = protocolo sem essa distinção.
+   */
+  confirmed?: boolean;
 }
 
 /**
@@ -611,7 +617,7 @@ export async function writeMqttPoint(params: WriteMqttPointParams): Promise<Writ
       '/devices/mqtt/write',
       params,
     );
-    if (data.success) return { ok: true };
+    if (data.success) return { ok: true, confirmed: data.confirmed };
     return {
       ok: false,
       error: translateDeviceError(data.error, {

@@ -1,4 +1,4 @@
-import { apiGet } from '@/lib/api-client';
+import { apiGet, apiPost } from '@/lib/api-client';
 
 /**
  * Cliente do endpoint interno `GET /infraspeak/requests` (backend BlueBee).
@@ -55,6 +55,121 @@ export interface InfraspeakRequestFilters {
   state?: string;
   /** Filtro JQL exato de prioridade numérica (ex.: 2) → `s_priority`. */
   priority?: number;
+}
+
+export interface InfraspeakProblemOption {
+  id: number;
+  name: string;
+  fullName: string;
+  areaId: number | null;
+  areaName: string | null;
+  /**
+   * true = problema disponível a qualquer cliente.
+   * false = restrito aos clientes em clientIds.
+   */
+  allClients: boolean;
+  /** IDs dos clientes Infraspeak permitidos quando allClients=false. */
+  clientIds: number[];
+}
+
+export interface InfraspeakLocalOption {
+  id: number;
+  name: string;
+  fullName: string;
+  /**
+   * ID do cliente Infraspeak ao qual este local pertence.
+   * null quando indeterminado (local sem building, ou building sem client_id).
+   */
+  clientId: number | null;
+}
+
+export interface InfraspeakFormOptions {
+  problems: InfraspeakProblemOption[];
+  locals: InfraspeakLocalOption[];
+}
+
+export interface CreateInfraspeakRequestInput {
+  problemId: number;
+  localId?: number;
+  description: string;
+  /** 1–4 (2 = NORMAL). */
+  priority?: number;
+}
+
+/** Dados de apoio (tipos de problema e locais) para o formulário de abertura. */
+export async function getInfraspeakFormOptions(): Promise<InfraspeakFormOptions> {
+  return apiGet<InfraspeakFormOptions>('/infraspeak/form-options');
+}
+
+/** Cria um chamado (failure) na Infraspeak via backend BlueBee. */
+export async function createInfraspeakRequest(
+  input: CreateInfraspeakRequestInput,
+): Promise<InfraspeakRequestItem> {
+  return apiPost<InfraspeakRequestItem>('/infraspeak/requests', input);
+}
+
+// ─── Analista de IA de chamados ─────────────────────────────────────────────
+
+export interface AnalyzeInfraspeakInput {
+  failureId?: number;
+  draft?: {
+    problemId?: number;
+    problemName?: string;
+    localId?: number;
+    localName?: string;
+    description?: string;
+  };
+}
+
+export interface InfraspeakSimilarCase {
+  failureId: number;
+  relation: string;
+  resolved: boolean;
+}
+
+export interface InfraspeakTicketAnalysis {
+  problem: string;
+  similarCases: InfraspeakSimilarCase[];
+  actions: string[];
+  evidence: string;
+  confidence: 'high' | 'medium' | 'low';
+  insufficientHistory: boolean;
+  investigationPoints: string[];
+}
+
+export interface InfraspeakAnalysisResult {
+  context: {
+    target: { failureId: number | null; problemName: string | null; localName: string | null };
+    candidates: Array<{
+      failureId: number;
+      problemName: string | null;
+      localName: string | null;
+      resolved: boolean;
+      similarity: number;
+    }>;
+    recurrenceSameEquipment: number;
+    indexedTotal: number;
+  };
+  analysis: InfraspeakTicketAnalysis | null;
+  aiError: boolean;
+}
+
+/** Pede a análise de IA de um chamado (existente ou rascunho). */
+export async function analyzeInfraspeakRequest(
+  input: AnalyzeInfraspeakInput,
+): Promise<InfraspeakAnalysisResult> {
+  return apiPost<InfraspeakAnalysisResult>('/infraspeak/requests/analyze', input);
+}
+
+/** Dispara a sincronização manual da base local de chamados. */
+export async function syncInfraspeakTickets(): Promise<{
+  fetched: number;
+  created: number;
+  updated: number;
+  indexedTotal: number;
+  error: string | null;
+}> {
+  return apiPost('/infraspeak/tickets/sync');
 }
 
 export async function getInfraspeakRequests(

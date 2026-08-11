@@ -91,12 +91,10 @@ export class GatewaysService {
       );
     }
 
-    const inFlight = this.gatewayOta.get(gateway.id);
-    if (
-      inFlight &&
-      ['downloading', 'applying', 'restarting'].includes(inFlight.stage) &&
-      Date.now() - new Date(inFlight.receivedAt).getTime() < 30 * 60_000
-    ) {
+    // Bloqueia só enquanto há progresso genuinamente em andamento; o próprio
+    // serviço de OTA expira estágios intermediários abandonados (>15 min),
+    // liberando a nova tentativa imediatamente.
+    if (this.gatewayOta.isInProgress(gateway.id)) {
       throw new ConflictException('Já existe uma atualização em andamento para este gateway.');
     }
 
@@ -127,6 +125,23 @@ export class GatewaysService {
     });
 
     return { version };
+  }
+
+  /**
+   * Cancela/limpa uma atualização OTA travada (ação explícita do operador).
+   * Marca o estado terminal e libera o guard de novo disparo.
+   */
+  async cancelUpdate(id: string, tenantId: string | undefined): Promise<void> {
+    const gateway = await this.prisma.gateway.findFirst({
+      where: tenantId ? { id, tenantId } : { id },
+    });
+    if (!gateway) throw new NotFoundException(`Gateway ${id} não encontrado`);
+
+    const cancelled = await this.gatewayOta.cancel(gateway.id);
+    if (!cancelled) {
+      throw new ConflictException('Não há atualização em andamento para cancelar neste gateway.');
+    }
+    this.logger.warn(`OTA do gateway ${gateway.id} cancelada manualmente pelo operador`);
   }
 
   /**
@@ -232,5 +247,37 @@ export class GatewaysService {
     if (!gateway) throw new NotFoundException(`Gateway ${id} não encontrado`);
 
     await this.emqx.provisionGateway(gateway.id, gateway.mqttPass, gateway.tenantId);
+  }
+
+  /**
+   * Resumo leve para o badge do menu: conta gateways ONLINE com versão
+   * reportada menor que a versão mais recente disponível no servidor.
+   * Gateways offline ou sem versão reportada NÃO são contados.
+   */
+  async getUpdateSummary(tenantId: string | undefined): Promise<{ updatable: number }> {
+    const gateways = await this.prisma.gateway.findMany({
+      where: tenantId ? { tenantId } : undefined,
+      select: { id: true, reportedVersion: true },
+    });
+
+    const latestVersion = this.packages.getLatestVersion();
+
+    let updatable = 0;
+    for (const gw of gateways) {
+      if (this.deviceStatus.getStatus(gw.id) !== 'online') continue;
+      const reported = this.gatewayHealth.get(gw.id)?.version ?? gw.reportedVersion;
+      if (!reported || !latestVersion) continue;
+      const pa = reported.split('.').map((n) => parseInt(n, 10) || 0);
+      const pb = latestVersion.split('.').map((n) => parseInt(n, 10) || 0);
+      let outdated = false;
+      for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const d = (pb[i] ?? 0) - (pa[i] ?? 0);
+        if (d > 0) { outdated = true; break; }
+        if (d < 0) break;
+      }
+      if (outdated) updatable++;
+    }
+
+    return { updatable };
   }
 }

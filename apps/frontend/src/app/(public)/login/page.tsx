@@ -17,7 +17,7 @@ export default function LoginPage() {
           <LoginForm />
         </div>
         <footer className="pt-8 text-center text-xs text-slate-400">
-          © {new Date().getFullYear()} BlueBee · Autobras. {t('Todos os direitos reservados.')}
+          © {new Date().getFullYear()} Beeldings · Autobras. {t('Todos os direitos reservados.')}
         </footer>
       </section>
     </main>

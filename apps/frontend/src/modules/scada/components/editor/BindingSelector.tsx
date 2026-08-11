@@ -5,7 +5,7 @@ import { Check, Link2, Loader2, Search, Unlink } from 'lucide-react';
 import { useEditorStore } from '../../store/editor.store';
 import { useScreenDevices } from '../../hooks/useScreenDevices';
 import { useScreenTelemetry, formatTelemetryValue } from '../../hooks/useScreenTelemetry';
-import { isCameraDevice, type ScreenDevice } from '../../types/virtual.types';
+import { isCameraDevice, isSwitchDevice, type ScreenDevice } from '../../types/virtual.types';
 
 interface BindingProps {
   deviceId: string;
@@ -24,15 +24,21 @@ type AnyPoint = ScreenDevice['points'][number];
 function pointType(p: AnyPoint): string {
   if ('objectType' in p) return String(p.objectType);
   if ('registerType' in p) return p.registerType.toUpperCase();
+  // Switch scalar + camera scalar points carry a `metric` field instead.
+  const asAny = p as unknown as { metric?: unknown };
+  if (typeof asAny.metric === 'string' && asAny.metric) return asAny.metric;
   return '';
 }
 
 /**
- * Unidade a anexar em valores analógicos. Só para pontos Modbus — os BACnet
- * mantêm a exibição sem unidade (comportamento anterior, sem regressão).
+ * Unidade a anexar em valores analógicos. Modbus usa `registerType`; switch
+ * pontos de porta carregam uma `unit` explícita (ex.: "B/s" para tráfego).
  */
 function pointUnit(p: AnyPoint): string | undefined {
   if ('registerType' in p) return p.unit || undefined;
+  // Switch / camera scalar points may carry a unit field.
+  const asAny = p as unknown as { unit?: unknown };
+  if (typeof asAny.unit === 'string') return asAny.unit || undefined;
   return undefined;
 }
 
@@ -43,6 +49,7 @@ export function BindingSelector({ deviceId, tag, onBind, onUnbind, cameraMode }:
   const [search, setSearch] = useState('');
 
   // Widget de câmera: só câmeras CFTV; demais widgets: sem câmeras (universo BMS).
+  // Switches NÃO são câmeras e aparecem corretamente no modo não-câmera.
   const devices = cameraMode
     ? allDevices.filter(isCameraDevice)
     : allDevices.filter((d) => !isCameraDevice(d));
@@ -110,7 +117,9 @@ export function BindingSelector({ deviceId, tag, onBind, onUnbind, cameraMode }:
                   <option key={d.id} value={d.id}>
                     {d.protocol === 'virtual'
                       ? `🧪 ${d.name} (Bancada de Testes)`
-                      : `${d.name} (${d.protocol.toUpperCase()})`}
+                      : isSwitchDevice(d)
+                        ? `🔌 ${d.name} (SWITCH SNMP)`
+                        : `${d.name} (${d.protocol.toUpperCase()})`}
                   </option>
                 ))}
               </select>

@@ -66,6 +66,7 @@ describe('MqttBridgeService — escrita MQTT', () => {
     payload: '{"id":42,"src":"resp","method":"Switch.Set","params":{"id":0,"on":true}}',
     responseTopic: `${PREFIX}shelly1/resp/rpc`,
     matchId: 42,
+    matchValue: null,
     confirm: null,
     ...over,
   });
@@ -99,6 +100,7 @@ describe('MqttBridgeService — escrita MQTT', () => {
     expect(mqttMock.__client.subscribe).toHaveBeenCalledWith(
       `${PREFIX}shelly1/resp/rpc`,
       { qos: 0 },
+      expect.any(Function),
     );
     expect(mqttMock.__client.publish).toHaveBeenCalledWith(
       `${PREFIX}shelly1/rpc`,
@@ -117,7 +119,7 @@ describe('MqttBridgeService — escrita MQTT', () => {
     });
   });
 
-  it('ignora respostas com id diferente e expira no timeout', () => {
+  it('ignora respostas com id diferente; no timeout reporta "enviado, sem confirmação" (success + confirmed=false)', () => {
     service.handleWriteCommand(command());
 
     deliver(`${PREFIX}shelly1/resp/rpc`, JSON.stringify({ id: 999, result: {} }));
@@ -125,8 +127,14 @@ describe('MqttBridgeService — escrita MQTT', () => {
 
     jest.advanceTimersByTime(10_000);
     expect(publishedResults).toHaveLength(1);
-    expect(publishedResults[0]).toMatchObject({ command_id: 'mqtt-write-1', success: false });
-    expect(String(publishedResults[0].error)).toContain('Timeout');
+    // Timeout de confirmação ≠ falha dura: o comando foi publicado (o relé
+    // tipicamente atuou) — só a resposta RPC não casou. Nada de erro falso.
+    expect(publishedResults[0]).toMatchObject({
+      command_id: 'mqtt-write-1',
+      success: true,
+      confirmed: false,
+    });
+    expect(publishedResults[0].error).toBeUndefined();
   });
 
   it('reporta falha quando a resposta RPC traz error', () => {
@@ -161,7 +169,7 @@ describe('MqttBridgeService — escrita MQTT', () => {
 
     expect(mqttMock.__client.publish).not.toHaveBeenCalled();
     expect(publishedResults[0]).toMatchObject({ command_id: 'mqtt-write-1', success: false });
-    expect(String(publishedResults[0].error)).toContain('fora do namespace');
+    expect(String(publishedResults[0].error)).toContain('fora do escopo permitido');
   });
 
   it('desassina o tópico de resposta assinado só para a escrita, após concluir', () => {
@@ -183,6 +191,58 @@ describe('MqttBridgeService — escrita MQTT', () => {
       points: [{ tag: 'rele_estado', value: 1, unit: null }],
     });
     expect(typeof publishedTelemetry[0].timestamp).toBe('string');
+  });
+
+  it('confirma por READBACK: eco do novo estado no sourceTopic confirma a escrita mesmo sem resposta RPC', () => {
+    const statusTopic = `${PREFIX}shelly1/status/switch:0`;
+    (service as unknown as { applyConfig: (d: unknown[]) => void }).applyConfig([
+      {
+        deviceId: 'dev-1',
+        name: 'Shelly',
+        protocol: 'mqtt',
+        bridge: [
+          { tag: 'rele_estado', sourceTopic: statusTopic, jsonPath: 'output', valueType: 'boolean', unit: null },
+        ],
+      },
+    ]);
+
+    service.handleWriteCommand(command({ confirm: CONFIRM }));
+
+    // O Shelly atua e publica o NOVO estado no tópico de status — a resposta
+    // RPC nunca chega (tópico/id errado). A escrita deve confirmar na hora.
+    deliver(statusTopic, JSON.stringify({ output: true }));
+
+    expect(publishedResults).toHaveLength(1);
+    expect(publishedResults[0]).toMatchObject({
+      command_id: 'mqtt-write-1',
+      success: true,
+      confirmed: true,
+    });
+    // Sem duplicidade: o bridge já republicou o novo estado como telemetria.
+    expect(publishedTelemetry).toHaveLength(1);
+
+    // O timeout posterior não gera 2º resultado.
+    jest.advanceTimersByTime(10_000);
+    expect(publishedResults).toHaveLength(1);
+  });
+
+  it('readback com valor ANTIGO não confirma (só o valor comandado conta)', () => {
+    const statusTopic = `${PREFIX}shelly1/status/switch:0`;
+    (service as unknown as { applyConfig: (d: unknown[]) => void }).applyConfig([
+      {
+        deviceId: 'dev-1',
+        name: 'Shelly',
+        protocol: 'mqtt',
+        bridge: [
+          { tag: 'rele_estado', sourceTopic: statusTopic, jsonPath: 'output', valueType: 'boolean', unit: null },
+        ],
+      },
+    ]);
+
+    service.handleWriteCommand(command({ confirm: CONFIRM }));
+    // Estado antigo (0) ≠ comandado (1) → sessão segue aguardando.
+    deliver(statusTopic, JSON.stringify({ output: false }));
+    expect(publishedResults).toHaveLength(0);
   });
 
   it('NÃO publica telemetria confirmada em falha, timeout ou sem confirm', () => {

@@ -7,6 +7,9 @@ import type { PointReading } from '../../hooks/useScreenTelemetry';
 import type { ScreenDevice } from '../../types/virtual.types';
 import { isCameraDevice } from '../../types/virtual.types';
 import { EQUIPMENT_IMAGES, CAMERA_DOME_IMAGE } from './EquipmentWidget';
+import { MonitorPlay } from 'lucide-react';
+import { useT } from '@/lib/i18n';
+import { CameraLiveViewModal } from '@/modules/cftv/components/CameraLiveViewModal';
 import {
   ESTIMATED_UPTIME_HINT,
   estimatedUptimeSeconds,
@@ -55,9 +58,15 @@ export function CameraWidgetView({ widget, getValue, getReading, devices, isEdit
 
   const color = state === 'online' ? GREEN : state === 'offline' ? RED : GREY;
 
+  const t = useT();
+
   // Popup de telemetria: apenas no viewer ao vivo (nunca no editor / render estático).
   const canPopup = live && !isEditor;
   const [open, setOpen] = useState(false);
+  // "Ver ao vivo": só preview/viewer (nunca editor), câmera com vídeo
+  // disponível (ONVIF sempre; SNMP com credenciais de vídeo/RTSP) e online.
+  const canLiveView = canPopup && Boolean(cameraInfo?.liveViewAvailable);
+  const [liveViewOpen, setLiveViewOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const popupRef = useRef<HTMLDivElement>(null);
   // Fechamento com tolerância: pequeno delay para o trajeto widget → popup.
@@ -224,6 +233,28 @@ export function CameraWidgetView({ widget, getValue, getReading, devices, isEdit
                 {subtitle}
               </div>
             )}
+            {/* Ver ao vivo — só câmeras ONVIF (habilitado quando online). */}
+            {canLiveView && (
+              <button
+                onClick={(e) => {
+                  // Widget interativo: nunca dispara a click-action da tela.
+                  e.stopPropagation();
+                  setOpen(false);
+                  setLiveViewOpen(true);
+                }}
+                disabled={state !== 'online'}
+                title={
+                  state === 'online'
+                    ? t('Ver ao vivo')
+                    : t('Disponível quando a câmera estiver online')
+                }
+                className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md bg-primary font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
+                style={{ fontSize: 11 * ps, padding: `${5 * ps}px ${10 * ps}px` }}
+              >
+                <MonitorPlay style={{ width: 13 * ps, height: 13 * ps }} />
+                {t('Ver ao vivo')}
+              </button>
+            )}
           </div>
 
           {/* Lista de pontos com rolagem interna */}
@@ -291,6 +322,17 @@ export function CameraWidgetView({ widget, getValue, getReading, devices, isEdit
             )}
           </div>
         </div>
+      )}
+
+      {/* Modal "Ver ao vivo" — portal no container correto (fullscreen do SCADA). */}
+      {liveViewOpen && canLiveView && cameraInfo && (
+        <CameraLiveViewModal
+          cameraId={cameraInfo.id}
+          cameraName={cameraInfo.name}
+          subtitle={subtitle}
+          tenantId={cameraInfo.tenantId}
+          onClose={() => setLiveViewOpen(false)}
+        />
       )}
     </div>
   );

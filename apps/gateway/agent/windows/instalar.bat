@@ -1,13 +1,14 @@
 @echo off
 setlocal EnableExtensions
 REM ===========================================================================
-REM  BlueBee IoT Gateway - Instalacao (npm + Servico do Windows via NSSM)
+REM  Beeldings IoT Gateway - Instalacao (npm + Servico do Windows via NSSM)
 REM  Execute como ADMINISTRADOR (botao direito > Executar como administrador).
 REM  Coloque o gateway-config.env (ou .env) nesta mesma pasta antes de rodar.
 REM ===========================================================================
 
-set "SERVICE_NAME=BlueBeeGateway"
-set "DISPLAY_NAME=BlueBee IoT Gateway"
+set "SERVICE_NAME=BeeldingsGateway"
+set "DISPLAY_NAME=Beeldings IoT Gateway"
+set "LEGACY_SERVICE_NAME=BlueBeeGateway"
 set "DIR=%~dp0"
 set "APPDIR=%DIR%"
 if "%APPDIR:~-1%"=="\" set "APPDIR=%APPDIR:~0,-1%"
@@ -88,6 +89,16 @@ if not exist "%DIR%run.js" (
   exit /b 1
 )
 
+REM --- Remove o servico LEGADO (nome antigo BlueBee), se existir ------------
+sc.exe query %LEGACY_SERVICE_NAME% >nul 2>&1
+if %errorlevel% equ 0 (
+  echo Removendo servico legado "%LEGACY_SERVICE_NAME%" ^(nome antigo^)...
+  "%NSSM%" stop %LEGACY_SERVICE_NAME% >nul 2>&1
+  "%NSSM%" remove %LEGACY_SERVICE_NAME% confirm >nul 2>&1
+  sc.exe stop %LEGACY_SERVICE_NAME% >nul 2>&1
+  sc.exe delete %LEGACY_SERVICE_NAME% >nul 2>&1
+)
+
 REM --- Remove instalacao anterior, se existir ------------------------------
 "%NSSM%" status %SERVICE_NAME% >nul 2>&1
 if %errorlevel% equ 0 (
@@ -107,7 +118,7 @@ if %errorlevel% neq 0 (
 
 "%NSSM%" set %SERVICE_NAME% AppDirectory "%APPDIR%"
 "%NSSM%" set %SERVICE_NAME% DisplayName "%DISPLAY_NAME%"
-"%NSSM%" set %SERVICE_NAME% Description "Gateway local BlueBee IoT (BACnet/Modbus para MQTT)."
+"%NSSM%" set %SERVICE_NAME% Description "Gateway local Beeldings IoT (BACnet/Modbus para MQTT)."
 "%NSSM%" set %SERVICE_NAME% Start SERVICE_AUTO_START
 "%NSSM%" set %SERVICE_NAME% AppStdout "%LOG%"
 "%NSSM%" set %SERVICE_NAME% AppStderr "%LOG%"

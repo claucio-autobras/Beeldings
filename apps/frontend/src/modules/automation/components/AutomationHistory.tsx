@@ -31,17 +31,17 @@ const PAGE_SIZE = 20;
 const RESULT_META: Record<AutomationRunResult, { label: string; cls: string; dot: string }> = {
   SUCCESS: {
     label: 'Sucesso',
-    cls: 'bg-green-50 text-green-700 border-green-200',
+    cls: 'bg-green-50 text-green-700 border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-800',
     dot: 'bg-green-500',
   },
   PARTIAL: {
     label: 'Parcial',
-    cls: 'bg-amber-50 text-amber-700 border-amber-200',
+    cls: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800',
     dot: 'bg-amber-500',
   },
   FAILURE: {
     label: 'Falha',
-    cls: 'bg-red-50 text-red-700 border-red-200',
+    cls: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-800',
     dot: 'bg-red-500',
   },
 };
@@ -106,7 +106,7 @@ function RunRow({ run }: { run: AutomationRun }) {
         </div>
       </button>
       {expandable && !open && (
-        <div className="truncate border-t border-border/50 px-4 py-2 text-xs text-red-600">
+        <div className="truncate border-t border-border/50 px-4 py-2 text-xs text-red-600 dark:text-red-400">
           {run.errorSummary ?? failures[0]?.error}
         </div>
       )}
@@ -120,13 +120,13 @@ function RunRow({ run }: { run: AutomationRun }) {
                     ? 'bg-red-500'
                     : d.status === 'SUCCESS'
                       ? 'bg-green-500'
-                      : 'bg-slate-300'
+                      : 'bg-slate-300 dark:bg-slate-600'
                 }`}
               />
               <span className="text-foreground">
                 {d.label || (d.type === 'NOTIFY' ? 'Aviso' : 'Comando')}
                 {d.status === 'FAILURE' && d.error ? (
-                  <span className="text-red-600"> — {d.error}</span>
+                  <span className="text-red-600 dark:text-red-400"> — {d.error}</span>
                 ) : d.status === 'SKIPPED' ? (
                   <span className="text-muted-foreground"> — não executada</span>
                 ) : null}
@@ -171,7 +171,7 @@ export function AutomationHistory({
             onAutomationChange(e.target.value);
             setPage(1);
           }}
-          className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm sm:max-w-xs"
+          className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm text-foreground dark:[color-scheme:dark] sm:max-w-xs"
         >
           <option value="">Todas as automações</option>
           {automations.map((a) => (
@@ -186,7 +186,7 @@ export function AutomationHistory({
             setResult(e.target.value);
             setPage(1);
           }}
-          className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm sm:max-w-[180px]"
+          className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm text-foreground dark:[color-scheme:dark] sm:max-w-[180px]"
         >
           <option value="">Todos os resultados</option>
           <option value="SUCCESS">Sucesso</option>
@@ -196,7 +196,7 @@ export function AutomationHistory({
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-400">
           Erro ao carregar o histórico: {(error as Error).message}. Se o backend acabou de subir,
           confirme que a migração foi aplicada (<code>prisma migrate deploy</code>).
         </div>

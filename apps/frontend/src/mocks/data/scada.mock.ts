@@ -91,6 +91,8 @@ export interface WidgetBase {
   visibility?: VisibilityCondition;
   /** Espaçamento interno uniforme (px). Ausente = comportamento legado. */
   padding?: number;
+  /** Rotação visual em graus (horário, centro). Ausente/0 = sem rotação. */
+  rotation?: number;
 }
 
 // ─── Texto ───────────────────────────────────────────────────────────────────

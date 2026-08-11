@@ -1,7 +1,5 @@
 export interface CreateProjectDto {
   name: string;
-  address?: string;
-  technicalContact?: string;
   siteId: string;
   tenantId: string;
   /**

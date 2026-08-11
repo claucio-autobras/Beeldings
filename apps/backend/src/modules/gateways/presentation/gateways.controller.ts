@@ -42,6 +42,20 @@ export class GatewaysController {
   }
 
   /**
+   * Resumo leve para o badge do menu lateral: retorna quantos gateways ONLINE
+   * têm versão reportada menor que a versão mais recente disponível.
+   * Deve vir ANTES de `@Get('/:id')` para não ser capturado como id.
+   */
+  @Get('/update-summary')
+  async updateSummary(
+    @Query('tenantId') queryTenantId: string | undefined,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<{ updatable: number }> {
+    const tenantId = resolveTenantScope(user, queryTenantId);
+    return this.gatewaysService.getUpdateSummary(tenantId);
+  }
+
+  /**
    * Monta sob demanda o pacote .zip do agente de gateway (código-fonte +
    * scripts de instalação como serviço + launcher OTA + guia INSTALL.md) para
    * o SO escolhido. O cliente extrai, roda `npm install`, `npm run build` e
@@ -75,7 +89,7 @@ export class GatewaysController {
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="bluebee-gateway-agent-${target}.zip"`,
+      `attachment; filename="beeldings-gateway-agent-${target}.zip"`,
     );
     res.setHeader('Content-Length', buffer.length.toString());
     res.end(buffer);
@@ -134,6 +148,24 @@ export class GatewaysController {
     }
     const tenantId = resolveTenantScope(user);
     return this.gatewaysService.triggerUpdate(id, tenantId, this.resolveBaseUrl(req));
+  }
+
+  /**
+   * Cancela/limpa uma atualização OTA travada (ex.: presa em "aguardando
+   * reconexão"): marca o estado terminal, registra na auditoria e libera o
+   * guard para um novo disparo.
+   */
+  @Post('/:id/update/cancel')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async cancelUpdate(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<void> {
+    if (user.role !== 'ADMIN' && user.role !== 'CCO') {
+      throw new BadRequestException('Sem permissão para cancelar atualizações de gateways');
+    }
+    const tenantId = resolveTenantScope(user);
+    return this.gatewaysService.cancelUpdate(id, tenantId);
   }
 
   /**

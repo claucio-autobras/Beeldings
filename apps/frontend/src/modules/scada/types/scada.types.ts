@@ -37,6 +37,7 @@ const UNIFIED_TAG_TYPES = new Set<WidgetType>([
   'progress-bar', 'traffic-light', 'numeric-display', 'trend-arrow', 'alarm-indicator',
   'command-button', 'command-slider', 'toggle-switch', 'icon',
   'kpi-card', 'sensor-card', 'segmented-control',
+  'value-stepper', 'setpoint-ring',
 ]);
 const UNIFIED_TAGSTATUS_TYPES = new Set<WidgetType>([
   'chiller', 'pump', 'ahu', 'fan', 'valve', 'generator', 'meter', 'controller',
@@ -165,7 +166,11 @@ export type WidgetType =
   | 'bar-list'
   | 'event-feed'
   | 'point-table'
-  | 'segmented-control';
+  | 'segmented-control'
+  | 'value-stepper'
+  | 'setpoint-ring'
+  | 'equipment-card'
+  | 'climate-card';
 
 // ─── Ação ao clicar (qualquer widget visual) ─────────────────────────────────
 
@@ -199,6 +204,7 @@ export interface ClickAction {
 export const CLICK_ACTION_EXCLUDED_TYPES = new Set<WidgetType>([
   'command-button', 'command-slider', 'toggle-switch', 'hotspot',
   'nav-sidebar', 'nav-toolbar', 'nav-button', 'camera', 'segmented-control',
+  'value-stepper', 'equipment-card', 'climate-card',
 ]);
 
 /** true quando a ação de clique do widget está configurada e completa. */
@@ -240,6 +246,12 @@ export interface WidgetBase {
    * telas salvas. 0 = conteúdo preenche praticamente todo o widget.
    */
   padding?: number;
+  /**
+   * Rotação visual em graus (sentido horário, em torno do centro). AUSENTE ou 0
+   * = sem rotação (comportamento legado). Aplicada no wrapper compartilhado do
+   * WidgetRenderer, valendo igual em editor, preview e viewer.
+   */
+  rotation?: number;
 }
 
 // ─── Texto ───────────────────────────────────────────────────────────────────
@@ -442,8 +454,65 @@ export function isTransparentColor(color: string | undefined | null): boolean {
  */
 export function scadaColorWithAlpha(color: string, alphaHex: string): string {
   if (isTransparentColor(color)) return SCADA_TRANSPARENT;
+  if (isGradientColor(color)) return scadaGradientStop(color, 'from');
   if (!color.startsWith('#')) return color;
   return `${color}${alphaHex}`;
+}
+
+// ─── Cor gradiente ───────────────────────────────────────────────────────────
+//
+// Campos de cor de preenchimento/fundo aceitam, além de cor sólida/'transparent',
+// um gradiente linear armazenado como string CSS pronta:
+//   linear-gradient(<ângulo>deg, <cor1>, <cor2>)
+// Assim o valor é retrocompatível (string), usável direto como `background` CSS
+// e parseável para o editor. Cores de texto/traço/estado seguem só sólidas.
+
+/** Partes de um gradiente SCADA (duas cores + ângulo em graus, padrão CSS). */
+export interface ScadaGradientParts {
+  angle: number;
+  from: string;
+  to: string;
+}
+
+const SCADA_GRADIENT_RE =
+  /^linear-gradient\(\s*(-?\d+(?:\.\d+)?)deg\s*,\s*([^,]+?)\s*,\s*([^,]+?)\s*\)$/i;
+
+/** True quando o valor de cor é um gradiente SCADA. */
+export function isGradientColor(color: string | undefined | null): boolean {
+  return Boolean(color && color.trim().toLowerCase().startsWith('linear-gradient('));
+}
+
+/** Monta a string de gradiente SCADA a partir das partes. */
+export function makeScadaGradient(angle: number, from: string, to: string): string {
+  return `linear-gradient(${Math.round(angle)}deg, ${from}, ${to})`;
+}
+
+/** Decompõe um gradiente SCADA; null para cor sólida/valor não reconhecido. */
+export function parseScadaGradient(color: string | undefined | null): ScadaGradientParts | null {
+  if (!color) return null;
+  const m = SCADA_GRADIENT_RE.exec(color.trim());
+  if (!m) return null;
+  return { angle: Number(m[1]), from: m[2], to: m[3] };
+}
+
+/** Uma das cores do gradiente (fallback p/ efeitos que exigem cor sólida). */
+export function scadaGradientStop(color: string, stop: 'from' | 'to'): string {
+  const g = parseScadaGradient(color);
+  if (!g) return color;
+  return stop === 'from' ? g.from : g.to;
+}
+
+/**
+ * Resolve um valor de cor de preenchimento/fundo para estilo CSS do widget.
+ * Devolve `{ background }` p/ gradiente e `{ backgroundColor }` p/ sólida —
+ * espalhe no style: `...scadaBackgroundStyle(cor)`. 'transparent' segue válido.
+ */
+export function scadaBackgroundStyle(
+  color: string | undefined | null,
+): { background?: string; backgroundColor?: string } {
+  if (!color) return {};
+  if (isGradientColor(color)) return { background: color };
+  return { backgroundColor: color };
 }
 
 /**
@@ -835,7 +904,11 @@ export type Widget =
   | BarListWidget
   | EventFeedWidget
   | PointTableWidget
-  | SegmentedControlWidget;
+  | SegmentedControlWidget
+  | ValueStepperWidget
+  | SetpointRingWidget
+  | EquipmentCardWidget
+  | ClimateCardWidget;
 
 // ─── Status genérico por ponto ───────────────────────────────────────────────
 
@@ -1110,6 +1183,147 @@ export interface SegmentedControlWidget extends DashCardBase {
   activeColor: string;
   activeTextColor: string;
   fontSize: number;
+}
+
+// ─── Widgets de controle de clima (referência: painel dark/neon BlueBee) ─────
+// Família com visual escuro/neon (fundo quase-preto + acento ciano/verde),
+// cores explícitas no JSON (canvas ≠ tema) e os mesmos contratos dos demais
+// widgets: pending otimista via getValue, offline cinza e render estático.
+
+/**
+ * Stepper de valor — botões − / + com o valor e a unidade no meio. Escreve no
+ * ponto analógico comandável vinculado respeitando min/max/step (mesmo fluxo
+ * otimista do slider de comando).
+ */
+export interface ValueStepperWidget extends WidgetBase {
+  type: 'value-stepper';
+  deviceId: string;
+  tag: string;
+  minValue: number;
+  maxValue: number;
+  step: number;
+  unit: string;
+  decimals: number;
+  priority: number;       // 1–16, padrão 8
+  backgroundColor: string;
+  buttonColor: string;
+  textColor: string;
+  mutedColor: string;
+  borderColor: string;
+  accentColor: string;
+  borderRadius: number;
+  valueFontSize: number;
+}
+
+/**
+ * Anel de setpoint — arco circular de progresso com valor grande central,
+ * unidade e rótulo abaixo (ex.: "AMBIENTE"). Somente leitura.
+ */
+export interface SetpointRingWidget extends WidgetBase {
+  type: 'setpoint-ring';
+  deviceId: string;
+  tag: string;
+  minValue: number;
+  maxValue: number;
+  unit: string;
+  decimals: number;
+  label: string;
+  showLabel: boolean;
+  ringColor: string;
+  trackColor: string;
+  textColor: string;
+  mutedColor: string;
+  /** Fundo do widget ('transparent' = flutua sobre o canvas). */
+  backgroundColor: string;
+  borderRadius: number;
+}
+
+/** Como o valor de uma linha do card compacto é exibido/controlado. */
+export type EquipmentCardRowDisplay = 'value' | 'toggle' | 'slider';
+
+export interface EquipmentCardRow {
+  id: string;
+  deviceId: string;
+  tag: string;
+  iconName: string;
+  label: string;
+  subtitle: string;
+  display: EquipmentCardRowDisplay;
+  unit: string;
+  decimals: number;
+  /** Cor do valor/ícone da linha ('' = acento do card). */
+  valueColor: string;
+  // toggle (pontos digitais comandáveis)
+  onValue: number;
+  offValue: number;
+  // slider (pontos analógicos comandáveis)
+  minValue: number;
+  maxValue: number;
+  step: number;
+}
+
+/**
+ * Card compacto de equipamento — cabeçalho com nome/status pill/indicador e
+ * linhas de pontos (ícone, nome, subtítulo, valor ao vivo | toggle | slider).
+ * Multi-ponto: fora do binding unificado (como os dash-widgets multi-ponto).
+ */
+export interface EquipmentCardWidget extends DashCardBase {
+  type: 'equipment-card';
+  title: string;
+  subtitle: string;
+  /** Ponto do status do cabeçalho (pill + indicador). */
+  statusDeviceId: string;
+  statusTag: string;
+  /** rule.text = rótulo da pill; rule.color = cor. Primeira que casa vence. */
+  statusRules: EquipmentStateRule[];
+  /** Cor de acento (valores/ícones) quando a linha não define a própria. */
+  accentColor: string;
+  priority: number;       // 1–16, padrão 8
+  rows: EquipmentCardRow[];
+}
+
+/**
+ * Card de controle de clima — painel composto: leitura principal (valor grande
+ * + sparkline opcional), linha de setpoint com slider, stepper − valor + e
+ * botão liga/desliga, rodapé com última leitura/origem. Bindings separados
+ * para leitura, setpoint e liga/desliga.
+ */
+export interface ClimateCardWidget extends DashCardBase {
+  type: 'climate-card';
+  title: string;
+  subtitle: string;
+  /** Ponto do status do cabeçalho (pill). */
+  statusDeviceId: string;
+  statusTag: string;
+  statusRules: EquipmentStateRule[];
+  accentColor: string;
+  // Leitura principal (somente leitura)
+  readingDeviceId: string;
+  readingTag: string;
+  readingLabel: string;
+  readingUnit: string;
+  readingDecimals: number;
+  showSparkline: boolean;
+  sparkColor: string;
+  periodHours: DashPeriodHours;
+  // Setpoint (analógico comandável) — slider + stepper compartilham o ponto
+  setpointDeviceId: string;
+  setpointTag: string;
+  setpointLabel: string;
+  setpointUnit: string;
+  setpointDecimals: number;
+  minValue: number;
+  maxValue: number;
+  step: number;
+  // Liga/desliga (digital comandável)
+  powerDeviceId: string;
+  powerTag: string;
+  onValue: number;
+  offValue: number;
+  powerConfirm: boolean;
+  priority: number;       // 1–16, padrão 8
+  /** Texto da origem no rodapé (ex.: "MQTT · aeris/008065"). '' = oculto. */
+  footerText: string;
 }
 
 /** Como o agregado "ativos/total" da soma de alarmes é apresentado no badge. */

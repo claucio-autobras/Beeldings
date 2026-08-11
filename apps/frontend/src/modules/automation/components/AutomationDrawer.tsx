@@ -44,7 +44,11 @@ interface FlatPoint {
   name: string;
   unit: string;
   isDigital: boolean;
-  /** Gravável (aparece no seletor de AÇÃO): BACnet AO/AV/BO/BV/MSO e Modbus coil/holding. MQTT nunca. */
+  /**
+   * Gravável (aparece no seletor de AÇÃO): BACnet AO/AV/BO/BV/MSO, Modbus
+   * coil/holding e MQTT com binding de escrita completo (commandTopic +
+   * payloadTemplate) — mesmo predicado do SCADA (isWritablePoint).
+   */
   writable: boolean;
 }
 
@@ -100,8 +104,9 @@ function flattenPoints(devices: Device[]): FlatPoint[] {
           writable: WRITABLE_MODBUS.has(p.registerType),
         });
       }
-    } else {
-      // MQTT: somente leitura — nunca aparece em ações.
+    } else if (d.protocol === 'mqtt') {
+      // MQTT: comandável quando o ponto tem binding de escrita completo
+      // (mesma regra do SCADA — commandTopic + payloadTemplate).
       for (const p of d.points) {
         const name = pointName(p);
         out.push({
@@ -112,7 +117,7 @@ function flattenPoints(devices: Device[]): FlatPoint[] {
           label: `${d.name} · ${name} (MQTT)`,
           unit: p.unit ?? '',
           isDigital: p.valueType === 'boolean',
-          writable: false,
+          writable: Boolean(p.write?.commandTopic && p.write?.payloadTemplate),
         });
       }
     }
@@ -131,6 +136,11 @@ function daysText(days: number[]): string {
 
 interface DraftAction extends AutomationActionInput {
   key: string;
+  /**
+   * Equipamento selecionado na etapa 1 da ação (só estado de UI — não vai no
+   * payload). Vazio = derivar do ponto salvo (pré-seleção ao editar).
+   */
+  deviceId?: string;
 }
 
 let keyCounter = 0;
@@ -158,6 +168,42 @@ export function AutomationDrawer({
     return m;
   }, [points]);
 
+  // Agrupamento por equipamento para a seleção em duas etapas.
+  const pointsByDevice = useMemo(() => {
+    const m = new Map<string, FlatPoint[]>();
+    for (const p of points) {
+      const arr = m.get(p.deviceId);
+      if (arr) arr.push(p);
+      else m.set(p.deviceId, [p]);
+    }
+    return m;
+  }, [points]);
+  const writableByDevice = useMemo(() => {
+    const m = new Map<string, FlatPoint[]>();
+    for (const p of writablePoints) {
+      const arr = m.get(p.deviceId);
+      if (arr) arr.push(p);
+      else m.set(p.deviceId, [p]);
+    }
+    return m;
+  }, [writablePoints]);
+  /** Equipamentos com pelo menos um ponto (seletor de condição). */
+  const monitorDevices = useMemo(
+    () =>
+      devices
+        .filter((d) => (pointsByDevice.get(d.id)?.length ?? 0) > 0)
+        .map((d) => ({ id: d.id, name: d.name })),
+    [devices, pointsByDevice],
+  );
+  /** Equipamentos com pelo menos um ponto comandável (seletor de ação). */
+  const commandDevices = useMemo(
+    () =>
+      devices
+        .filter((d) => (writableByDevice.get(d.id)?.length ?? 0) > 0)
+        .map((d) => ({ id: d.id, name: d.name })),
+    [devices, writableByDevice],
+  );
+
   // ─── Estado ────────────────────────────────────────────────────────────────
   const [name, setName] = useState(automation?.name ?? '');
   const [siteId, setSiteId] = useState<string | null>(automation?.siteId ?? defaultSiteId ?? null);
@@ -170,6 +216,11 @@ export function AutomationDrawer({
   const [conditionPointId, setConditionPointId] = useState<string>(
     automation?.condition?.pointId ?? '',
   );
+  /**
+   * Equipamento selecionado no passo 1 (condição). Vazio = derivar do ponto
+   * salvo (pré-seleção ao editar regra existente).
+   */
+  const [conditionDeviceId, setConditionDeviceId] = useState<string>('');
   const [operator, setOperator] = useState<ConditionOperator>(
     automation?.condition?.operator ?? 'GT',
   );
@@ -197,6 +248,11 @@ export function AutomationDrawer({
 
   const conditionPoint = conditionPointId ? pointById.get(conditionPointId) : undefined;
   const conditionDigital = conditionPoint?.isDigital ?? false;
+  // Pré-seleção: ao editar, deriva o equipamento do ponto salvo.
+  const effectiveConditionDeviceId = conditionDeviceId || (conditionPoint?.deviceId ?? '');
+  const conditionDevicePoints = effectiveConditionDeviceId
+    ? (pointsByDevice.get(effectiveConditionDeviceId) ?? [])
+    : [];
 
   const saving = create.isPending || update.isPending;
 
@@ -356,13 +412,13 @@ export function AutomationDrawer({
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Dê um nome (ex.: Luz do corredor)"
-              className="h-11 w-full min-w-0 rounded-lg border border-border px-3 text-base sm:text-sm"
+              className="h-11 w-full min-w-0 rounded-lg border border-border bg-background px-3 text-base text-foreground dark:[color-scheme:dark] sm:text-sm"
             />
             {sites.length > 0 && (
               <select
                 value={siteId ?? ''}
                 onChange={(e) => setSiteId(e.target.value || null)}
-                className="h-11 w-full min-w-0 rounded-lg border border-border px-3 text-base sm:text-sm"
+                className="h-11 w-full min-w-0 rounded-lg border border-border bg-background px-3 text-base text-foreground dark:[color-scheme:dark] sm:text-sm"
               >
                 <option value="">Todos os locais do cliente</option>
                 {sites.map((s) => (
@@ -405,12 +461,12 @@ export function AutomationDrawer({
                           type="time"
                           value={entry.time}
                           onChange={(e) => updateEntry(idx, { time: e.target.value })}
-                          className="h-11 min-w-0 flex-1 rounded-lg border border-border px-3 text-base sm:text-sm"
+                          className="h-11 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-base text-foreground dark:[color-scheme:dark] sm:text-sm"
                         />
                         {entries.length > 1 && (
                           <button
                             onClick={() => removeEntry(idx)}
-                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-red-50 hover:text-red-600"
+                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400"
                           >
                             <X className="h-4 w-4" />
                           </button>
@@ -423,11 +479,11 @@ export function AutomationDrawer({
                             type="time"
                             value={entry.endTime}
                             onChange={(e) => updateEntry(idx, { endTime: e.target.value })}
-                            className="h-11 min-w-0 flex-1 rounded-lg border border-border px-3 text-base sm:text-sm"
+                            className="h-11 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-base text-foreground dark:[color-scheme:dark] sm:text-sm"
                           />
                           <button
                             onClick={() => updateEntry(idx, { endTime: undefined })}
-                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-red-50 hover:text-red-600"
+                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400"
                           >
                             <X className="h-4 w-4" />
                           </button>
@@ -435,7 +491,7 @@ export function AutomationDrawer({
                       ) : (
                         <button
                           onClick={() => updateEntry(idx, { endTime: '06:00' })}
-                          className="text-xs font-medium text-cyan-700 hover:text-cyan-800"
+                          className="text-xs font-medium text-cyan-700 hover:text-cyan-800 dark:text-cyan-400 dark:hover:text-cyan-300"
                         >
                           + desligar em um horário
                         </button>
@@ -459,7 +515,7 @@ export function AutomationDrawer({
                   ))}
                   <button
                     onClick={addEntry}
-                    className="text-xs font-medium text-cyan-700 hover:text-cyan-800"
+                    className="text-xs font-medium text-cyan-700 hover:text-cyan-800 dark:text-cyan-400 dark:hover:text-cyan-300"
                   >
                     + outro horário
                   </button>
@@ -467,24 +523,44 @@ export function AutomationDrawer({
               ) : (
                 <div className="space-y-3">
                   <div className="space-y-1.5">
-                    <label className="text-sm text-muted-foreground">Monitorar o ponto</label>
+                    <label className="text-sm text-muted-foreground">Monitorar o equipamento</label>
                     <select
-                      value={conditionPointId}
+                      value={effectiveConditionDeviceId}
                       onChange={(e) => {
-                        setConditionPointId(e.target.value);
-                        const p = pointById.get(e.target.value);
-                        setConditionValue(p?.isDigital ? true : 0);
+                        setConditionDeviceId(e.target.value);
+                        setConditionPointId('');
                       }}
-                      className="h-11 w-full min-w-0 rounded-lg border border-border px-3 text-base sm:text-sm"
+                      className="h-11 w-full min-w-0 rounded-lg border border-border bg-background px-3 text-base text-foreground dark:[color-scheme:dark] sm:text-sm"
                     >
-                      <option value="">Selecione um ponto…</option>
-                      {points.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.label}
+                      <option value="">Selecione um equipamento…</option>
+                      {monitorDevices.map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.name}
                         </option>
                       ))}
                     </select>
                   </div>
+                  {effectiveConditionDeviceId && (
+                    <div className="space-y-1.5">
+                      <label className="text-sm text-muted-foreground">Monitorar o ponto</label>
+                      <select
+                        value={conditionPointId}
+                        onChange={(e) => {
+                          setConditionPointId(e.target.value);
+                          const p = pointById.get(e.target.value);
+                          setConditionValue(p?.isDigital ? true : 0);
+                        }}
+                        className="h-11 w-full min-w-0 rounded-lg border border-border bg-background px-3 text-base text-foreground dark:[color-scheme:dark] sm:text-sm"
+                      >
+                        <option value="">Selecione um ponto…</option>
+                        {conditionDevicePoints.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   {conditionPoint && conditionDigital && (
                     <div className="flex gap-2">
                       <button
@@ -510,7 +586,7 @@ export function AutomationDrawer({
                       <select
                         value={operator}
                         onChange={(e) => setOperator(e.target.value as ConditionOperator)}
-                        className="h-11 min-w-0 flex-1 rounded-lg border border-border px-3 text-base sm:text-sm"
+                        className="h-11 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-base text-foreground dark:[color-scheme:dark] sm:text-sm"
                       >
                         {OPERATORS.map((o) => (
                           <option key={o.value} value={o.value}>
@@ -522,7 +598,7 @@ export function AutomationDrawer({
                         type="number"
                         value={typeof conditionValue === 'number' ? conditionValue : 0}
                         onChange={(e) => setConditionValue(Number(e.target.value))}
-                        className="h-11 w-20 shrink-0 rounded-lg border border-border px-3 text-base sm:text-sm"
+                        className="h-11 w-20 shrink-0 rounded-lg border border-border bg-background px-3 text-base text-foreground dark:[color-scheme:dark] sm:text-sm"
                       />
                       {conditionPoint.unit && (
                         <span className="shrink-0 text-sm text-muted-foreground">{conditionPoint.unit}</span>
@@ -538,7 +614,7 @@ export function AutomationDrawer({
           <section className="space-y-3">
             <StepHeader n={2} title="O que deve fazer?" />
             {!hasWritablePoints && (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
                 Nenhum ponto gravável disponível neste cliente.
               </div>
             )}
@@ -546,7 +622,8 @@ export function AutomationDrawer({
             {mode === 'ONESHOT' ? (
               <ActionList
                 actions={actions.filter((a) => a.branch === 'ALWAYS')}
-                points={writablePoints}
+                commandDevices={commandDevices}
+                writableByDevice={writableByDevice}
                 pointById={pointById}
                 onAdd={(t) => addAction(t, 'ALWAYS')}
                 onUpdate={updateAction}
@@ -561,7 +638,8 @@ export function AutomationDrawer({
                   </div>
                   <ActionList
                     actions={actions.filter((a) => a.branch === 'ON_TRUE' || a.branch === 'ALWAYS')}
-                    points={writablePoints}
+                    commandDevices={commandDevices}
+                writableByDevice={writableByDevice}
                     pointById={pointById}
                     onAdd={(t) => addAction(t, 'ON_TRUE')}
                     onUpdate={updateAction}
@@ -575,7 +653,8 @@ export function AutomationDrawer({
                   </div>
                   <ActionList
                     actions={actions.filter((a) => a.branch === 'ON_FALSE')}
-                    points={writablePoints}
+                    commandDevices={commandDevices}
+                writableByDevice={writableByDevice}
                     pointById={pointById}
                     onAdd={(t) => addAction(t, 'ON_FALSE')}
                     onUpdate={updateAction}
@@ -587,9 +666,9 @@ export function AutomationDrawer({
           </section>
 
           {/* Resumo */}
-          <div className="rounded-xl border border-cyan-200 bg-cyan-50 p-3">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-cyan-700">Em resumo</p>
-            <p className="mt-1 text-sm text-cyan-900">
+          <div className="rounded-xl border border-cyan-200 bg-cyan-50 p-3 dark:border-cyan-800 dark:bg-cyan-950/40">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-cyan-700 dark:text-cyan-400">Em resumo</p>
+            <p className="mt-1 text-sm text-cyan-900 dark:text-cyan-200">
               {buildSummary({
                 mode,
                 entries,
@@ -625,7 +704,7 @@ export function AutomationDrawer({
                     max={16}
                     value={priority}
                     onChange={(e) => setPriority(Math.min(16, Math.max(1, Number(e.target.value))))}
-                    className="h-11 w-full min-w-0 rounded-lg border border-border px-3 text-base sm:text-sm"
+                    className="h-11 w-full min-w-0 rounded-lg border border-border bg-background px-3 text-base text-foreground dark:[color-scheme:dark] sm:text-sm"
                   />
                   <p className="text-xs text-muted-foreground">
                     Número menor tem prioridade maior e vence os outros comandos no mesmo ponto. 8 é
@@ -641,7 +720,7 @@ export function AutomationDrawer({
                       min={5}
                       value={evalSeconds}
                       onChange={(e) => setEvalSeconds(Math.max(5, Number(e.target.value)))}
-                      className="h-11 w-full min-w-0 rounded-lg border border-border px-3 text-base sm:text-sm"
+                      className="h-11 w-full min-w-0 rounded-lg border border-border bg-background px-3 text-base text-foreground dark:[color-scheme:dark] sm:text-sm"
                     />
                   </div>
                 )}
@@ -653,7 +732,7 @@ export function AutomationDrawer({
         {/* Footer */}
         <div className="shrink-0 space-y-3 border-t border-border px-5 py-4">
           {(formError || mutationError) && (
-            <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
+            <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600 dark:border-red-800 dark:bg-red-950/40 dark:text-red-400">
               {formError ?? mutationError?.message}
             </p>
           )}
@@ -728,18 +807,23 @@ function ChoiceCard({
 
 interface DraftActionLike extends AutomationActionInput {
   key: string;
+  deviceId?: string;
 }
 
 function ActionList({
   actions,
-  points,
+  commandDevices,
+  writableByDevice,
   pointById,
   onAdd,
   onUpdate,
   onRemove,
 }: {
   actions: DraftActionLike[];
-  points: FlatPoint[];
+  /** Equipamentos com pelo menos um ponto comandável. */
+  commandDevices: { id: string; name: string }[];
+  /** Pontos comandáveis agrupados por equipamento. */
+  writableByDevice: Map<string, FlatPoint[]>;
   pointById: Map<string, FlatPoint>;
   onAdd: (type: 'WRITE_POINT' | 'NOTIFY') => void;
   onUpdate: (key: string, patch: Partial<DraftActionLike>) => void;
@@ -750,6 +834,9 @@ function ActionList({
       {actions.map((a) => {
         const target = a.targetPointId ? pointById.get(a.targetPointId) : undefined;
         const digital = target?.isDigital ?? true;
+        // Pré-seleção: ao editar, deriva o equipamento do ponto salvo.
+        const actionDeviceId = a.deviceId || (target?.deviceId ?? '');
+        const devicePoints = actionDeviceId ? (writableByDevice.get(actionDeviceId) ?? []) : [];
         return (
           <div key={a.key} className="space-y-2 rounded-lg border border-border p-3">
             <div className="flex items-center justify-between">
@@ -763,7 +850,7 @@ function ActionList({
               </span>
               <button
                 onClick={() => onRemove(a.key)}
-                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-red-50 hover:text-red-600"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -772,23 +859,39 @@ function ActionList({
             {a.type === 'WRITE_POINT' ? (
               <div className="space-y-2">
                 <select
-                  value={a.targetPointId ?? ''}
+                  value={actionDeviceId}
                   onChange={(e) => {
-                    const p = pointById.get(e.target.value);
-                    onUpdate(a.key, {
-                      targetPointId: e.target.value,
-                      value: p?.isDigital ? true : 0,
-                    });
+                    onUpdate(a.key, { deviceId: e.target.value, targetPointId: '' });
                   }}
-                  className="h-11 w-full min-w-0 rounded-lg border border-border px-3 text-base sm:text-sm"
+                  className="h-11 w-full min-w-0 rounded-lg border border-border bg-background px-3 text-base text-foreground dark:[color-scheme:dark] sm:text-sm"
                 >
-                  <option value="">Escolha o ponto…</option>
-                  {points.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.label}
+                  <option value="">Escolha o equipamento…</option>
+                  {commandDevices.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
                     </option>
                   ))}
                 </select>
+                {actionDeviceId && (
+                  <select
+                    value={a.targetPointId ?? ''}
+                    onChange={(e) => {
+                      const p = pointById.get(e.target.value);
+                      onUpdate(a.key, {
+                        targetPointId: e.target.value,
+                        value: p?.isDigital ? true : 0,
+                      });
+                    }}
+                    className="h-11 w-full min-w-0 rounded-lg border border-border bg-background px-3 text-base text-foreground dark:[color-scheme:dark] sm:text-sm"
+                  >
+                    <option value="">Escolha o ponto…</option>
+                    {devicePoints.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 {target && digital && (
                   <div className="flex gap-2">
                     <button
@@ -816,7 +919,7 @@ function ActionList({
                       type="number"
                       value={typeof a.value === 'number' ? a.value : 0}
                       onChange={(e) => onUpdate(a.key, { value: Number(e.target.value) })}
-                      className="h-11 w-24 min-w-0 rounded-lg border border-border px-3 text-base sm:text-sm"
+                      className="h-11 w-24 min-w-0 rounded-lg border border-border bg-background px-3 text-base text-foreground dark:[color-scheme:dark] sm:text-sm"
                     />
                     {target.unit && (
                       <span className="shrink-0 text-sm text-muted-foreground">{target.unit}</span>
@@ -829,7 +932,7 @@ function ActionList({
                 value={a.config?.message ?? ''}
                 onChange={(e) => onUpdate(a.key, { config: { message: e.target.value } })}
                 placeholder="Mensagem do aviso"
-                className="h-11 w-full min-w-0 rounded-lg border border-border px-3 text-base sm:text-sm"
+                className="h-11 w-full min-w-0 rounded-lg border border-border bg-background px-3 text-base text-foreground dark:[color-scheme:dark] sm:text-sm"
               />
             )}
           </div>

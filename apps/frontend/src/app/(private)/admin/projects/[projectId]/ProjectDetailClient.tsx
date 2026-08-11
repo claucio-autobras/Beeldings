@@ -23,8 +23,6 @@ interface GatewayInfo {
 interface ProjectDetail {
   id: string;
   name: string;
-  address?: string | null;
-  technicalContact?: string | null;
   siteId: string;
   tenantId: string;
   createdAt: string;
@@ -67,6 +65,13 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   });
 
   const gw = project?.gateway ?? null;
+
+  // Endereço vem do Site (localidade física), não do projeto.
+  const { data: siteDetail } = useQuery<{ id: string; name: string; location?: string | null }>({
+    queryKey: ['site', project?.siteId ?? null],
+    queryFn: () => apiGet(`/sites/${project?.siteId}`),
+    enabled: !!project?.siteId,
+  });
 
   const { data: devices = [] } = useQuery<DeviceItem[]>({
     queryKey: ['devices', project?.tenantId ?? null],
@@ -159,7 +164,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
         <h1 className="text-xl font-semibold text-foreground">{project.name}</h1>
         <p className="text-sm text-muted-foreground mt-0.5">
           {project.site?.name ? `Site: ${project.site.name}` : ''}
-          {project.address ? ` · ${project.address}` : ''}
+          {siteDetail?.location ? ` · ${siteDetail.location}` : ''}
         </p>
       </div>
 

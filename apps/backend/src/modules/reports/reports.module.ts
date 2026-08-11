@@ -6,5 +6,8 @@ import { AvailabilityService } from './availability.service.js';
 @Module({
   controllers: [ReportsController],
   providers: [ReportsService, AvailabilityService],
+  // Exportado para o dashboard reutilizar a MESMA base de disponibilidade do
+  // relatório (status_events) no Resumo Operacional do cliente.
+  exports: [AvailabilityService],
 })
 export class ReportsModule {}

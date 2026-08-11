@@ -24,9 +24,18 @@ import { SensitiveActionGuard } from '../auth/presentation/guards/sensitive-acti
 import { CurrentUser } from '../auth/presentation/decorators/current-user.decorator.js';
 import type { AuthenticatedUser } from '../auth/domain/interfaces/auth.interface.js';
 
+interface InitialRecipientDto {
+  name: string;
+  email?: string;
+  phone?: string;
+  emailEnabled?: boolean;
+  whatsappEnabled?: boolean;
+}
+
 interface CreateTenantDto {
   name: string;
   slug: string;
+  initialRecipient: InitialRecipientDto;
 }
 
 @Controller('tenants')
@@ -294,6 +303,8 @@ export class TenantsController {
   /**
    * POST /tenants
    * Apenas ADMIN pode criar novos tenants.
+   * Requer um destinatário inicial (initialRecipient) com nome + e-mail ou telefone.
+   * O tenant e o destinatário são criados em uma única transação.
    */
   @Post('/')
   async createTenant(
@@ -307,6 +318,23 @@ export class TenantsController {
     if (!body.name?.trim()) throw new BadRequestException('name é obrigatório');
     if (!body.slug?.trim()) throw new BadRequestException('slug é obrigatório');
 
+    // Validate initialRecipient
+    const r = body.initialRecipient;
+    if (!r) {
+      throw new BadRequestException('initialRecipient é obrigatório: informe nome e ao menos e-mail ou telefone');
+    }
+    if (!r.name?.trim()) {
+      throw new BadRequestException('initialRecipient.name é obrigatório');
+    }
+    const emailTrimmed = r.email?.trim() ?? '';
+    const phoneTrimmed = r.phone?.trim() ?? '';
+    if (!emailTrimmed && !phoneTrimmed) {
+      throw new BadRequestException('initialRecipient: informe ao menos e-mail ou telefone');
+    }
+    if (emailTrimmed && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrimmed)) {
+      throw new BadRequestException('initialRecipient.email inválido');
+    }
+
     const slug = body.slug
       .toLowerCase()
       .trim()
@@ -316,8 +344,31 @@ export class TenantsController {
     const existing = await this.prisma.tenant.findUnique({ where: { slug } });
     if (existing) throw new BadRequestException('Já existe um cliente com este slug');
 
-    const tenant = await this.prisma.tenant.create({
-      data: { name: body.name.trim(), slug },
+    // Create tenant + recipient atomically
+    const [tenant] = await this.prisma.$transaction(async (tx) => {
+      const newTenant = await tx.tenant.create({
+        data: { name: body.name.trim(), slug },
+      });
+
+      const emailEnabled = r.emailEnabled ?? !!emailTrimmed;
+      const whatsappEnabled = r.whatsappEnabled ?? !!phoneTrimmed;
+
+      await tx.notificationRecipient.create({
+        data: {
+          tenantId: newTenant.id,
+          name: r.name.trim(),
+          email: emailTrimmed || null,
+          phone: phoneTrimmed || null,
+          emailEnabled,
+          whatsappEnabled,
+          alarms: true,
+          insights: false,
+          allSites: true,
+          active: true,
+        },
+      });
+
+      return [newTenant];
     });
 
     return {

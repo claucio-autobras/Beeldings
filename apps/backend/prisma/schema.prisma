@@ -31,15 +31,16 @@ model Tenant {
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
-  users           User[]
-  devices         Device[]
-  projects        Project[]
-  sites           Site[]
-  gateways        Gateway[]
-  scadaScreens    ScadaScreen[]
-  scadaComponents ScadaComponent[]
-  aiConversations AiConversation[]
-  alarmGroups     AlarmGroup[]
+  users                  User[]
+  devices                Device[]
+  projects               Project[]
+  sites                  Site[]
+  gateways               Gateway[]
+  scadaScreens           ScadaScreen[]
+  scadaComponents        ScadaComponent[]
+  aiConversations        AiConversation[]
+  alarmGroups            AlarmGroup[]
+  notificationRecipients NotificationRecipient[]
 
   @@map("tenants")
 }
@@ -79,17 +80,24 @@ enum Role {
 // e contém um ou mais Projetos (BMS, CFTV, Energia...).
 
 model Site {
-  id        String   @id @default(uuid())
-  name      String
-  tenantId  String   @map("tenant_id")
-  tenant    Tenant   @relation(fields: [tenantId], references: [id])
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id              String  @id @default(uuid())
+  name            String
+  // Localização física da unidade (ex.: "Rua das Flores, 100 — Bloco B").
+  // Migrado de Project.address na criação deste campo.
+  location        String? @map("location")
+  // Nome do responsável local (ex.: "João Silva").
+  // Migrado de Project.technicalContact na criação deste campo.
+  responsibleName String? @map("responsible_name")
+  tenantId        String  @map("tenant_id")
+  tenant          Tenant  @relation(fields: [tenantId], references: [id])
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
-  projects     Project[]
-  devices      Device[]
-  scadaScreens ScadaScreen[]
-  alarmGroups  AlarmGroup[]
+  projects                   Project[]
+  devices                    Device[]
+  scadaScreens               ScadaScreen[]
+  alarmGroups                AlarmGroup[]
+  notificationRecipientSites NotificationRecipientSite[]
 
   @@map("sites")
 }
@@ -176,13 +184,48 @@ model Device {
   // dashboard (horas ligado, falha contínua, tempo offline) e consumo pela IA.
   critical  Boolean  @default(false) @map("is_critical")
   config    Json? // config do device específica de protocolo (ex.: Modbus { unitId, pollingIntervalMs })
+  // Último diagnóstico de heartbeat MQTT (RSSI/IP/uptime + receivedAt) —
+  // fallback durável do cache em memória do DeviceHeartbeatService.
+  lastHeartbeat Json? @map("last_heartbeat")
+  // Tipo do dispositivo monitorado: 'CAMERA' | 'SWITCH' | 'NVR' | extensível.
+  // null = dispositivo BMS (BACnet/Modbus/MQTT). Nullable p/ não exigir migração
+  // de todos os devices BMS existentes; validação no nível da aplicação.
+  monitoredDeviceType String? @map("monitored_device_type")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  points    DevicePoint[]
-  telemetry Telemetry[]
+  points           DevicePoint[]
+  telemetry        Telemetry[]
+  capabilityMaps   DeviceCapabilityMap[]
 
   @@map("devices")
+}
+
+// ─── DeviceCapabilityMap ───────────────────────────────────────────────────────
+// Mapa de capacidades por métrica, resultado do probe automático executado no
+// cadastro e periodicamente. Quatro estados explícitos evitam ambiguidade entre
+// "o equipamento não suporta" e "falhou agora". O coletor usa este mapa para
+// pular métricas UNSUPPORTED do batch GET (em SNMP v1, um OID inválido derruba
+// a requisição inteira). A flag `unsupported` em DevicePoint.binding continua
+// como fallback para devices sem probe ou gateway antigo.
+
+model DeviceCapabilityMap {
+  id           String   @id @default(cuid())
+  device       Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId     String   @map("device_id")
+  // Chave canônica da métrica: 'cpu', 'memory', 'temperature', 'uptime', etc.
+  metricKey    String   @map("metric_key")
+  // SUPPORTED | UNSUPPORTED | TEMPORARY_ERROR | NO_PERMISSION
+  state        String
+  // Valor lido no probe (null = métrica não respondeu com valor numérico).
+  probeValue   Float?   @map("probe_value")
+  lastProbeAt  DateTime @default(now()) @updatedAt @map("last_probe_at")
+  // Perfil que mapeou esta métrica e camada de onde veio o mapeamento.
+  profileId    String?  @map("profile_id")
+  profileLayer String?  @map("profile_layer") // 'base' | 'vendor' | 'override'
+
+  @@unique([deviceId, metricKey])
+  @@map("device_capability_maps")
 }
 
 // ─── DevicePoint ──────────────────────────────────────────────────────────────
@@ -676,6 +719,92 @@ model KnowledgeDoc {
   @@map("knowledge_docs")
 }
 
+// Cópia local indexada dos chamados (failures) da Infraspeak — base de
+// conhecimento do analista de chamados IA. Sincronizada periodicamente via
+// API; o embedding (pgvector) é gerado a partir do texto composto do chamado
+// (problema, local, descrição, observações/solução) e refeito quando ele muda.
+model InfraspeakTicket {
+  id               String   @id @default(uuid())
+  // ID numérico do chamado na Infraspeak (attributes.failure_id) — chave de upsert.
+  failureId        Int      @unique @map("failure_id")
+  uuid             String?
+  state            String?
+  stateDescription String?  @map("state_description")
+  priority         Int?
+  priorityText     String?  @map("priority_text")
+  problemId        Int?     @map("problem_id")
+  problemName      String?  @map("problem_name")
+  clientName       String?  @map("client_name")
+  localId          Int?     @map("local_id")
+  localName        String?  @map("local_name")
+  description      String?
+  observations     String?
+  reportDate       String?  @map("report_date")
+  completedDate    String?  @map("completed_date")
+  apiUpdatedAt     String?  @map("api_updated_at")
+  solved           Boolean?
+  confirmed        Boolean?
+  // true quando o chamado tem resolução confirmada (encerrado/resolvido) —
+  // só esses sustentam recomendações como evidência principal.
+  hasResolution    Boolean  @default(false) @map("has_resolution")
+  // Texto composto usado para gerar o embedding; comparado no sync para
+  // re-embeddar apenas chamados novos/alterados.
+  composedText     String   @map("composed_text")
+  // Gerenciado por SQL bruto (pgvector); Prisma não lê/escreve este tipo.
+  embedding        Unsupported("vector(1536)")?
+  raw              Json?
+  syncedAt         DateTime @default(now()) @map("synced_at")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@index([problemId])
+  @@index([localId])
+  @@index([state])
+  @@map("infraspeak_tickets")
+}
+
+// ─── Memória operacional anonimizada (IA) ──────────────────────────────────────
+// Casos GLOBAIS (cross-tenant) derivados de ocorrências de alarme resolvidas e
+// reconhecidas com motivo. LGPD: só campos NÃO identificáveis entram aqui
+// (whitelist estrita) — nunca tenantId, siteId, deviceId, nomes de cliente/
+// site/equipamento/gateway ou endereços. O texto livre do ackNote é saneado
+// antes de persistir/embeddar; casos não saneáveis com segurança ficam fora.
+// sourceEventId é APENAS a chave interna de upsert idempotente do sync — nunca
+// é exposto na busca/UI.
+model OperationalCase {
+  id                   String   @id @default(uuid())
+  // ID da ocorrência de origem (alarm_events.id) — chave de upsert do sync.
+  sourceEventId        String   @unique @map("source_event_id")
+  // Tipo do equipamento monitorado ('CAMERA' | 'SWITCH' | ...; null = BMS).
+  monitoredDeviceType  String?  @map("monitored_device_type")
+  protocol             String
+  // Nome/mensagem da regra, saneados (nomes conhecidos/PII redigidos).
+  alarmName            String   @map("alarm_name")
+  alarmMessage         String?  @map("alarm_message")
+  alarmType            String   @map("alarm_type") // STATE_CHANGE | VALUE_RANGE
+  severity             String // LOW | MEDIUM | HIGH
+  valueAtTrigger       Float?   @map("value_at_trigger")
+  // Oscilações da ocorrência antes do ACK (reactivation_count da origem).
+  recurrenceCount      Int      @default(0) @map("recurrence_count")
+  timeToResolveMinutes Int?     @map("time_to_resolve_minutes")
+  // Motivo do reconhecimento saneado — o "como foi resolvido".
+  resolution           String
+  // Quando o caso foi resolvido (acknowledgedAt) — para "há X meses" na UI.
+  occurredAt           DateTime @map("occurred_at")
+  // Texto composto do caso (só campos da whitelist) usado para o embedding;
+  // comparado no sync para re-embeddar apenas casos novos/alterados.
+  composedText         String   @map("composed_text")
+  // Gerenciado por SQL bruto (pgvector); Prisma não lê/escreve este tipo.
+  embedding            Unsupported("vector(1536)")?
+  syncedAt             DateTime @default(now()) @map("synced_at")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  @@index([monitoredDeviceType])
+  @@index([alarmType])
+  @@map("operational_cases")
+}
+
 model KnowledgeChunk {
   id        String                       @id @default(uuid())
   docId     String                       @map("doc_id")
@@ -796,4 +925,52 @@ model AutomationAction {
   @@index([automationId])
   @@index([targetPointId])
   @@map("automation_actions")
+}
+
+// ─── NotificationRecipient (destinatários de notificações por e-mail/WhatsApp) ──
+// Cadastro por tenant de quem deve receber cada categoria de notificação e por
+// qual canal. O escopo pode ser global (todas as unidades) ou restrito a sites
+// específicos. A camada de envio consulta resolveRecipients() no serviço.
+
+model NotificationRecipient {
+  id              String   @id @default(uuid())
+  tenantId        String   @map("tenant_id")
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name            String
+  // Contato — pelo menos um obrigatório (validado no serviço).
+  email           String?
+  // Telefone em formato E.164 (ex.: +5511912345678).
+  phone           String?
+  // Canais habilitados. Canal ativo exige o campo de contato correspondente.
+  emailEnabled    Boolean  @default(false) @map("email_enabled")
+  whatsappEnabled Boolean  @default(false) @map("whatsapp_enabled")
+  // Categorias de notificação.
+  alarms          Boolean  @default(true)
+  insights        Boolean  @default(false)
+  // Escopo: true = todas as unidades do tenant; false = somente sites em sites[].
+  allSites        Boolean  @default(true) @map("all_sites")
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  sites NotificationRecipientSite[]
+
+  @@index([tenantId])
+  @@map("notification_recipients")
+}
+
+// Associação destinatário ↔ unidade (site) quando allSites=false.
+// Cascade em ambos os lados: remove-se o vínculo quando o destinatário OU o
+// site for excluído.
+model NotificationRecipientSite {
+  id          String                @id @default(uuid())
+  recipientId String                @map("recipient_id")
+  recipient   NotificationRecipient @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+  siteId      String                @map("site_id")
+  site        Site                  @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  createdAt   DateTime              @default(now()) @map("created_at")
+
+  @@unique([recipientId, siteId])
+  @@index([siteId])
+  @@map("notification_recipient_sites")
 }

@@ -129,23 +129,28 @@ export default function ClusterStatusPage() {
   const leaderCount = list.filter((i) => i.isLeader).length;
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto w-full max-w-6xl space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-xl font-semibold text-foreground">Servidores</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          Estado de liderança das instâncias do backend — qual servidor está no comando da ingestão
-        </p>
-      </div>
+      <header className="flex items-center gap-3">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-cyan-500/10">
+          <ServerCog className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
+        </div>
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight text-foreground">Servidores</h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            Estado de liderança das instâncias do backend — qual servidor está no comando da ingestão
+          </p>
+        </div>
+      </header>
 
       {/* KPIs */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
         {[
           { label: 'Instâncias vistas', value: list.length, color: 'text-foreground' },
-          { label: 'Líder ativo', value: leaderCount, color: leaderCount === 1 ? 'text-green-600' : 'text-amber-600' },
-          { label: 'Seguidores', value: list.length - leaderCount, color: 'text-slate-500' },
+          { label: 'Líder ativo', value: leaderCount, color: leaderCount === 1 ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400' },
+          { label: 'Seguidores', value: list.length - leaderCount, color: 'text-muted-foreground' },
         ].map(({ label, value, color }) => (
-          <div key={label} className="rounded-lg border border-border bg-card px-4 py-3 text-center">
+          <div key={label} className="rounded-xl border border-border bg-card px-4 py-3 text-center shadow-sm">
             <p className={`text-2xl font-bold ${color}`}>{value}</p>
             <p className="text-xs text-muted-foreground mt-0.5">{label}</p>
           </div>
@@ -154,7 +159,7 @@ export default function ClusterStatusPage() {
 
       {/* Uso do banco de dados */}
       {storage && (
-        <div className="rounded-lg border border-border bg-card">
+        <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm transition-shadow duration-200 hover:shadow-md">
           <button
             type="button"
             onClick={() => setStorageExpanded((v) => !v)}
@@ -256,7 +261,7 @@ export default function ClusterStatusPage() {
 
       {/* Broker MQTT (EMQX) */}
       {broker && broker.configured && (
-        <div className="rounded-lg border border-border bg-card px-4 py-4">
+        <div className="rounded-xl border border-border bg-card px-4 py-4 shadow-sm transition-shadow duration-200 hover:shadow-md">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <Radio className="h-4 w-4 text-cyan-600" />
@@ -318,7 +323,7 @@ export default function ClusterStatusPage() {
         </div>
       )}
       {broker && !broker.configured && (
-        <div className="rounded-lg border border-border bg-card px-4 py-4">
+        <div className="rounded-xl border border-border bg-card px-4 py-4 shadow-sm">
           <div className="flex items-center gap-2">
             <Radio className="h-4 w-4 text-muted-foreground" />
             <span className="text-sm font-medium text-foreground">Broker MQTT (EMQX)</span>
@@ -338,61 +343,68 @@ export default function ClusterStatusPage() {
 
       {/* Erro */}
       {error && list.length === 0 && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-400">
           Erro ao consultar o estado do cluster: {(error as Error).message}
         </div>
       )}
 
       {/* Vazio */}
       {!isLoading && !error && list.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
-          <Server className="h-12 w-12 text-muted-foreground/25 mb-3" />
+        <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-border bg-card px-6 py-16 text-center shadow-sm">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-cyan-500/10">
+            <Server className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
+          </div>
           <p className="text-sm text-muted-foreground">Nenhuma instância respondeu ainda.</p>
         </div>
       )}
 
       {/* Lista de instâncias */}
       {list.length > 0 && (
-        <div className="border border-border rounded-xl overflow-x-auto">
+        <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm transition-shadow duration-200 hover:shadow-md">
+          <div className="overflow-x-auto">
           <table className="w-full min-w-[420px] text-sm">
             <thead>
               <tr className="bg-muted/30 border-b border-border">
-                <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">Instância</th>
-                <th className="text-center px-4 py-3 text-xs font-medium text-muted-foreground">Papel</th>
-                <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground">Última resposta</th>
+                <th className="text-left px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Instância</th>
+                <th className="text-center px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Papel</th>
+                <th className="text-right px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Última resposta</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {list.map((inst) => (
-                <tr key={inst.instanceId} className="hover:bg-muted/20 transition-colors">
-                  <td className="px-4 py-3">
+                <tr key={inst.instanceId} className="transition-colors duration-150 hover:bg-muted/30">
+                  <td className="px-5 py-3.5">
                     <div className="flex items-center gap-2.5">
                       {inst.isLeader
                         ? <ServerCog className="h-4 w-4 text-green-500 shrink-0" />
-                        : <Server className="h-4 w-4 text-slate-400 shrink-0" />}
+                        : <Server className="h-4 w-4 text-muted-foreground/60 shrink-0" />}
                       <span className="font-mono text-xs text-foreground font-medium">{inst.instanceId}</span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-center">
+                  <td className="px-4 py-3.5 text-center">
                     {inst.isLeader ? (
-                      <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">
+                      <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200 dark:bg-green-950/40 dark:text-green-400 dark:border-green-900">
                         <Crown className="h-3 w-3" />
                         Líder
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200">
-                        <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
+                      <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border">
+                        <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/50" />
                         Seguidor
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-right text-xs text-muted-foreground">
+                  <td className="px-4 py-3.5 text-right text-xs text-muted-foreground">
                     {formatRelative(inst.lastSeen)}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          </div>
+          <div className="border-t border-border bg-muted/20 px-5 py-2.5 text-xs text-muted-foreground">
+            {list.length} instância{list.length !== 1 ? 's' : ''} observada{list.length !== 1 ? 's' : ''}
+          </div>
         </div>
       )}
 

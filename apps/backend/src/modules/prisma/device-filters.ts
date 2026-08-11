@@ -17,25 +17,57 @@ export const EXCLUDE_VIRTUAL_DEVICES = {
 
 /**
  * Protocolos dos dispositivos de CFTV (câmeras monitoradas via SNMP ou ONVIF).
- * Câmeras são equipamento REAL (o gateway faz polling e a config é publicada),
- * mas NÃO pertencem ao universo BMS: não aparecem em listagens/contagens de
- * dispositivos BMS, dashboards nem na IA — têm área própria (/cftv).
+ * Mantidos como constantes para uso em locais pontuais que ainda os referenciam.
+ * O filtro canônico de câmeras passou a ser baseado em `monitoredDeviceType`
+ * (veja ONLY_CAMERA_DEVICES abaixo).
  */
 export const SNMP_PROTOCOL = 'snmp';
 export const ONVIF_PROTOCOL = 'onvif';
 export const CFTV_PROTOCOLS = [SNMP_PROTOCOL, ONVIF_PROTOCOL] as const;
 
 /**
- * Fragmento de `where` do Prisma para consultas do universo BMS: exclui os
- * dispositivos virtuais (Bancada) E as câmeras CFTV (snmp/onvif). Use nas
- * listagens, contagens, dashboards e IA. NÃO use no config publisher — o
- * gateway precisa da config das câmeras para fazer o polling.
+ * Fragmento de `where` que seleciona SOMENTE as câmeras CFTV.
+ *
+ * Usa `monitoredDeviceType = 'CAMERA'` — critério canônico após a migração
+ * que backfillou todas as câmeras existentes (protocol snmp/onvif). Isso
+ * garante que switches futuros (protocol='snmp', type='SWITCH') não apareçam
+ * na lista de câmeras.
  */
-export const EXCLUDE_NON_BMS_DEVICES = {
-  protocol: { notIn: [VIRTUAL_PROTOCOL, ...CFTV_PROTOCOLS] as string[] },
+export const ONLY_CAMERA_DEVICES = {
+  monitoredDeviceType: 'CAMERA',
 } as const;
 
-/** Fragmento de `where` que seleciona SOMENTE as câmeras CFTV (SNMP + ONVIF). */
-export const ONLY_CFTV_DEVICES = {
-  protocol: { in: [...CFTV_PROTOCOLS] as string[] },
+/**
+ * Alias retrocompatível — todo código existente que importava ONLY_CFTV_DEVICES
+ * continua funcionando sem modificação.
+ */
+export const ONLY_CFTV_DEVICES = ONLY_CAMERA_DEVICES;
+
+/**
+ * Fragmento de `where` que seleciona TODOS os dispositivos monitorados
+ * (câmeras, switches, NVRs — qualquer monitoredDeviceType não-null).
+ */
+export const ONLY_MONITORED_DEVICES = {
+  monitoredDeviceType: { not: null },
+} as const;
+
+/**
+ * Fragmento de `where` do Prisma para consultas do universo BMS: exclui os
+ * dispositivos virtuais (Bancada) E os dispositivos monitorados (câmeras CFTV,
+ * switches, NVRs). Use nas listagens, contagens, dashboards e IA.
+ * NÃO use no config publisher — o gateway precisa da config de TODOS os devices.
+ */
+export const EXCLUDE_NON_BMS_DEVICES = {
+  protocol: { not: VIRTUAL_PROTOCOL },
+  monitoredDeviceType: null,
+} as const;
+
+/**
+ * Fragmento de `where` que seleciona SOMENTE as controladoras de acesso (SCA).
+ *
+ * Usa `monitoredDeviceType = 'ACCESS_CONTROLLER'` — critério canônico para
+ * garantir que dispositivos SNMP do BMS não apareçam na lista de controladoras.
+ */
+export const ONLY_ACCESS_CONTROLLER_DEVICES = {
+  monitoredDeviceType: 'ACCESS_CONTROLLER',
 } as const;

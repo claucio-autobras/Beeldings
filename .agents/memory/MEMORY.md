@@ -1,5 +1,6 @@
 - [BlueBee setup gotchas](bluebee-setup.md) — npm firewall lockfile, Agent .replit, Supabase placeholder env, git-delete guard, checkpoint-rollback deleted modules (restore via git show/cat-file), mock contracts per restored page.
 - [Infraspeak API](infraspeak-api.md) — Stoplight docs are a JS SPA (read via screenshot tool, not fetch); base URL/resource/fields not public; integration is config-driven.
+- [Infraspeak problemas por contexto](bluebee-infraspeak-problem-scope.md) — sem filtro nativo; restrição via relationship `clients` da problem_area (expanded=children,clients); rejeição = 400 validation.has_access_network.
 - [Infraspeak ativa](bluebee-infraspeak-active.md) — PAT sandbox só funciona em api.sandbox.infraspeak.com/v3 (401 no host errado ≠ token inválido); failures em JSON:API; env stale sobrevive a restart de workflow.
 - [BACnet write race](bluebee-bacnet-write-race.md) — register pending in the command_id Map BEFORE publishing; QoS2 publish-ack to remote broker is slower than the gateway's result, so late-registration drops the response → deterministic 20s timeout.
 - [Gateway agent download](bluebee-gateway-agent-package.md) — GET /gateways/agent-package zips gateway source on demand; backend is CJS (use adm-zip, not ESM archiver); ships source+npm, not .exe; needs apps/gateway at runtime.
@@ -41,7 +42,7 @@
 - [CFTV saúde híbrida SNMP](bluebee-cftv-hybrid-snmp.md) — câmera ONVIF pode ter canal SNMP opcional (pontos objectType='snmp', perfil de OIDs por fabricante); falha SNMP publica null e NUNCA afeta o STATUS ONVIF.
 - [SNMP v1 batch GET](bluebee-snmp-v1-batch.md) — um OID inválido no lote derruba o GET inteiro (tudo null com STATUS=1); polling exclui `unsupported` e faz fallback por OID (split-on-error).
 - [SNMP value parsing](bluebee-snmp-value-parsing.md) — Hikvision responde "45 PERCENT"/"256 MB" (OCTET STRING); parseSnmpNumber central no gateway; .1.9.0 é storage, RAM real em .1.11.0.
-- [CFTV via SNMP](bluebee-cftv-snmp.md) — câmeras são Devices protocol='snmp' excluídos das queries BMS; saúde = valor do STATUS (não recência); alarmes protocol-agnósticos; widget 'camera' com case explícito.
+- [CFTV via SNMP](bluebee-cftv-snmp.md) — câmeras são Devices protocol='snmp' excluídos das queries BMS; saúde UI = cameraHealthInfo (STATUS + gateway liveness + staleness 5min); alarmes protocol-agnósticos; widget 'camera' com case explícito.
 - [SNMP diagnose progress](bluebee-snmp-diagnose-progress.md) — progress Maps polled por HTTP em cluster: gateway publica 0/N imediato; resultado marca done em TODA instância antes do check de pendência.
 - [SNMP erro = resposta](bluebee-snmp-error-is-response.md) — noSuchObject/noSuchName prova câmera viva (só timeout é silêncio); getNext fallback no ping; cause community vs no_response; binding.unsupported.
 - [SNMP camera scan](bluebee-snmp-scan.md) — fallback combos rodam em paralelo por host (senão estoura timeout); TCP-alive via RST (loopback sempre "vivo"); progresso via scanId do cliente + polling.
@@ -57,6 +58,7 @@
 - [Histórico de comandos](bluebee-command-history.md) — GET /commands deriva de audit_logs action='COMMAND'; write responde 200 com success:false → interceptor precisa gravar FAILURE; pointLabel só p/ trilha.
 - [Histórico de automações](bluebee-automation-runs.md) — AutomationRun: FK cascade (delete da regra apaga histórico), recordRun fire-and-forget, CONTINUOUS só grava quando age, retenção 90d na escrita.
 - [Frontend i18n](bluebee-i18n.md) — pt string é a chave do dicionário; useT() lê o store de preferências (troca sem reload); dicionário por módulo; cuidado com shadowing de `t` em .map.
+- [Backend MQTT credential](bluebee-backend-mqtt-user.md) — MQTT_USERNAME é usuário superuser no EMQX; renomear exige criar no broker antes; mqtt.js retenta 5s → prod reconecta sem redeploy; auth recusada loga ERROR (codes 4/5/134/135).
 - [EMQX broker monitor](bluebee-emqx-monitor.md) — alertas usam só descarte relevante (no_subscribers é benigno e domina o total); avisos de sistema via tenant sentinela `__system__`; histerese/cooldown.
 - [Trend rollups & partições](bluebee-trend-rollups.md) — SUM não AVG (merge exato); cursor global: nunca rodar rollup concorrente; retenção dropa partições; trends padrão nunca alteram existentes; timeline >3d usa rollup horário.
 - [Relatório de Disponibilidade](bluebee-availability-report.md) — status_events só transições deduplicadas; sweeper líder com carência 90s pós-boot; câmera = STATUS+recência; sem cobertura = "Sem dados", nunca 0/100% fake.
@@ -66,6 +68,7 @@
 - [SCADA click action](bluebee-scada-click-action.md) — executa só com isEditor=false E sem onClick; excluded-types p/ widgets interativos; toast via editor.store global + ToastNotification montado.
 - [ACK note required](bluebee-ack-note-required.md) — motivo obrigatório no ACK (individual e lote); sino legado usa requireNote:false; bulk ACK pula itens não reconhecíveis e o diálogo só limpa seleção no sucesso.
 - [SCADA optimistic commands](bluebee-scada-optimistic-commands.md) — pending store compartilhado por deviceId|tag via getValue (nunca ler telemetria direto); gateway ≥v1.4.0 publica readback pós-escrita como telemetria.
+- [SCADA gradiente e rotação](bluebee-scada-gradient-rotation.md) — cor gradiente = string CSS no mesmo campo (scadaBackgroundStyle); SVG precisa de linearGradient def; rotação só via transform no wrapper do renderer.
 - [SCADA cor transparente](bluebee-scada-transparent.md) — 'transparent' é valor válido em campos de cor; nunca concatenar alpha em hex direto, usar isTransparentColor/scadaColorWithAlpha e desativar glow/borda.
 - [Tenant branding topbar](bluebee-tenant-branding.md) — logo reusa pipeline de assets SCADA (App Storage + /scada-assets); cor é só acento, nunca fundo de texto; sem logo = só nome (nunca iniciais).
 - [lastCommunication durável](bluebee-last-communication.md) — nunca createdAt/updatedAt; memória → fallback durável (status_events + lastValueAt) via resolveLastSeen[Many]; sem dado = null → "sem dados".
@@ -78,5 +81,15 @@
 - [SCADA pipe widget](bluebee-scada-pipe.md) — vértices normalizados ao bbox; fluxo via WAAPI (CSS var em @keyframes congela em alguns browsers); sem binding = decorativo; edição por vértices, não alças.
 - [Critical assets card](bluebee-critical-assets.md) — is_critical em device/ponto; runtime só de ponto opRole status c/ trend; câmera STATUS gated por device vivo; deep-link por perfil; payload = fonte da IA.
 - [Primeira ação IA](bluebee-first-action.md) — rulesOverride de prompt deve valer TAMBÉM no ramo sem hits de RAG (senão perde JSON estrito + proibição destrutiva); falha da IA degrada p/ contexto factual, nunca 5xx.
+- [Aeris root ACL & confirmação](bluebee-aeris-root-acl.md) — device raiz assina `{root}/set/#`; ACL dev-{id} precisa de subscribe `{root}/#` senão fica surdo em silêncio; matchByValue sem responseTopic → fallback sourceTopic.
 - [MQTT tópico raiz próprio](bluebee-mqtt-root-topic.md) — modo root em Device.config; credencial dev-{id} + ACL restrita; gateway ACL rebuild p/ assinar roots; presença via device-heartbeat vence recência de telemetria.
+- [Analista IA de chamados](bluebee-infraspeak-analyst.md) — chamados espelhados em pgvector (sync leader-only); salvaguardas anti-alucinação PÓS-LLM: citações validadas, evidência exige caso resolvido CITADO.
 - [Headless fullscreen testing](headless-fullscreen-testing.md) — headless Chromium não esconde portais no body em fullscreen; validar com fs.contains(overlay), nunca screenshot; hook usePortalContainer p/ modais SCADA.
+- [Turnstile no login](bluebee-turnstile-login.md) — anti-robô só em produção (site key restrita ao domínio; dev daria erro 110200 e lockout); exige as 2 chaves; token é de uso único → reset após falha; boot nunca pode aguardar publish MQTT.
+- [Monitoramento por tipo + perfis](bluebee-device-profiles.md) — monitoredDeviceType é o filtro canônico (setar em TODO create); perfis em camadas no gateway; overrides string→MetricMapping; capability map agrega por métrica; migrate dev pode dropar índice hnsw.
+- [Módulo SCA](bluebee-sca-module.md) — controladoras = monitoredDeviceType='ACCESS_CONTROLLER' reusando serviços SNMP do CFTV; filtrar por monitoredDeviceType, nunca protocol; disponibilidade usa entityType 'device'.
+- [Switch monitoring CFTV](bluebee-switch-monitoring.md) — walk IF-MIB split-on-error; taxa B/s: wrap só Counter32 confirmado, senão descarta; probe paralelo com orçamento único; sync portas por ifIndex, sem auto-trend de taxas.
+- [NVR/DVR monitoring](bluebee-nvr-monitoring.md) — normalizar vendor na fonte (free→used, MB→GB, enum de status); metricKey única ponta-a-ponta; OIDs de perfil só p/ bindings oid null; sysDescr identifica perfil no sync.
+- [Camera live view](bluebee-camera-live-view.md) — frames JPEG efêmeros ONVIF→MQTT volátil→socket camera:frame; keep-alive duplo (backend 10s + watchdog gateway 12s); UNSUPPORTED/AUTH encerra.
+- [Memória operacional IA](bluebee-operational-memory.md) — casos globais anonimizados de alarmes resolvidos (whitelist estrita, saneamento pt-BR, keyword+Nome sem flag `i`); bloco no prompt só com casos recuperados + sanitizeCaseCitations.
+- [Publish image & fontes offline](bluebee-publish-image.md) — build do deploy sem rede p/ Google Fonts (next/font/local obrigatório); .replitignore mantém imagem ~1,5 GiB (limite 8).

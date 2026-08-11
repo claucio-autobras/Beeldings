@@ -1,7 +1,7 @@
 'use client';
 
 import type { ShapeWidgetBase, ScadaAnimation, VisibilityOperator } from '../../types/scada.types';
-import { toScadaNumber } from '../../types/scada.types';
+import { toScadaNumber, parseScadaGradient } from '../../types/scada.types';
 
 interface Props {
   widget: ShapeWidgetBase & { type: 'rectangle' | 'square' | 'circle' | 'ellipse' | 'triangle' };
@@ -60,7 +60,21 @@ export function ShapeWidgetView({ widget, getValue, staticRender }: Props) {
     }
   }
 
-  const fill = filled ? mainColor : 'none';
+  // Gradiente no preenchimento: SVG não aceita CSS linear-gradient em `fill`,
+  // então convertemos para um <linearGradient> equivalente (ângulo CSS: 0deg =
+  // para cima, sentido horário → vetor dx=sin(A), dy=-cos(A)).
+  const grad = filled ? parseScadaGradient(mainColor) : null;
+  const gradId = grad ? `scada-grad-${widget.id}` : '';
+  const gradCoords = grad
+    ? (() => {
+        const rad = (grad.angle * Math.PI) / 180;
+        const dx = Math.sin(rad) / 2;
+        const dy = -Math.cos(rad) / 2;
+        return { x1: 0.5 - dx, y1: 0.5 - dy, x2: 0.5 + dx, y2: 0.5 + dy };
+      })()
+    : null;
+
+  const fill = filled ? (grad ? `url(#${gradId})` : mainColor) : 'none';
   const stroke = filled ? widget.strokeColor : mainColor;
   const sw = filled ? widget.strokeWidth : Math.max(widget.strokeWidth || 0, 2);
   const inset = sw / 2;
@@ -90,6 +104,14 @@ export function ShapeWidgetView({ widget, getValue, staticRender }: Props) {
       preserveAspectRatio="none"
       style={{ position: 'absolute', inset: pad, overflow: 'visible', animation: animationCss(animation), transformOrigin: 'center' }}
     >
+      {grad && gradCoords && (
+        <defs>
+          <linearGradient id={gradId} x1={gradCoords.x1} y1={gradCoords.y1} x2={gradCoords.x2} y2={gradCoords.y2}>
+            <stop offset="0%" stopColor={grad.from} />
+            <stop offset="100%" stopColor={grad.to} />
+          </linearGradient>
+        </defs>
+      )}
       {shapeEl}
     </svg>
   );
