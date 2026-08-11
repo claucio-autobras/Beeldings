@@ -42,7 +42,10 @@ const UNIFIED_TAG_TYPES = new Set<WidgetType>([
 const UNIFIED_TAGSTATUS_TYPES = new Set<WidgetType>([
   'chiller', 'pump', 'ahu', 'fan', 'valve', 'generator', 'meter', 'controller',
   'compressor', 'cooling-tower', 'fan-coil', 'electrical-panel', 'tank', 'sensor',
-  'smoke-detector', 'camera', 'lighting', 'line', 'pipe', 'rectangle', 'square', 'circle', 'ellipse', 'triangle',
+  'smoke-detector', 'manual-call-point', 'zone-module', 'monitor-module', 'command-module',
+  'flow-switch', 'fire-panel', 'fire-siren', 'heat-detector', 'sprinkler', 'fire-hydrant',
+  'fire-extinguisher', 'fire-pump', 'fire-damper', 'fire-door',
+  'camera', 'lighting', 'line', 'pipe', 'rectangle', 'square', 'circle', 'ellipse', 'triangle',
 ]);
 
 /** Lê o ponto único vinculado a um widget (com fallback para bindings legados). */
@@ -140,6 +143,20 @@ export type WidgetType =
   | 'tank'
   | 'sensor'
   | 'smoke-detector'
+  | 'manual-call-point'
+  | 'zone-module'
+  | 'monitor-module'
+  | 'command-module'
+  | 'flow-switch'
+  | 'fire-panel'
+  | 'fire-siren'
+  | 'heat-detector'
+  | 'sprinkler'
+  | 'fire-hydrant'
+  | 'fire-extinguisher'
+  | 'fire-pump'
+  | 'fire-damper'
+  | 'fire-door'
   | 'camera'
   | 'lighting'
   | 'line'
@@ -405,6 +422,20 @@ export type ScadaEquipmentType =
   | 'tank'
   | 'sensor'
   | 'smoke-detector'
+  | 'manual-call-point'
+  | 'zone-module'
+  | 'monitor-module'
+  | 'command-module'
+  | 'flow-switch'
+  | 'fire-panel'
+  | 'fire-siren'
+  | 'heat-detector'
+  | 'sprinkler'
+  | 'fire-hydrant'
+  | 'fire-extinguisher'
+  | 'fire-pump'
+  | 'fire-damper'
+  | 'fire-door'
   | 'camera'
   | 'lighting';
 

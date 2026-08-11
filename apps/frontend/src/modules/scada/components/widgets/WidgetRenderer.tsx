@@ -86,7 +86,9 @@ interface WidgetRendererProps {
 const EQUIPMENT_TYPES = new Set([
   'chiller', 'pump', 'ahu', 'fan', 'valve', 'generator', 'meter', 'controller',
   'compressor', 'cooling-tower', 'fan-coil', 'electrical-panel', 'tank', 'sensor',
-  'smoke-detector', 'lighting',
+  'smoke-detector', 'manual-call-point', 'zone-module', 'monitor-module', 'command-module',
+  'flow-switch', 'fire-panel', 'fire-siren', 'heat-detector', 'sprinkler', 'fire-hydrant',
+  'fire-extinguisher', 'fire-pump', 'fire-damper', 'fire-door', 'lighting',
 ]);
 
 export function WidgetRenderer({

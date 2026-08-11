@@ -6,7 +6,7 @@ const defaultVisibility = { mode: 'always' as const };
 /** Animação padrão do estado "ligado" conforme o tipo de equipamento. */
 function onAnimFor(t: WidgetType): ScadaAnimation {
   if (t === 'fan' || t === 'cooling-tower' || t === 'fan-coil') return 'spin';
-  if (t === 'pump' || t === 'compressor') return 'pulse';
+  if (t === 'pump' || t === 'compressor' || t === 'fire-pump') return 'pulse';
   return 'none';
 }
 /** Regras iniciais: ligado (1) = verde + animação do tipo; desligado (0) = cinza. */
@@ -14,6 +14,17 @@ function eqRules(t: WidgetType): EquipmentStateRule[] {
   return [
     { id: nanoid(6), operator: 'eq', value: 1, color: '#22C55E', animation: onAnimFor(t) },
     { id: nanoid(6), operator: 'eq', value: 0, color: '#64748B', animation: 'none' },
+  ];
+}
+
+/**
+ * Regras iniciais dos equipamentos de INCÊNDIO: nesses sistemas o valor 1
+ * normalmente significa alarme/ativado → vermelho pulsando; 0 = normal (verde).
+ */
+function fireRules(): EquipmentStateRule[] {
+  return [
+    { id: nanoid(6), operator: 'eq', value: 1, color: '#EF4444', animation: 'pulse' },
+    { id: nanoid(6), operator: 'eq', value: 0, color: '#22C55E', animation: 'none' },
   ];
 }
 
@@ -76,7 +87,24 @@ export function buildDefaultWidget(type: WidgetType, x: number, y: number, width
     case 'electrical-panel': return { ...eqBase, type, labelText: 'Quadro Elétrico', stateRules: eqRules('electrical-panel') };
     case 'tank':         return { ...eqBase, type, labelText: 'Reservatório', stateRules: eqRules('tank'), tagLevel: '', levelMin: 0, levelMax: 100, levelUnit: '%', levelColor: '#38BDF8' };
     case 'sensor':       return { ...eqBase, type, labelText: 'Sensor', stateRules: eqRules('sensor') };
-    case 'smoke-detector': return { ...eqBase, type, labelText: 'Detector de Incêndio', stateRules: eqRules('smoke-detector') };
+    // ── Incêndio: valor 1 = alarme/ativado (vermelho pulsando); 0 = normal (verde). ──
+    // Defaults valem só na criação — detectores já salvos mantêm as regras gravadas.
+    case 'smoke-detector':     return { ...eqBase, type, labelText: 'Detector de Incêndio', stateRules: fireRules() };
+    case 'manual-call-point':  return { ...eqBase, type, labelText: 'Acionador Manual', stateRules: fireRules() };
+    case 'zone-module':        return { ...eqBase, type, labelText: 'Módulo de Zona', stateRules: fireRules() };
+    case 'monitor-module':     return { ...eqBase, type, labelText: 'Módulo Monitor', stateRules: fireRules() };
+    case 'command-module':     return { ...eqBase, type, labelText: 'Módulo de Comando', stateRules: fireRules() };
+    case 'flow-switch':        return { ...eqBase, type, labelText: 'Chave de Fluxo', stateRules: fireRules() };
+    case 'fire-panel':         return { ...eqBase, type, labelText: 'Central de Alarme', stateRules: fireRules() };
+    case 'fire-siren':         return { ...eqBase, type, labelText: 'Sirene Audiovisual', stateRules: fireRules() };
+    case 'heat-detector':      return { ...eqBase, type, labelText: 'Detector Térmico', stateRules: fireRules() };
+    case 'sprinkler':          return { ...eqBase, type, labelText: 'Sprinkler', stateRules: fireRules() };
+    case 'fire-hydrant':       return { ...eqBase, type, labelText: 'Hidrante', stateRules: fireRules() };
+    case 'fire-extinguisher':  return { ...eqBase, type, labelText: 'Extintor', stateRules: fireRules() };
+    // Bomba de incêndio: ligado (1) = verde + pulse (equipamento rotativo, como as demais bombas).
+    case 'fire-pump':          return { ...eqBase, type, labelText: 'Bomba de Incêndio', stateRules: eqRules('fire-pump') };
+    case 'fire-damper':        return { ...eqBase, type, labelText: 'Damper Corta-Fogo', stateRules: fireRules() };
+    case 'fire-door':          return { ...eqBase, type, labelText: 'Porta Corta-Fogo', stateRules: fireRules() };
     // Iluminação: ligado (1) = amarelo com pulse sutil; desligado (0) = cinza.
     case 'lighting':     return { ...eqBase, type, labelText: 'Iluminação', stateRules: [
       { id: nanoid(6), operator: 'eq', value: 1, color: '#FACC15', animation: 'pulse' },

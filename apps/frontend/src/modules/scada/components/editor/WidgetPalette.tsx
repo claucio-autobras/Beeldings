@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Bell, Boxes, ChevronDown, ChevronRight, Compass, Cpu, LayoutDashboard, Lightbulb, Radio, Shapes, SlidersHorizontal, Square, Thermometer, Trash2, Type } from 'lucide-react';
+import { Bell, Boxes, ChevronDown, ChevronRight, Compass, Cpu, Flame, LayoutDashboard, Lightbulb, Radio, Shapes, SlidersHorizontal, Square, Thermometer, Trash2, Type } from 'lucide-react';
 import type { Widget, WidgetType, SavedComponent } from '../../types/scada.types';
 import { useEditorStore } from '../../store/editor.store';
 import { SCADA_ICONS } from '../widgets/scadaIcons';
@@ -43,10 +43,29 @@ const CATEGORIES: PaletteCategory[] = [
       { type: 'electrical-panel', label: 'Quadro Elétrico' },
       { type: 'tank', label: 'Reservatório' },
       { type: 'sensor', label: 'Sensor' },
-      { type: 'smoke-detector', label: 'Detector de Incêndio' },
       { type: 'lighting', label: 'Iluminação' },
       { type: 'camera', label: 'Câmera CFTV (bullet)' },
       { id: 'camera-dome', type: 'camera', label: 'Câmera CFTV (dome)', overrides: { cameraModel: 'dome' } },
+    ],
+  },
+  {
+    id: 'fire', label: 'Incêndio', icon: <Flame className="h-3.5 w-3.5" strokeWidth={1.5} />,
+    items: [
+      { type: 'smoke-detector', label: 'Detector de Incêndio' },
+      { type: 'heat-detector', label: 'Detector Térmico' },
+      { type: 'manual-call-point', label: 'Acionador Manual' },
+      { type: 'fire-panel', label: 'Central de Alarme' },
+      { type: 'fire-siren', label: 'Sirene Audiovisual' },
+      { type: 'zone-module', label: 'Módulo de Zona' },
+      { type: 'monitor-module', label: 'Módulo Monitor' },
+      { type: 'command-module', label: 'Módulo de Comando' },
+      { type: 'flow-switch', label: 'Chave de Fluxo' },
+      { type: 'sprinkler', label: 'Sprinkler' },
+      { type: 'fire-hydrant', label: 'Hidrante' },
+      { type: 'fire-extinguisher', label: 'Extintor' },
+      { type: 'fire-pump', label: 'Bomba de Incêndio' },
+      { type: 'fire-damper', label: 'Damper Corta-Fogo' },
+      { type: 'fire-door', label: 'Porta Corta-Fogo' },
     ],
   },
   {
@@ -174,6 +193,20 @@ const DEFAULT_SIZES: Partial<Record<WidgetType, { w: number; h: number }>> = {
   tank: { w: 100, h: 140 },
   sensor: { w: 80, h: 80 },
   'smoke-detector': { w: 100, h: 100 },
+  'manual-call-point': { w: 90, h: 90 },
+  'zone-module': { w: 100, h: 90 },
+  'monitor-module': { w: 100, h: 90 },
+  'command-module': { w: 100, h: 90 },
+  'flow-switch': { w: 110, h: 100 },
+  'fire-panel': { w: 120, h: 140 },
+  'fire-siren': { w: 90, h: 90 },
+  'heat-detector': { w: 100, h: 100 },
+  sprinkler: { w: 80, h: 100 },
+  'fire-hydrant': { w: 110, h: 120 },
+  'fire-extinguisher': { w: 80, h: 130 },
+  'fire-pump': { w: 140, h: 110 },
+  'fire-damper': { w: 120, h: 110 },
+  'fire-door': { w: 90, h: 140 },
   camera: { w: 100, h: 100 },
   lighting: { w: 110, h: 100 },
   hotspot: { w: 120, h: 50 },
@@ -216,7 +249,7 @@ interface Props {
 
 export function WidgetPalette({ onDropWidget, components, onInsertComponent, onDeleteComponent }: Props) {
   const [open, setOpen] = useState<Record<string, boolean>>({
-    components: false, text: false, equipment: false, indicators: false, dashboard: false, climate: false, alarm: false, nav: false, commands: false, icons: false, shapes: false, layout: false,
+    components: false, text: false, equipment: false, fire: false, indicators: false, dashboard: false, climate: false, alarm: false, nav: false, commands: false, icons: false, shapes: false, layout: false,
   });
 
   function handleComponentDragStart(e: React.DragEvent, id: string) {
@@ -323,7 +356,7 @@ export function WidgetPalette({ onDropWidget, components, onInsertComponent, onD
                       onDoubleClick={() => onDropWidget(item.type, item.size ?? DEFAULT_SIZES[item.type] ?? { w: 120, h: 80 }, item.overrides)}
                       className="flex cursor-grab items-center gap-2 rounded px-2 py-1.5 text-xs text-slate-300 hover:bg-slate-700 hover:text-white active:cursor-grabbing transition-colors select-none"
                     >
-                      {cat.id === 'equipment' && EQUIPMENT_IMAGES[item.type] ? (
+                      {(cat.id === 'equipment' || cat.id === 'fire') && EQUIPMENT_IMAGES[item.type] ? (
                         // PNG dinâmico do SCADA (asset próprio) — next/image não se aplica
                         // eslint-disable-next-line @next/next/no-img-element
                         <img

@@ -1153,7 +1153,7 @@ function NavButtonProps({ w, upd, screenOpts }: { w: NavButtonWidget; upd: (p: P
   );
 }
 
-const EQUIPMENT_TYPES = new Set(['chiller', 'pump', 'ahu', 'fan', 'valve', 'generator', 'meter', 'controller', 'compressor', 'cooling-tower', 'fan-coil', 'electrical-panel', 'tank', 'sensor', 'smoke-detector', 'camera', 'lighting']);
+const EQUIPMENT_TYPES = new Set(['chiller', 'pump', 'ahu', 'fan', 'valve', 'generator', 'meter', 'controller', 'compressor', 'cooling-tower', 'fan-coil', 'electrical-panel', 'tank', 'sensor', 'smoke-detector', 'manual-call-point', 'zone-module', 'monitor-module', 'command-module', 'flow-switch', 'fire-panel', 'fire-siren', 'heat-detector', 'sprinkler', 'fire-hydrant', 'fire-extinguisher', 'fire-pump', 'fire-damper', 'fire-door', 'camera', 'lighting']);
 const SHAPE_TYPES = new Set(['rectangle', 'square', 'circle', 'ellipse', 'triangle']);
 
 // ─── Main panel ────────────────────────────────────────────────────────────
