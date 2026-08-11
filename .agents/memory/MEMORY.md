@@ -93,4 +93,5 @@
 - [Camera live view](bluebee-camera-live-view.md) — frames JPEG efêmeros ONVIF→MQTT volátil→socket camera:frame; keep-alive duplo (backend 10s + watchdog gateway 12s); UNSUPPORTED/AUTH encerra.
 - [Memória operacional IA](bluebee-operational-memory.md) — casos globais anonimizados de alarmes resolvidos (whitelist estrita, saneamento pt-BR, keyword+Nome sem flag `i`); bloco no prompt só com casos recuperados + sanitizeCaseCitations.
 - [Publish image & fontes offline](bluebee-publish-image.md) — build do deploy sem rede p/ Google Fonts (next/font/local obrigatório); .replitignore mantém imagem ~1,5 GiB (limite 8).
+- [Trend batch writer](bluebee-trend-batch-writer.md) — gravação de TrendRecord é em lote assíncrono (janela ~1s, retry, teto descarta antigos contabilizado); testes não podem esperar persistência síncrona.
 - [Gateway polling robustness](bluebee-gateway-poll-robustness.md) — guard busy + jitter determinístico de partida + skipped/overrun em TODO polling novo; stopPoll deve limpar startTimeout E interval.

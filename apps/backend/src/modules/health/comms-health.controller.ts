@@ -8,6 +8,8 @@ import type { MqttConnectionStatus } from '../mqtt/mqtt.service.js';
 import { IngestionMetricsService } from '../mqtt/ingestion-metrics.service.js';
 import type { IngestionMetricsSnapshot } from '../mqtt/ingestion-metrics.service.js';
 import { ClusterService } from '../cluster/cluster.service.js';
+import { TrendRecorderService } from '../trends/trend-recorder.service.js';
+import type { TrendWriterStats } from '../trends/trend-recorder.service.js';
 
 /** Resposta consolidada de saúde das comunicações do backend. */
 interface CommsHealthResponse {
@@ -21,6 +23,8 @@ interface CommsHealthResponse {
   cluster: { isLeader: boolean; instanceId: string };
   /** Taxa/contadores de ingestão MQTT desta instância. */
   ingestion: IngestionMetricsSnapshot;
+  /** Contadores do gravador de trends em lote (lotes, retries, descartes). */
+  trendWriter: TrendWriterStats;
 }
 
 /**
@@ -41,6 +45,7 @@ export class CommsHealthController {
     private readonly mqtt: MqttService,
     private readonly ingestion: IngestionMetricsService,
     private readonly cluster: ClusterService,
+    private readonly trendRecorder: TrendRecorderService,
   ) {}
 
   @Get('comms')
@@ -51,6 +56,7 @@ export class CommsHealthController {
       mqtt: this.mqtt.getConnectionStatus(),
       cluster: this.cluster.getStatus(),
       ingestion: this.ingestion.getSnapshot(),
+      trendWriter: this.trendRecorder.getWriterStats(),
     };
   }
 }

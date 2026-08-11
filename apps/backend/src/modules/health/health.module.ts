@@ -3,8 +3,10 @@ import { StorageMonitorService } from './storage-monitor.service.js';
 import { EmqxMonitorService } from './emqx-monitor.service.js';
 import { HealthController } from './health.controller.js';
 import { CommsHealthController } from './comms-health.controller.js';
+import { TrendsModule } from '../trends/trends.module.js';
 
 @Module({
+  imports: [TrendsModule],
   controllers: [HealthController, CommsHealthController],
   providers: [StorageMonitorService, EmqxMonitorService],
   exports: [StorageMonitorService, EmqxMonitorService],
