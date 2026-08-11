@@ -249,6 +249,8 @@ export class DevicesController {
       dataType?: string;
       scale?: number;
       offset?: number;
+      minExpected?: number;
+      maxExpected?: number;
     };
     return {
       id: p.id,
@@ -259,6 +261,8 @@ export class DevicesController {
       dataType: b.dataType ?? 'float32',
       scale: b.scale ?? 1,
       offset: b.offset ?? 0,
+      ...(b.minExpected !== undefined ? { minExpected: b.minExpected } : {}),
+      ...(b.maxExpected !== undefined ? { maxExpected: b.maxExpected } : {}),
       unit: p.unit ?? '',
       critical: p.critical,
       opRole: p.opRole ?? null,
@@ -1587,11 +1591,13 @@ export class DevicesController {
 
   /**
    * PATCH /devices/:id/points/:pointId
-   * Renomeia apenas o nome de exibição (objectName) de um ponto. A tag, o tipo,
-   * a instância e o binding permanecem imutáveis — a tag é a chave de casamento
-   * da telemetria/alarmes (deviceId + tag), então renomear só o objectName é
-   * seguro e NÃO exige republicar a config ao gateway (o polling é por tag/objeto).
-   * Mesma checagem de permissão/tenant da exclusão de ponto.
+   * Atualiza um ponto. Para todos os protocolos: nome de exibição (objectName),
+   * papel operacional e criticidade — sem republicar config (o polling é por
+   * tag/objeto). Para pontos MQTT e Modbus, aceita também a edição técnica
+   * (tag/tópico/escrita no MQTT; registrador/tipo/dado/escala/offset/limites no
+   * Modbus), sempre atualizando o MESMO registro (nunca excluir/recriar — o id
+   * preserva trends, alarmes e favoritos) e republicando a config retida ao
+   * gateway. Mesma checagem de permissão/tenant da exclusão de ponto.
    */
   @Patch(':id/points/:pointId')
   @UseGuards(JwtAuthGuard)
@@ -1605,12 +1611,20 @@ export class DevicesController {
       // Ponto crítico (card de Ativos Críticos do dashboard).
       critical?: boolean;
       write?: MqttPointInput['write'];
-      // Campos técnicos — apenas para pontos de devices MQTT (edição completa).
+      // Campos técnicos — pontos de devices MQTT e Modbus (edição completa).
       tag?: string;
       sourceTopic?: string;
       jsonPath?: string | null;
       valueType?: 'number' | 'boolean';
       unit?: string;
+      // Campos técnicos — apenas para pontos de devices Modbus.
+      register?: number;
+      registerType?: string;
+      dataType?: string;
+      scale?: number;
+      offset?: number;
+      minExpected?: number | null;
+      maxExpected?: number | null;
     },
   ) {
     const device = await this.prisma.device.findUnique({ where: { id } });
@@ -1649,26 +1663,50 @@ export class DevicesController {
       data.critical = body.critical;
     }
 
-    // Campos técnicos MQTT (tag, tópico, jsonPath, tipo, unidade e binding de
-    // escrita) — só para pontos de devices MQTT. Qualquer mudança aqui exige
-    // republicar a config retida do device para o gateway aplicar sem restart.
+    // Campos técnicos MQTT (tópico, jsonPath, tipo e binding de escrita) — só
+    // para pontos de devices MQTT. Qualquer mudança aqui exige republicar a
+    // config retida do device para o gateway aplicar sem restart.
     const touchesMqttTechnical =
       body.write !== undefined ||
-      body.tag !== undefined ||
       body.sourceTopic !== undefined ||
       body.jsonPath !== undefined ||
       body.valueType !== undefined;
+    // Campos técnicos Modbus (registrador, tipo, dado, escala, offset, limites)
+    // — só para pontos de devices Modbus. Também exigem republicar a config.
+    const touchesModbusTechnical =
+      body.register !== undefined ||
+      body.registerType !== undefined ||
+      body.dataType !== undefined ||
+      body.scale !== undefined ||
+      body.offset !== undefined ||
+      body.minExpected !== undefined ||
+      body.maxExpected !== undefined;
     let mustRepublish = false;
 
     if (touchesMqttTechnical && (device.protocol !== 'mqtt' || !device.gatewayId)) {
-      throw new BadRequestException('Edição técnica (tag/tópico/escrita) só se aplica a pontos MQTT');
+      throw new BadRequestException('Edição técnica (tópico/escrita) só se aplica a pontos MQTT');
+    }
+    if (touchesModbusTechnical && device.protocol !== 'modbus') {
+      throw new BadRequestException(
+        'Edição técnica (registrador/tipo/escala) só se aplica a pontos Modbus',
+      );
     }
 
     if (body.unit !== undefined) {
-      data.unit = String(body.unit).trim();
+      const unit = String(body.unit).trim();
+      data.unit = unit;
+      // Modbus: a unidade viaja na config de registradores do gateway.
+      if (device.protocol === 'modbus' && unit !== (point.unit ?? '')) {
+        mustRepublish = true;
+      }
     }
 
     if (body.tag !== undefined) {
+      // A tag é a chave de casamento da telemetria (deviceId + tag) — edição
+      // só nos protocolos com edição técnica completa (MQTT e Modbus).
+      if (device.protocol !== 'mqtt' && device.protocol !== 'modbus') {
+        throw new BadRequestException('Edição de tag só se aplica a pontos MQTT ou Modbus');
+      }
       const tag = String(body.tag).trim();
       if (!tag) {
         throw new BadRequestException('A tag do ponto não pode ficar vazia');
@@ -1682,6 +1720,90 @@ export class DevicesController {
           throw new ConflictException(`Já existe um ponto com a tag "${tag}" neste dispositivo`);
         }
         data.tag = tag;
+        mustRepublish = true;
+      }
+    }
+
+    if (touchesModbusTechnical) {
+      const currentBinding = (point.binding ?? {}) as Record<string, unknown>;
+      const nextBinding: Record<string, unknown> = { ...currentBinding };
+
+      if (body.register !== undefined) {
+        const register = Number(body.register);
+        if (!Number.isInteger(register) || register < 0) {
+          throw new BadRequestException('O registrador deve ser um número inteiro não negativo');
+        }
+        if (register !== point.instance) {
+          // Índice único [deviceId, objectType, instance] — para Modbus,
+          // instance = registrador (mesma checagem do cadastro).
+          const duplicate = await this.prisma.devicePoint.findFirst({
+            where: { deviceId: id, objectType: 'modbus', instance: register, NOT: { id: pointId } },
+            select: { id: true },
+          });
+          if (duplicate) {
+            throw new ConflictException(
+              `Já existe um ponto com o registrador ${register} neste dispositivo`,
+            );
+          }
+          data.instance = register;
+        }
+        nextBinding.register = register;
+      }
+
+      if (body.registerType !== undefined) {
+        if (!['holding', 'input', 'coil', 'discrete'].includes(body.registerType)) {
+          throw new BadRequestException(
+            'registerType deve ser "holding", "input", "coil" ou "discrete"',
+          );
+        }
+        nextBinding.registerType = body.registerType;
+      }
+
+      if (body.dataType !== undefined) {
+        if (!['int16', 'uint16', 'int32', 'uint32', 'float32', 'boolean'].includes(body.dataType)) {
+          throw new BadRequestException('Tipo de dado Modbus inválido');
+        }
+        nextBinding.dataType = body.dataType;
+      }
+
+      if (body.scale !== undefined) {
+        const scale = Number(body.scale);
+        if (!Number.isFinite(scale) || scale === 0) {
+          throw new BadRequestException('A escala deve ser um número diferente de zero');
+        }
+        nextBinding.scale = scale;
+      }
+
+      if (body.offset !== undefined) {
+        const offset = Number(body.offset);
+        if (!Number.isFinite(offset)) {
+          throw new BadRequestException('O offset deve ser um número');
+        }
+        nextBinding.offset = offset;
+      }
+
+      // Limites esperados (opcionais) — null limpa o valor.
+      for (const key of ['minExpected', 'maxExpected'] as const) {
+        const raw = body[key];
+        if (raw === undefined) continue;
+        if (raw === null) {
+          delete nextBinding[key];
+        } else {
+          const num = Number(raw);
+          if (!Number.isFinite(num)) {
+            throw new BadRequestException(`${key} deve ser um número ou null`);
+          }
+          nextBinding[key] = num;
+        }
+      }
+      const effMin = nextBinding.minExpected as number | undefined;
+      const effMax = nextBinding.maxExpected as number | undefined;
+      if (typeof effMin === 'number' && typeof effMax === 'number' && effMin > effMax) {
+        throw new BadRequestException('O valor mínimo esperado não pode ser maior que o máximo');
+      }
+
+      if (JSON.stringify(nextBinding) !== JSON.stringify(currentBinding)) {
+        data.binding = nextBinding as Prisma.InputJsonValue;
         mustRepublish = true;
       }
     }

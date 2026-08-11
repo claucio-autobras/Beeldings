@@ -2,7 +2,7 @@
 
 import { Fragment, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ArrowLeft, Bell, ChevronDown, ChevronRight, LineChart, Loader2, Network, Plus, Radio, SlidersHorizontal, Trash2, WifiOff } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Bell, ChevronDown, ChevronRight, LineChart, Loader2, Network, Pencil, Plus, Radio, SlidersHorizontal, Trash2, WifiOff } from 'lucide-react';
 import type { DeviceStatus, ModbusDevice, ModbusPoint } from '@/mocks/data/devices.mock';
 import { formatDataType, formatLastCommunication, formatRegisterType } from '../utils/formatters';
 import { useBacnetTelemetry } from '@/hooks/useBacnetTelemetry';
@@ -74,6 +74,7 @@ export default function ModbusDeviceDetail({ device, onBack }: Props) {
   const [renameValue, setRenameValue] = useState('');
   const [savingRename, setSavingRename] = useState(false);
   const [renameError, setRenameError] = useState<string | null>(null);
+  const [editingPoint, setEditingPoint] = useState<ModbusPoint | null>(null);
   const [forcingPointId, setForcingPointId] = useState<string | null>(null);
   const status = statusConfig[device.status] ?? statusConfig.offline;
   const qc = useQueryClient();
@@ -123,6 +124,15 @@ export default function ModbusDeviceDetail({ device, onBack }: Props) {
     } finally {
       setDeletingPointId(null);
     }
+  }
+
+  // Após salvar a edição técnica, atualiza a lista local e invalida caches que
+  // exibem dados do ponto (nome/tag em alarmes/relatórios) — mesmo padrão do MQTT.
+  function handlePointUpdated(updated: ModbusPoint) {
+    setPoints((prev) => prev.map((p) => (p.id === updated.id ? { ...p, ...updated } : p)));
+    setEditingPoint(null);
+    qc.invalidateQueries({ queryKey: ['devices'] });
+    qc.invalidateQueries({ queryKey: ['alarm-events'] });
   }
 
   function startRename(pointId: string, currentName: string) {
@@ -443,6 +453,15 @@ export default function ModbusDeviceDetail({ device, onBack }: Props) {
                       <CriticalStarButton critical={isCritical(p)} size={16} onToggle={() => handleToggleCritical(p.id, isCritical(p))} markHint={pointOpRole(p) !== 'status' ? CRITICAL_MARK_HINT : undefined} onSetStatusRole={pointOpRole(p) !== 'status' && isModbusDigital(p.registerType) ? () => handleSetStatusRole(p.id) : undefined} />
                       <button
                         type="button"
+                        title="Editar ponto"
+                        aria-label="Editar ponto"
+                        onClick={(e) => { e.stopPropagation(); setEditingPoint(p); }}
+                        className="rounded p-1.5 text-muted-foreground hover:bg-violet-50 hover:text-violet-600 transition-colors"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
                         title="Excluir ponto"
                         aria-label="Excluir ponto"
                         onClick={(e) => { e.stopPropagation(); setDeleteError(null); setConfirmingDeleteId(p.id); }}
@@ -610,6 +629,15 @@ export default function ModbusDeviceDetail({ device, onBack }: Props) {
                       <CriticalStarButton critical={isCritical(p)} size={16} className="!p-1" onToggle={() => handleToggleCritical(p.id, isCritical(p))} markHint={pointOpRole(p) !== 'status' ? CRITICAL_MARK_HINT : undefined} onSetStatusRole={pointOpRole(p) !== 'status' && isModbusDigital(p.registerType) ? () => handleSetStatusRole(p.id) : undefined} />
                       <button
                         type="button"
+                        title="Editar ponto"
+                        aria-label="Editar ponto"
+                        onClick={(e) => { e.stopPropagation(); setEditingPoint(p); }}
+                        className="rounded p-1 text-muted-foreground hover:bg-violet-50 hover:text-violet-600 transition-colors"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
                         title="Excluir ponto"
                         aria-label="Excluir ponto"
                         onClick={(e) => { e.stopPropagation(); setDeleteError(null); setConfirmingDeleteId(p.id); }}
@@ -695,6 +723,20 @@ export default function ModbusDeviceDetail({ device, onBack }: Props) {
         onClose={() => setAddModalOpen(false)}
         onAdded={(updated) => setPoints(updated.points)}
       />
+
+      {/* Edição técnica do ponto — mesma folha do cadastro, pré-preenchida.
+          `key` remonta o modal a cada ponto para os useState iniciarem certos. */}
+      {editingPoint && (
+        <AddModbusPointModal
+          key={editingPoint.id}
+          deviceId={device.id}
+          open
+          onClose={() => setEditingPoint(null)}
+          onAdded={(updated) => setPoints(updated.points)}
+          point={editingPoint}
+          onUpdated={handlePointUpdated}
+        />
+      )}
     </div>
   );
 }

@@ -243,6 +243,35 @@ export async function addModbusPoint(
 }
 
 /**
+ * Atualiza a configuração técnica de um ponto Modbus (tag, nome, registrador,
+ * tipo de registro, tipo de dado, escala, offset, unidade e limites esperados).
+ * O backend valida (registrador inteiro único, escala não nula), atualiza o
+ * MESMO registro (o id preserva trends/alarmes/favoritos) e republica a config
+ * retida do device para o gateway passar a ler o novo registrador sem reinício.
+ */
+export async function updateModbusPoint(
+  deviceId: string,
+  pointId: string,
+  data: {
+    tag: string;
+    objectName: string;
+    register: number;
+    registerType: string;
+    dataType: string;
+    scale: number;
+    offset: number;
+    unit: string;
+    minExpected: number | null;
+    maxExpected: number | null;
+  },
+): Promise<{ id: string; tag: string; objectName: string }> {
+  return apiPatch<{ id: string; tag: string; objectName: string }>(
+    `/devices/${deviceId}/points/${pointId}`,
+    data,
+  );
+}
+
+/**
  * Exclui um único ponto Modbus do dispositivo. O backend remove trends/regras
  * de alarme associados em cascata e republica a config de polling ao gateway.
  */
