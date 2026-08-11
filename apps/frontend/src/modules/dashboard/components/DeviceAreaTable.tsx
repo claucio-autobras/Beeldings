@@ -50,7 +50,7 @@ export function DeviceAreaTable({ devices, activeAlarms, isLoading }: DeviceArea
       <div className="flex items-center justify-between gap-2 p-4 pb-2">
         <div>
           <h2 className="text-sm font-medium text-foreground">{t('Status dos Dispositivos')}</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">{t('Distribuição por área em tempo real')}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{t('Distribuição por Site em tempo real')}</p>
         </div>
         <Link
           href="/devices"
@@ -76,7 +76,7 @@ export function DeviceAreaTable({ devices, activeAlarms, isLoading }: DeviceArea
           <table className="w-full text-left text-sm">
             <thead className="border-y border-border bg-muted/40 text-xs uppercase text-muted-foreground">
               <tr>
-                <th className="px-4 py-2.5 font-medium">{t('Área')}</th>
+                <th className="px-4 py-2.5 font-medium">{t('Site')}</th>
                 <th className="w-[220px] px-4 py-2.5 font-medium">{t('Distribuição')}</th>
                 <th className="px-4 py-2.5 text-center font-medium">{t('Online')}</th>
                 <th className="px-4 py-2.5 text-center font-medium">{t('Offline')}</th>
