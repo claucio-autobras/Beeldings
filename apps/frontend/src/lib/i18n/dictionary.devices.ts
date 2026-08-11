@@ -4,14 +4,25 @@ export const DICT_DEVICES: Record<string, string> = {
   'Papel operacional': 'Operational role',
   'Nenhum': 'None',
   'Modo': 'Mode',
-  'Pontos com papel "Status" aparecem como "ativos agora" no card Ativos Críticos quando o valor está ativo e o dispositivo online.':
-    'Points with the "Status" role show as "active now" on the Critical Assets card when the value is active and the device is online.',
+  'Falha': 'Fault',
+  'Use "Status" para o ponto que diz se o equipamento está ligado/desligado e "Falha" para o ponto que indica defeito (ex.: "Falha Bomba 1"). É isso que define como o item aparece no card Ativos Críticos.':
+    'Use "Status" for the point that says whether the equipment is on/off and "Fault" for the point that signals a defect (e.g. "Pump 1 Fault"). This defines how the item shows on the Critical Assets card.',
+  'Sem papel definido — no card Ativos Críticos o item aparece só com o estado de comunicação.':
+    'No role set — on the Critical Assets card the item shows only its communication state.',
+  'Informa se o equipamento está ligado ou desligado — o card Ativos Críticos mostra "Ligado há X" ou "Desligado".':
+    'Tells whether the equipment is on or off — the Critical Assets card shows "Running for X" or "Off".',
+  'Informa se o equipamento está em defeito — valor ativo mostra o item como "Em falha há X" no card, mesmo sem regra de alarme.':
+    'Tells whether the equipment has a defect — an active value shows the item as "In fault for X" on the card, even without an alarm rule.',
+  'Modo de operação (ex.: automático/manual) — usado pela IA para análise, não afeta o card.':
+    'Operating mode (e.g. auto/manual) — used by the AI for analysis, does not affect the card.',
+  'Valor de ajuste desejado — usado pela IA para análise, não afeta o card.':
+    'Desired setpoint value — used by the AI for analysis, does not affect the card.',
   'Não foi possível salvar o papel operacional. Tente novamente.':
     'Could not save the operational role. Please try again.',
 
   // ── Dica junto à estrela de crítico ──
-  'Sem papel "Status", este ponto só aparece no card Ativos Críticos quando estiver em alarme. Defina o papel operacional no painel do ponto.':
-    'Without the "Status" role, this point only appears on the Critical Assets card while in alarm. Set the operational role in the point panel.',
+  'Este ponto sempre aparece no card Ativos Críticos. Defina o papel "Status" (ligado/desligado) ou "Falha" (defeito) no painel do ponto para o card mostrar o estado certo.':
+    'This point always appears on the Critical Assets card. Set the "Status" (on/off) or "Fault" (defect) role in the point panel so the card shows the right state.',
   'Entendi': 'Got it',
   'Remover dos ativos críticos': 'Remove from critical assets',
   'Marcar como ativo crítico': 'Mark as critical asset',

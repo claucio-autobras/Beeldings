@@ -1650,11 +1650,12 @@ export class DevicesController {
       data.objectName = objectName;
     }
 
-    // Papel operacional (contexto p/ IA): status | mode | setpoint | null (limpa).
+    // Papel operacional (card Ativos Críticos + contexto p/ IA):
+    // status | fault | mode | setpoint | null (limpa).
     if (body.opRole !== undefined) {
       const role = body.opRole === null || body.opRole === '' ? null : String(body.opRole);
-      if (role !== null && !['status', 'mode', 'setpoint'].includes(role)) {
-        throw new BadRequestException('opRole deve ser "status", "mode", "setpoint" ou null');
+      if (role !== null && !['status', 'fault', 'mode', 'setpoint'].includes(role)) {
+        throw new BadRequestException('opRole deve ser "status", "fault", "mode", "setpoint" ou null');
       }
       data.opRole = role;
     }

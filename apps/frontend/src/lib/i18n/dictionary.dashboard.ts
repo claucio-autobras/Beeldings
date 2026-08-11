@@ -22,12 +22,16 @@ export const DICT_DASHBOARD: Record<string, string> = {
   // ── CriticalAssetsCard ──
   'Ativos Críticos': 'Critical Assets',
   'Equipamentos e pontos sob vigilância': 'Equipment and points under watch',
-  'Nenhum ativo crítico ativo ou em alarme': 'No critical asset active or in alarm',
-  'Itens marcados com estrela aparecem aqui quando estão ligados ou em alarme':
-    'Starred items appear here when they are running or in alarm',
+  'Nenhum ativo crítico marcado': 'No critical asset marked',
+  'Marque equipamentos ou pontos com a estrela em Dispositivos para acompanhá-los aqui':
+    'Star equipment or points in Devices to track them here',
   'Em falha': 'In fault',
   'há': 'for',
   'Ativo': 'Active',
+  'Ligado': 'Running',
+  'Desligado': 'Off',
+  'Sem resposta': 'No response',
+  'Monitorando': 'Monitoring',
 
   // ── FirstActionModal (primeira ação sugerida por IA) ──
   'Primeira ação sugerida': 'Suggested first action',

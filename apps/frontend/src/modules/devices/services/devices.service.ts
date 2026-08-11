@@ -312,12 +312,13 @@ export async function setDeviceCritical(deviceId: string, critical: boolean): Pr
 }
 
 /** Papel operacional de um ponto (contexto p/ card Ativos Críticos e IA). */
-export type PointOpRole = 'status' | 'mode' | 'setpoint' | null;
+export type PointOpRole = 'status' | 'fault' | 'mode' | 'setpoint' | null;
 
 /**
- * Define o papel operacional do ponto (Status/Modo/Setpoint/nenhum).
- * Pontos com papel 'status' aparecem como "ativos agora" no card Ativos
- * Críticos quando o valor está ativo (≥0,5) e o dispositivo está online.
+ * Define o papel operacional do ponto (Status/Falha/Modo/Setpoint/nenhum).
+ * 'status' = ligado/desligado no card Ativos Críticos (com tempo de
+ * funcionamento); 'fault' = valor ativo (≥0,5) mostra o item como "Em falha"
+ * mesmo sem regra de alarme; 'mode'/'setpoint' = contexto para a IA.
  */
 export async function setPointOpRole(
   deviceId: string,

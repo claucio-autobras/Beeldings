@@ -26,7 +26,7 @@ export interface BACnetPoint {
   value: number | string | boolean;
   unit: string;
   /** Papel operacional (status | mode | setpoint) — usado pelo card Ativos Críticos. */
-  opRole?: 'status' | 'mode' | 'setpoint' | null;
+  opRole?: 'status' | 'fault' | 'mode' | 'setpoint' | null;
   status: PointStatus;
   lastUpdate: string;
 }
@@ -64,7 +64,7 @@ export interface ModbusPoint {
   unit: string;
   value: number | boolean;
   /** Papel operacional (status | mode | setpoint) — usado pelo card Ativos Críticos. */
-  opRole?: 'status' | 'mode' | 'setpoint' | null;
+  opRole?: 'status' | 'fault' | 'mode' | 'setpoint' | null;
   status: PointStatus;
   minExpected?: number;
   maxExpected?: number;
@@ -137,7 +137,7 @@ export interface MqttPoint {
   write?: MqttWriteConfig | null;
   value: number | boolean;
   /** Papel operacional (status | mode | setpoint) — usado pelo card Ativos Críticos. */
-  opRole?: 'status' | 'mode' | 'setpoint' | null;
+  opRole?: 'status' | 'fault' | 'mode' | 'setpoint' | null;
   status: PointStatus;
   lastUpdate: string;
   /** Último valor persistido (seed até a telemetria ao vivo chegar); null = nunca houve leitura. */

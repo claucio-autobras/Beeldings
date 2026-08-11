@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { AlertTriangle, Camera, Cpu, Gauge, ShieldAlert, WifiOff } from 'lucide-react';
+import { AlertTriangle, Camera, Cpu, Gauge, Power, ShieldAlert, WifiOff } from 'lucide-react';
 import { useT } from '@/lib/i18n';
 import { withBasePath } from '@/lib/routes';
 import type { CriticalAsset } from '../services/dashboard.service';
@@ -58,7 +58,7 @@ export function CriticalAssetsCard({ assets, isAdmin, isLoading }: CriticalAsset
   // Navegação contextual (Alarmes/CFTV/SCADA/Dispositivos) — também usada pelo
   // botão do painel de primeira ação.
   const navigate = (a: CriticalAsset) => {
-    if (a.status === 'fault' && a.faultAlarmEventId) {
+    if (a.state === 'fault' && a.faultAlarmEventId) {
       router.push(withBasePath(`/alarms?state=open&highlight=${a.faultAlarmEventId}`));
       return;
     }
@@ -78,7 +78,7 @@ export function CriticalAssetsCard({ assets, isAdmin, isLoading }: CriticalAsset
   // Clique num item em falha abre o painel de primeira ação (a navegação
   // contextual segue disponível dentro dele); demais estados navegam direto.
   const go = (a: CriticalAsset) => {
-    if (a.status === 'fault') {
+    if (a.state === 'fault') {
       setFirstActionAsset(a);
       return;
     }
@@ -106,9 +106,9 @@ export function CriticalAssetsCard({ assets, isAdmin, isLoading }: CriticalAsset
       ) : !assets || assets.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
           <ShieldAlert size={26} strokeWidth={1.5} className="text-muted-foreground/60" />
-          <p className="text-sm font-medium text-foreground">{t('Nenhum ativo crítico ativo ou em alarme')}</p>
+          <p className="text-sm font-medium text-foreground">{t('Nenhum ativo crítico marcado')}</p>
           <p className="text-xs leading-relaxed text-muted-foreground">
-            {t('Itens marcados com estrela aparecem aqui quando estão ligados ou em alarme')}
+            {t('Marque equipamentos ou pontos com a estrela em Dispositivos para acompanhá-los aqui')}
           </p>
         </div>
       ) : (
@@ -116,7 +116,7 @@ export function CriticalAssetsCard({ assets, isAdmin, isLoading }: CriticalAsset
           {assets.map((a) => {
             const Icon = KIND_ICON[a.kind] ?? Cpu;
             const longOffline = a.offlineMs !== null && a.offlineMs >= LONG_OFFLINE_MS;
-            const bad = a.status === 'fault' || longOffline;
+            const bad = a.state === 'fault' || (a.state === 'no_response' && longOffline);
             return (
               <li key={`${a.kind}:${a.id}`}>
                 <button
@@ -127,11 +127,13 @@ export function CriticalAssetsCard({ assets, isAdmin, isLoading }: CriticalAsset
                 >
                   <span
                     className={`rounded-md border p-1.5 ${
-                      a.status === 'fault'
+                      a.state === 'fault'
                         ? 'border-red-200 bg-red-50 text-red-600 dark:border-red-900 dark:bg-red-950/60 dark:text-red-400'
-                        : a.status === 'offline'
+                        : a.state === 'no_response'
                           ? 'border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400'
-                          : 'border-emerald-200 bg-emerald-50 text-emerald-600 dark:border-emerald-900 dark:bg-emerald-950/60 dark:text-emerald-400'
+                          : a.state === 'running'
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-600 dark:border-emerald-900 dark:bg-emerald-950/60 dark:text-emerald-400'
+                            : 'border-border bg-muted/40 text-muted-foreground'
                     }`}
                   >
                     <Icon size={14} />
@@ -150,7 +152,7 @@ export function CriticalAssetsCard({ assets, isAdmin, isLoading }: CriticalAsset
                   </span>
 
                   <span className="shrink-0 text-right">
-                    {a.status === 'fault' ? (
+                    {a.state === 'fault' ? (
                       <>
                         <span className={`inline-flex items-center gap-1 text-[11px] font-semibold ${
                           a.faultSeverity === 'HIGH' ? 'text-red-600 dark:text-red-400' : 'text-orange-600 dark:text-orange-400'
@@ -159,16 +161,16 @@ export function CriticalAssetsCard({ assets, isAdmin, isLoading }: CriticalAsset
                           {t('Em falha')}
                         </span>
                         <span className="block text-[11px] text-muted-foreground">
-                          {a.faultMs !== null ? `${t('há')} ${humanizeMs(a.faultMs, t)}` : ''}
+                          {a.faultMs !== null ? `${t('há')} ${humanizeMs(a.faultMs, t)}` : t('Sem dados')}
                         </span>
                       </>
-                    ) : a.status === 'offline' ? (
+                    ) : a.state === 'no_response' ? (
                       <>
                         <span className={`inline-flex items-center gap-1 text-[11px] font-semibold ${
                           longOffline ? 'text-red-600 dark:text-red-400' : 'text-slate-500 dark:text-slate-400'
                         }`}>
                           <WifiOff size={11} />
-                          {t('Offline')}
+                          {t('Sem resposta')}
                         </span>
                         <span className="block text-[11px] text-muted-foreground">
                           {a.offlineMs !== null
@@ -176,15 +178,34 @@ export function CriticalAssetsCard({ assets, isAdmin, isLoading }: CriticalAsset
                             : t('Sem dados')}
                         </span>
                       </>
-                    ) : (
+                    ) : a.state === 'running' ? (
                       <>
                         <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
-                          {t('Ativo')}
+                          {t('Ligado')}
                         </span>
                         <span className="block text-[11px] text-muted-foreground">
                           {a.activeMs !== null
                             ? `${t('há')} ${humanizeMs(a.activeMs, t)}`
                             : t('Sem dados')}
+                        </span>
+                      </>
+                    ) : a.state === 'stopped' ? (
+                      <>
+                        <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                          <Power size={11} />
+                          {t('Desligado')}
+                        </span>
+                        <span className="block text-[11px] text-muted-foreground">
+                          {a.stoppedMs !== null ? `${t('há')} ${humanizeMs(a.stoppedMs, t)}` : ''}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="text-[11px] font-semibold text-muted-foreground">
+                          {t('Monitorando')}
+                        </span>
+                        <span className="block text-[11px] text-muted-foreground">
+                          {t('Sem dados')}
                         </span>
                       </>
                     )}

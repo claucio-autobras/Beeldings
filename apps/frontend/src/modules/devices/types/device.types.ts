@@ -28,7 +28,7 @@ export interface BACnetPoint {
   /** Ponto crítico (card Ativos Críticos do dashboard). */
   critical?: boolean;
   /** Papel operacional (status | mode | setpoint) — usado pelo card Ativos Críticos. */
-  opRole?: 'status' | 'mode' | 'setpoint' | null;
+  opRole?: 'status' | 'fault' | 'mode' | 'setpoint' | null;
   status: PointStatus;
   lastUpdate: string;
 }
@@ -68,7 +68,7 @@ export interface ModbusPoint {
   critical?: boolean;
   value: number | boolean;
   /** Papel operacional (status | mode | setpoint) — usado pelo card Ativos Críticos. */
-  opRole?: 'status' | 'mode' | 'setpoint' | null;
+  opRole?: 'status' | 'fault' | 'mode' | 'setpoint' | null;
   status: PointStatus;
   minExpected?: number;
   maxExpected?: number;
@@ -141,7 +141,7 @@ export interface MqttPoint {
   write?: MqttWriteConfig | null;
   value: number | boolean;
   /** Papel operacional (status | mode | setpoint) — usado pelo card Ativos Críticos. */
-  opRole?: 'status' | 'mode' | 'setpoint' | null;
+  opRole?: 'status' | 'fault' | 'mode' | 'setpoint' | null;
   status: PointStatus;
   lastUpdate: string;
 }

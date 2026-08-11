@@ -13,6 +13,8 @@ description: Regras do card Ativos Críticos do dashboard e do endpoint /dashboa
 - **Why:** payload autodescritivo (ms + ISO) é a fonte para a IA de manutenção preditiva (task futura) — mudanças de shape quebram consumidores.
 - **How to apply:** novos tipos de ativo crítico entram no CriticalAssetsService mantendo o shape e as regras null-sem-dados.
 - Toggle otimista no frontend: setQueriesData + invalidate ['devices'] (refetch em voo pode sobrescrever cache com estado antigo).
-- Card mostra SÓ itens em falha OU ativos agora (activeNow=true: lastValue do ponto status ≥0.5 E device online — valor stale de device offline não conta); estrelados parados/offline sem alarme ficam fora.
-- activeSince = última transição off→on na trend do ponto status (última amostra <0.5, primeira ≥0.5 depois); sem trend/amostras = null (item aparece com "Sem dados", nunca 0 fake). Campos aditivos activeNow/activeSince/activeMs no payload.
-- Câmeras não têm statusPoint no builder → só aparecem quando em alarme.
+- Card mostra TODO estrelado, com `state` consolidado (aditivo): fault > no_response > running > stopped > unknown — nada some mais; ordenação por esse rank.
+- Papel opRole='fault': valor ativo (≥0.5) COM device online = "Em falha" mesmo sem regra de alarme (faultSource='fault_point', faultRuleName = nome do ponto, faultAlarmEventId null); duração pela última transição off→on da trend do ponto (mesma lógica do activeSince); valor stale de device offline NÃO confirma falha (vira no_response).
+- activeSince = última transição off→on na trend do ponto status; stoppedSince = última on→off; sem trend/amostras = null (item aparece com "Sem dados", nunca 0 fake). Campos aditivos: state/pointRole/faultSource/stoppedSince/stoppedMs.
+- Câmeras não têm statusPoint no builder → aparecem como fault/no_response/unknown.
+- opRole aceito no PATCH de ponto: status | fault | mode | setpoint | null (validação no devices.controller); dropdown do PointConfigPanel tem descrição curta por papel.

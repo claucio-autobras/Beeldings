@@ -55,7 +55,7 @@ const alarmSeverityColor: Record<string, string> = {
 
 // Dica mostrada ao marcar como crítico um ponto sem papel "Status" (traduzida no botão).
 const CRITICAL_MARK_HINT =
-  'Sem papel "Status", este ponto só aparece no card Ativos Críticos quando estiver em alarme. Defina o papel operacional no painel do ponto.';
+  'Este ponto sempre aparece no card Ativos Críticos. Defina o papel "Status" (ligado/desligado) ou "Falha" (defeito) no painel do ponto para o card mostrar o estado certo.';
 
 interface Props {
   device: ModbusDevice;

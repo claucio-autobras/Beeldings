@@ -32,11 +32,17 @@ interface Props {
   onOpRoleChanged?: (pointId: string, opRole: PointOpRole) => void;
 }
 
-const OP_ROLE_OPTIONS: { value: '' | 'status' | 'mode' | 'setpoint'; label: string }[] = [
-  { value: '', label: 'Nenhum' },
-  { value: 'status', label: 'Status' },
-  { value: 'mode', label: 'Modo' },
-  { value: 'setpoint', label: 'Setpoint' },
+const OP_ROLE_OPTIONS: {
+  value: '' | 'status' | 'fault' | 'mode' | 'setpoint';
+  label: string;
+  /** Explicação curta em linguagem simples, mostrada abaixo do seletor. */
+  description: string;
+}[] = [
+  { value: '', label: 'Nenhum', description: 'Sem papel definido — no card Ativos Críticos o item aparece só com o estado de comunicação.' },
+  { value: 'status', label: 'Status', description: 'Informa se o equipamento está ligado ou desligado — o card Ativos Críticos mostra "Ligado há X" ou "Desligado".' },
+  { value: 'fault', label: 'Falha', description: 'Informa se o equipamento está em defeito — valor ativo mostra o item como "Em falha há X" no card, mesmo sem regra de alarme.' },
+  { value: 'mode', label: 'Modo', description: 'Modo de operação (ex.: automático/manual) — usado pela IA para análise, não afeta o card.' },
+  { value: 'setpoint', label: 'Setpoint', description: 'Valor de ajuste desejado — usado pela IA para análise, não afeta o card.' },
 ];
 
 const INTERVAL_LABEL: Record<number, string> = { 60: '1 min', 300: '5 min', 900: '15 min', 1800: '30 min', 3600: '1 h' };
@@ -74,7 +80,7 @@ export function PointConfigPanel({
   const [roleError, setRoleError] = useState(false);
 
   async function handleRoleChange(nextRaw: string) {
-    const next: PointOpRole = nextRaw === '' ? null : (nextRaw as 'status' | 'mode' | 'setpoint');
+    const next: PointOpRole = nextRaw === '' ? null : (nextRaw as NonNullable<PointOpRole>);
     const previous = role;
     setRole(next);
     setRoleError(false);
@@ -226,7 +232,7 @@ export function PointConfigPanel({
             )}
           </div>
           <p className="text-xs text-muted-foreground">
-            {t('Pontos com papel "Status" aparecem como "ativos agora" no card Ativos Críticos quando o valor está ativo e o dispositivo online.')}
+            {t('Use "Status" para o ponto que diz se o equipamento está ligado/desligado e "Falha" para o ponto que indica defeito (ex.: "Falha Bomba 1"). É isso que define como o item aparece no card Ativos Críticos.')}
           </p>
           <div className="mt-2 flex items-center gap-2">
             <select
@@ -243,6 +249,9 @@ export function PointConfigPanel({
             </select>
             {savingRole && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
           </div>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
+            {t(OP_ROLE_OPTIONS.find((o) => o.value === (role ?? ''))?.description ?? '')}
+          </p>
           {roleError && (
             <p className="mt-1.5 text-[11px] font-medium text-red-700">
               {t('Não foi possível salvar o papel operacional. Tente novamente.')}

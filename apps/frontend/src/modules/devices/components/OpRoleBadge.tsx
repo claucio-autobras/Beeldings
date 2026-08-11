@@ -3,6 +3,7 @@ import type { PointOpRole } from '../services/devices.service';
 
 const OP_ROLE_LABEL: Record<NonNullable<PointOpRole>, string> = {
   status:   'Status',
+  fault:    'Falha',
   mode:     'Modo',
   setpoint: 'Setpoint',
 };

@@ -23,8 +23,26 @@ export interface CriticalAssetDto {
   tenantName: string;
   siteId: string | null;
   siteName: string | null;
-  /** Estado atual: 'fault' quando há alarme ativo; senão online/offline. */
+  /** Estado atual: 'fault' quando há falha ativa; senão online/offline. */
   status: 'online' | 'offline' | 'fault';
+  /**
+   * Estado operacional consolidado (aditivo — o card renderiza a partir dele):
+   * 'fault' = alarme ativo OU ponto com papel 'fault' com valor ativo;
+   * 'no_response' = equipamento/gateway sem comunicação;
+   * 'running' / 'stopped' = ponto com papel 'status' ligado/desligado;
+   * 'unknown' = online mas sem ponto de status com valor (sem dados).
+   */
+  state: 'fault' | 'no_response' | 'running' | 'stopped' | 'unknown';
+  /** Papel operacional do ponto (kind='point'): status|fault|mode|setpoint|null. */
+  pointRole: string | null;
+  /** Origem da falha exibida: regra de alarme ou ponto com papel 'fault'. */
+  faultSource: 'alarm' | 'fault_point' | null;
+  /**
+   * Início do período "desligado" vigente (ISO, via trend do ponto de status)
+   * e duração. null = sem trend/amostras ("sem dados", nunca 0 fake).
+   */
+  stoppedSince: string | null;
+  stoppedMs: number | null;
   /**
    * Tempo em funcionamento (ms) dentro da janela do período, derivado do
    * ponto com opRole='status' com trend. null = sem dados (nunca 0 fake).
@@ -65,11 +83,13 @@ export interface CriticalAssetsData {
 }
 
 /**
- * Ativos críticos do dashboard: para cada device/ponto marcado como crítico,
- * computa estado atual, horas em funcionamento no período (trend do ponto
- * opRole='status'), duração de falha contínua (alarm_events ativos) e tempo
- * offline (status_events). Payload autodescritivo (durações em ms + timestamps
- * ISO) — mesma fonte consumida pela IA/assistente para manutenção preditiva.
+ * Ativos críticos do dashboard: TODO device/ponto marcado como crítico aparece,
+ * com estado consolidado (falha por alarme ativo OU ponto opRole='fault' com
+ * valor ativo; sem resposta quando offline; ligado/desligado pelo ponto
+ * opRole='status'), horas em funcionamento no período (trend do ponto de
+ * status), duração de falha contínua e tempo offline (status_events). Payload
+ * autodescritivo (durações em ms + timestamps ISO) e ADITIVO — mesma fonte
+ * consumida pela IA/assistente para manutenção preditiva.
  */
 @Injectable()
 export class CriticalAssetsService {
@@ -215,6 +235,14 @@ export class CriticalAssetsService {
     type StatusPoint =
       | { lastValue: number | null; trends: { id: string; enabled: boolean }[] }
       | undefined;
+    type FaultPoint =
+      | {
+          tag: string;
+          objectName: string;
+          lastValue: number | null;
+          trends: { id: string; enabled: boolean }[];
+        }
+      | undefined;
 
     const assets: CriticalAssetDto[] = [];
 
@@ -223,6 +251,11 @@ export class CriticalAssetsService {
       const liveStatus = this.resolveDeviceStatus(d.id, isCamera, d.points);
       const fault = faultOf(alarmsByDevice.get(d.id));
       const statusPoint: StatusPoint = d.points.find((p) => p.opRole === 'status');
+      // Ponto de falha ativo (papel 'fault' com valor >= 0.5): sinaliza "em
+      // falha" mesmo sem regra de alarme cadastrada.
+      const faultPoint: FaultPoint = d.points.find(
+        (p) => p.opRole === 'fault' && p.lastValue !== null && p.lastValue >= 0.5,
+      );
       assets.push(await this.buildAsset({
         id: d.id,
         kind: isCamera ? 'camera' : 'device',
@@ -237,6 +270,8 @@ export class CriticalAssetsService {
         liveStatus,
         fault,
         statusPoint: isCamera ? undefined : statusPoint,
+        faultPoint,
+        pointRole: null,
         from, to, now,
         statusEvent: statusEventByDevice.get(d.id),
         lastSeen: lastSeenMap.get(d.id) ?? null,
@@ -265,6 +300,9 @@ export class CriticalAssetsService {
         liveStatus,
         fault,
         statusPoint: p.opRole === 'status' ? p : undefined,
+        faultPoint:
+          p.opRole === 'fault' && p.lastValue !== null && p.lastValue >= 0.5 ? p : undefined,
+        pointRole: p.opRole ?? null,
         from, to, now,
         statusEvent: statusEventByDevice.get(d.id),
         lastSeen: lastSeenMap.get(d.id) ?? null,
@@ -272,24 +310,25 @@ export class CriticalAssetsService {
       }));
     }
 
-    // Card foca o que importa ao operador: só itens em alarme OU ativos agora
-    // (ponto de status ligado). Estrelados parados/offline sem alarme ficam fora.
-    const visible = assets.filter((a) => a.status === 'fault' || a.activeNow === true);
-
-    // Pior situação primeiro: falha (por severidade) > offline > online.
+    // Todo item estrelado aparece no card — quem precisa de atenção primeiro:
+    // falha (por severidade) > sem resposta > ligados/desligados > sem dados.
     const rank = (a: CriticalAssetDto) =>
-      a.status === 'fault'
+      a.state === 'fault'
         ? 100 + (SEVERITY_RANK[a.faultSeverity ?? 'LOW'] ?? 1)
-        : a.status === 'offline'
+        : a.state === 'no_response'
           ? 50
-          : 0;
-    visible.sort((a, b) => rank(b) - rank(a) || a.name.localeCompare(b.name));
+          : a.state === 'running'
+            ? 10
+            : a.state === 'stopped'
+              ? 8
+              : 0;
+    assets.sort((a, b) => rank(b) - rank(a) || a.name.localeCompare(b.name));
 
     return {
       from: from.toISOString(),
       to: to.toISOString(),
       generatedAt: now.toISOString(),
-      assets: visible,
+      assets,
     };
   }
 
@@ -325,6 +364,15 @@ export class CriticalAssetsService {
     liveStatus: 'online' | 'offline';
     fault: { since: Date; dominant: { id: string; severity: string; ruleName: string } } | null;
     statusPoint?: { lastValue: number | null; trends: { id: string; enabled: boolean }[] };
+    /** Ponto com papel 'fault' JÁ ativo (valor >= 0.5), quando houver. */
+    faultPoint?: {
+      tag: string;
+      objectName: string;
+      lastValue: number | null;
+      trends: { id: string; enabled: boolean }[];
+    };
+    /** Papel operacional do próprio ponto (kind='point'); null nos devices. */
+    pointRole: string | null;
     from: Date;
     to: Date;
     now: Date;
@@ -332,7 +380,7 @@ export class CriticalAssetsService {
     lastSeen: string | null;
     scadaScreenId: string | null;
   }): Promise<CriticalAssetDto> {
-    const { fault, liveStatus, statusEvent, now } = args;
+    const { fault, faultPoint, liveStatus, statusEvent, now } = args;
 
     // Offline contínuo: só quando o estado atual é offline E a última transição
     // registrada foi para offline; sem histórico = null ("sem dados").
@@ -362,6 +410,44 @@ export class CriticalAssetsService {
       }
     }
 
+    // Desligado: início do período "desligado" vigente (última transição
+    // on→off na trend). Sem trend/amostras = null ("sem dados", nunca 0 fake).
+    let stoppedSince: string | null = null;
+    let stoppedMs: number | null = null;
+    if (activeNow === false) {
+      const since = await this.computeStoppedSince(sp, now);
+      if (since) {
+        stoppedSince = since.toISOString();
+        stoppedMs = Math.max(0, now.getTime() - since.getTime());
+      }
+    }
+
+    // Falha por ponto com papel 'fault' ativo — vale mesmo sem regra de alarme,
+    // mas só com o device vivo (valor stale de device offline não confirma
+    // falha). Duração pela última transição off→on na trend do ponto (mesma
+    // lógica do activeSince); sem trend = null ("sem dados", nunca 0 fake).
+    const pointFaultActive = !fault && liveStatus === 'online' && !!faultPoint;
+    let pointFaultSince: Date | null = null;
+    if (pointFaultActive) {
+      pointFaultSince = await this.computeActiveSince(faultPoint, now);
+    }
+
+    // Estado consolidado: falha > sem resposta > ligado/desligado > sem dados.
+    const state: CriticalAssetDto['state'] = fault
+      ? 'fault'
+      : liveStatus === 'offline'
+        ? 'no_response'
+        : pointFaultActive
+          ? 'fault'
+          : activeNow === true
+            ? 'running'
+            : activeNow === false
+              ? 'stopped'
+              : 'unknown';
+
+    const faultSource: CriticalAssetDto['faultSource'] =
+      fault ? 'alarm' : state === 'fault' ? 'fault_point' : null;
+
     return {
       id: args.id,
       kind: args.kind,
@@ -373,16 +459,33 @@ export class CriticalAssetsService {
       tenantName: args.tenantName,
       siteId: args.siteId,
       siteName: args.siteName,
-      status: fault ? 'fault' : liveStatus,
+      status: state === 'fault' ? 'fault' : liveStatus,
+      state,
+      pointRole: args.pointRole,
+      faultSource,
       runtimeMs,
       activeNow,
       activeSince,
       activeMs,
-      faultSince: fault ? fault.since.toISOString() : null,
-      faultMs: fault ? Math.max(0, now.getTime() - fault.since.getTime()) : null,
+      stoppedSince,
+      stoppedMs,
+      faultSince: fault
+        ? fault.since.toISOString()
+        : pointFaultSince
+          ? pointFaultSince.toISOString()
+          : null,
+      faultMs: fault
+        ? Math.max(0, now.getTime() - fault.since.getTime())
+        : pointFaultSince
+          ? Math.max(0, now.getTime() - pointFaultSince.getTime())
+          : null,
       faultSeverity: fault ? (fault.dominant.severity as 'LOW' | 'MEDIUM' | 'HIGH') : null,
       faultAlarmEventId: fault ? fault.dominant.id : null,
-      faultRuleName: fault ? fault.dominant.ruleName : null,
+      faultRuleName: fault
+        ? fault.dominant.ruleName
+        : faultSource === 'fault_point' && faultPoint
+          ? faultPoint.objectName || faultPoint.tag
+          : null,
       offlineSince,
       offlineMs,
       lastSeen: args.lastSeen,
@@ -418,6 +521,36 @@ export class CriticalAssetsService {
       select: { timestamp: true },
     });
     return firstOnAfter?.timestamp ?? null;
+  }
+
+  /**
+   * Início do período "desligado" contínuo vigente: última transição on→off na
+   * trend do ponto de status. Busca a amostra mais recente com valor >= 0.5 e
+   * usa a primeira amostra < 0.5 depois dela; sem amostra "ligado", a primeira
+   * amostra desligada conhecida. Sem trend/amostras = null (nunca 0 fake).
+   */
+  private async computeStoppedSince(
+    statusPoint: { trends: { id: string; enabled: boolean }[] } | undefined,
+    now: Date,
+  ): Promise<Date | null> {
+    const trendIds = statusPoint?.trends.map((t) => t.id) ?? [];
+    if (trendIds.length === 0) return null;
+
+    const lastOn = await this.prisma.trendRecord.findFirst({
+      where: { trendId: { in: trendIds }, value: { gte: 0.5 }, timestamp: { lte: now } },
+      orderBy: { timestamp: 'desc' },
+      select: { timestamp: true },
+    });
+    const firstOffAfter = await this.prisma.trendRecord.findFirst({
+      where: {
+        trendId: { in: trendIds },
+        value: { lt: 0.5 },
+        timestamp: { ...(lastOn ? { gt: lastOn.timestamp } : {}), lte: now },
+      },
+      orderBy: { timestamp: 'asc' },
+      select: { timestamp: true },
+    });
+    return firstOffAfter?.timestamp ?? null;
   }
 
   /**

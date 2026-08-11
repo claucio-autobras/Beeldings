@@ -219,8 +219,21 @@ export interface CriticalAsset {
   tenantName: string;
   siteId: string | null;
   siteName: string | null;
-  /** 'fault' = alarme ativo; senão online/offline. */
+  /** 'fault' = falha ativa; senão online/offline. */
   status: 'online' | 'offline' | 'fault';
+  /**
+   * Estado operacional consolidado: falha (alarme ativo ou ponto com papel
+   * "Falha" ativo), sem resposta (offline), ligado/desligado (ponto "Status")
+   * ou sem dados.
+   */
+  state: 'fault' | 'no_response' | 'running' | 'stopped' | 'unknown';
+  /** Papel operacional do ponto (kind='point'); null nos devices. */
+  pointRole: string | null;
+  /** Origem da falha exibida: regra de alarme ou ponto com papel "Falha". */
+  faultSource: 'alarm' | 'fault_point' | null;
+  /** Início do período desligado vigente (ISO) e duração; null = sem dados. */
+  stoppedSince: string | null;
+  stoppedMs: number | null;
   /** Tempo em funcionamento (ms) na janela do período; null = sem dados. */
   runtimeMs: number | null;
   /** Ativo agora (ponto de status ligado com device online); null = sem dados. */
