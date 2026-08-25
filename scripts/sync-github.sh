@@ -37,11 +37,6 @@ usage() { echo "Usage: scripts/sync-github.sh {push|push-snapshot|pull|status|in
 CMD="${1:-}"
 [ -n "$CMD" ] || usage
 
-if [ -z "${GITHUB_TOKEN:-}" ]; then
-  err "GITHUB_TOKEN is not set in the environment. Aborting."
-  exit 1
-fi
-
 ROOT_DIR="$(git rev-parse --show-toplevel)"
 cd "$ROOT_DIR"
 STATE_FILE="$ROOT_DIR/.git/bluebee-github-sync"
@@ -68,7 +63,25 @@ save_state() { # $1=local sha  $2=remote sha
   printf 'LOCAL_SHA=%s\nREMOTE_SHA=%s\n' "$1" "$2" > "$STATE_FILE"
 }
 
+require_local_main() {
+  local branch
+  branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+  if [ "$branch" != "main" ]; then
+    err "Local checkout is ${branch:-detached HEAD}, not main. Refusing to change GitHub sync state or remote main."
+    exit 1
+  fi
+}
+
+require_github_token() {
+  if [ -z "${GITHUB_TOKEN:-}" ]; then
+    err "GITHUB_TOKEN is not set in the environment. Aborting."
+    exit 1
+  fi
+}
+
 with_sync_lock() {
+  require_local_main
+  require_github_token
   exec 9>"$LOCK_FILE"
   if flock -n 9; then
     "$@"
@@ -328,7 +341,7 @@ case "$CMD" in
   push)      with_sync_lock cmd_push ;;
   push-snapshot) with_sync_lock cmd_push_snapshot ;;
   pull)      with_sync_lock cmd_pull ;;
-  status)    cmd_status ;;
+  status)    require_local_main; require_github_token; cmd_status ;;
   init-base) with_sync_lock cmd_init_base ;;
   *)         usage ;;
 esac

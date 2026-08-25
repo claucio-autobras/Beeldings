@@ -31,6 +31,11 @@ criar commits vazios. Se o GitHub avançar pela IDE, ele não faz pull nem force
 registra a divergência para resolução manual.
 O workflow é iniciado junto com o projeto e verifica a `main` a cada 60 segundos por
 padrão; esse intervalo pode ser ajustado com `GITHUB_SYNC_INTERVAL_SECONDS`.
+Como proteção adicional, os comandos de sincronização recusam qualquer checkout que
+não seja o branch local `main`, inclusive um estado detached. Assim, iniciar a
+workspace durante um trabalho em branch não publica esse trabalho no `main` remoto.
+Para validar essa proteção sem chamar o GitHub, rode
+`bash scripts/test-github-sync-main-guard.sh`.
 
 ## Fluxo para trabalhar na IDE local
 

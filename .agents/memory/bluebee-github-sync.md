@@ -14,5 +14,6 @@ would risk remote changes made outside the workspace.
 
 **How to apply:** Use the sync script's normal push, filtered snapshot, or pull commands.
 Automatic publishing must use the shared lock, never force-push, and must stop for manual
-resolution when the remote has advanced. Excluded media-only changes can advance the local
-sync point without creating an empty remote commit.
+resolution when the remote has advanced. It must also fail closed unless the checkout is an
+attached local `main`; excluded media-only changes can advance the local sync point without
+creating an empty remote commit.
