@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # sync-github.sh — bidirectional sync between local main and the external
-# GitHub remote (github.com/claucio-autobras/BlueBee-Infra).
+# GitHub remote (github.com/claucio-autobras/Beeldings).
 #
 # The local .git is huge (~3.8 GB; old commits captured build-cache blobs) and
 # rewriting local history is forbidden (Replit checkpoints depend on it), so we
@@ -27,7 +27,7 @@ set -euo pipefail
 # artifacts and backups are excluded from everything published. Runtime assets
 # under apps/frontend/public remain available to a cloned project.
 
-REPO_SLUG="claucio-autobras/BlueBee-Infra"
+REPO_SLUG="claucio-autobras/Beeldings"
 REMOTE_URL="https://github.com/${REPO_SLUG}"
 CRED_HELPER='!f() { echo "username=x-access-token"; echo "password=${GITHUB_TOKEN}"; }; f'
 

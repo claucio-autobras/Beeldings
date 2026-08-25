@@ -43,7 +43,7 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Espelho externo (Claucio) — sincronização bidirecional
 
-- O remoto `github.com/claucio-autobras/BlueBee-Infra` é sincronizado nos DOIS sentidos por `scripts/sync-github.sh` (`push` / `pull` / `status`; precisa de `GITHUB_TOKEN`). O push replica commits locais como commits normais no remoto (sem force depois da base) e aborta se o GitHub tiver commits não trazidos; o pull aplica commits do GitHub como um commit local no main. O histórico completo local (~3,8 GB) nunca é enviado. Guia completo: `docs/github-sync.md`; procedimento canônico: `.agents/memory/bluebee-claucio-snapshot.md`. O post-merge roda `status` e avisa (não bloqueia).
+- O remoto `github.com/claucio-autobras/Beeldings` é sincronizado nos DOIS sentidos por `scripts/sync-github.sh` (`push` / `push-snapshot` / `pull` / `status`; precisa de `GITHUB_TOKEN`). O push replica commits locais como commits normais no remoto (sem force depois da base) e aborta se o GitHub tiver commits não trazidos; `push-snapshot` publica um único snapshot filtrado, sem anexos do chat, vídeos, exports ou saídas geradas; o pull aplica commits do GitHub como um commit local no main. O histórico completo local (~3,8 GB) nunca é enviado. Guia completo: `docs/github-sync.md`; procedimento canônico: `.agents/memory/bluebee-claucio-snapshot.md`. O post-merge roda `status` e avisa (não bloqueia).
 
 ## Pointers
 

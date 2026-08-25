@@ -4,7 +4,7 @@ set -euo pipefail
 # publish-claucio-snapshot.sh
 #
 # Publishes a HISTORYLESS snapshot of the local main HEAD to the external
-# Claucio remote (github.com/claucio-autobras/BlueBee-Infra).
+# Claucio remote (github.com/claucio-autobras/Beeldings).
 #
 # Why a snapshot and not a normal push:
 #   The local .git is ~3.6 GB (old commits captured Next.js build cache blobs),
@@ -27,7 +27,7 @@ set -euo pipefail
 #   - The snapshot commit message records the source HEAD SHA, which is how
 #     --check detects whether the remote is up to date.
 
-REPO_SLUG="claucio-autobras/BlueBee-Infra"
+REPO_SLUG="claucio-autobras/Beeldings"
 REMOTE_URL="https://github.com/${REPO_SLUG}"
 
 err() { echo "ERROR: $*" >&2; }

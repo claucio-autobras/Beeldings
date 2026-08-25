@@ -1,6 +1,6 @@
 # Sincronização bidirecional com GitHub (BlueBee-Infra)
 
-O repositório `github.com/claucio-autobras/BlueBee-Infra` espelha o `main` do Replit e
+O repositório `github.com/claucio-autobras/Beeldings` espelha o `main` do Replit e
 aceita commits feitos fora do Replit (IDE local). A sincronização é feita por
 `scripts/sync-github.sh` e **nunca** envia o histórico completo local (~3,8 GB, exigido
 pelos checkpoints do Replit) nem faz force-push depois da base publicada.
@@ -25,7 +25,7 @@ O `scripts/post-merge.sh` roda `status` após cada merge como lembrete (não blo
 
 ## Fluxo para trabalhar na IDE local
 
-1. Clonar: `git clone https://github.com/claucio-autobras/BlueBee-Infra.git`
+1. Clonar: `git clone https://github.com/claucio-autobras/Beeldings.git`
 2. Instalar dependências: `npm install` na raiz (monorepo npm workspaces).
 3. Criar os `.env` locais necessários (não são versionados): `DATABASE_URL`,
    `JWT_SECRET`, e os demais que o backend exigir no seu cenário

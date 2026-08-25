@@ -16,7 +16,7 @@ if [ -z "$DATABASE_URL" ]; then
 fi
 (cd apps/backend && npx prisma migrate deploy && npx prisma generate)
 
-# Non-fatal reminder: report GitHub sync status (github.com/claucio-autobras/BlueBee-Infra).
+# Non-fatal reminder: report GitHub sync status (github.com/claucio-autobras/Beeldings).
 # Sync is manual/on-demand via scripts/sync-github.sh {push|pull|status}.
 if [ -n "${GITHUB_TOKEN:-}" ]; then
   bash scripts/sync-github.sh status || \
