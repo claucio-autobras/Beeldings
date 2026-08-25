@@ -83,7 +83,7 @@ export function BindingSelector({ deviceId, tag, onBind, onUnbind, cameraMode }:
         {/* Estados de contexto */}
         {!screen?.projectId ? (
           <p className="rounded border border-amber-800/40 bg-amber-900/20 px-3 py-2 text-[11px] text-amber-300">
-            Esta tela não está vinculada a um projeto — não há controladoras para vincular.
+            Esta tela não está vinculada a um gateway — não há controladoras para vincular.
           </p>
         ) : loading && devices.length === 0 ? (
           <div className="flex items-center gap-2 px-1 py-2 text-xs text-slate-400">
@@ -93,8 +93,8 @@ export function BindingSelector({ deviceId, tag, onBind, onUnbind, cameraMode }:
         ) : devices.length === 0 ? (
           <p className="rounded border border-slate-700 bg-slate-900 px-3 py-2 text-[11px] text-slate-400">
             {cameraMode
-              ? 'Nenhuma câmera cadastrada no gateway deste projeto.'
-              : `Nenhuma controladora cadastrada no gateway deste projeto${gatewayId ? ` (${gatewayId})` : ''}.`}
+              ? 'Nenhuma câmera cadastrada neste gateway.'
+              : `Nenhuma controladora cadastrada neste gateway${gatewayId ? ` (${gatewayId})` : ''}.`}
           </p>
         ) : (
           <>

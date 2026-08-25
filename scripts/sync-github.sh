@@ -11,6 +11,8 @@ set -euo pipefail
 #
 #   push    replay each local commit since the sync point as a normal commit on
 #           top of remote main (tree export per commit; no force after the base).
+#   push-snapshot publish the current local tree as one normal commit, useful
+#           after a long Replit history; excludes chat attachments and media.
 #           Aborts if the remote has commits we haven't pulled yet.
 #   pull    fetch new remote commits, apply their combined diff to the local
 #           worktree and commit it on local main, preserving original
@@ -21,14 +23,16 @@ set -euo pipefail
 #           remote-only commits — only for first setup or explicit reset.
 #
 # Token comes from GITHUB_TOKEN via a git credential helper — never in URLs,
-# files or logs. backups/ is excluded from everything published.
+# files or logs. Chat attachments, generated exports, screenshots, video
+# artifacts and backups are excluded from everything published. Runtime assets
+# under apps/frontend/public remain available to a cloned project.
 
 REPO_SLUG="claucio-autobras/BlueBee-Infra"
 REMOTE_URL="https://github.com/${REPO_SLUG}"
 CRED_HELPER='!f() { echo "username=x-access-token"; echo "password=${GITHUB_TOKEN}"; }; f'
 
 err() { echo "ERROR: $*" >&2; }
-usage() { echo "Usage: scripts/sync-github.sh {push|pull|status|init-base}" >&2; exit 2; }
+usage() { echo "Usage: scripts/sync-github.sh {push|push-snapshot|pull|status|init-base}" >&2; exit 2; }
 
 CMD="${1:-}"
 [ -n "$CMD" ] || usage
@@ -65,7 +69,16 @@ save_state() { # $1=local sha  $2=remote sha
 
 export_tree() { # $1=rev  $2=destdir  — tracked files only, backups/ removed
   git archive "$1" | tar -x -C "$2"
-  rm -rf "$2/backups"
+  rm -rf \
+    "$2/backups" \
+    "$2/attached_assets" \
+    "$2/exports" \
+    "$2/screenshots" \
+    "$2/artifacts/video-comercial" \
+    "$2/.agents/outputs"
+  find "$2" -maxdepth 1 -type f \
+    \( -iname '*.mp4' -o -iname '*.mov' -o -iname '*.webm' -o -iname '*.mkv' \
+       -o -iname '*.avi' -o -iname '*.mp3' -o -iname '*.wav' \) -delete
 }
 
 require_state() {
@@ -170,6 +183,41 @@ cmd_push() {
   echo "Done. Sync point updated: local ${LOCAL_HEAD} <-> remote ${new_rhead}"
 }
 
+cmd_push_snapshot() {
+  require_state
+  local rhead; rhead="$(remote_head)"
+  if [ "$rhead" != "$SYNC_REMOTE" ]; then
+    err "Remote main (${rhead}) has moved past the sync point (${SYNC_REMOTE})."
+    err "GitHub has commits not yet pulled. Run: scripts/sync-github.sh pull first."
+    exit 1
+  fi
+  if ! git merge-base --is-ancestor "$SYNC_LOCAL" "$LOCAL_HEAD"; then
+    err "Sync point ${SYNC_LOCAL} is not an ancestor of local HEAD."
+    err "Recover with: scripts/sync-github.sh init-base   (only after reviewing remote)"
+    exit 1
+  fi
+
+  clone_remote
+  local repo="$TMP_DIR/repo"
+  if [ "$(git -C "$repo" rev-parse HEAD)" != "$SYNC_REMOTE" ]; then
+    err "Remote moved during the run. Re-run push-snapshot."
+    exit 1
+  fi
+
+  find "$repo" -mindepth 1 -maxdepth 1 -not -name .git -exec rm -rf {} +
+  export_tree "$LOCAL_HEAD" "$repo"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "BlueBee code snapshot $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    -m "(source: ${LOCAL_HEAD})"
+
+  echo "Pushing one filtered code snapshot to ${REMOTE_URL} (no force)..."
+  ( cd "$repo" && rgit push -q "$REMOTE_URL" main:main )
+
+  local new_rhead; new_rhead="$(git -C "$repo" rev-parse HEAD)"
+  save_state "$LOCAL_HEAD" "$new_rhead"
+  echo "Done. Sync point updated: local ${LOCAL_HEAD} <-> remote ${new_rhead}"
+}
+
 cmd_pull() {
   require_state
   local rhead; rhead="$(remote_head)"
@@ -258,6 +306,7 @@ cmd_init_base() {
 
 case "$CMD" in
   push)      cmd_push ;;
+  push-snapshot) cmd_push_snapshot ;;
   pull)      cmd_pull ;;
   status)    cmd_status ;;
   init-base) cmd_init_base ;;

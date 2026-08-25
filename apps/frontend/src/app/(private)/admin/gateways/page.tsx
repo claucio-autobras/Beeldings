@@ -659,7 +659,7 @@ function VersionPanel({
           <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
           <span>
             {gw.ota.stage === 'expired'
-              ? `${gw.ota.error ?? OTA_STAGE_LABEL.expired}. Versão instalada: ${version ? `v${version}` : 'desconhecida'}. Verifique o gateway no local e, quando ele voltar a ficar online, dispare a atualização novamente.`
+              ? `${gw.ota.error ?? OTA_STAGE_LABEL.expired}. Versão instalada: ${version ? `v${version}` : 'desconhecida'}. Verifique o gateway no local e, quando ele voltar a ficar online, dispare a atualização novamente. Se ele não voltar sozinho, reinstale o agente no local — o pacote atual inclui o launcher corrigido, que se recupera de atualizações falhadas.`
               : `${OTA_STAGE_LABEL[gw.ota.stage]}${gw.ota.error ? ` — ${gw.ota.error}` : ''}`}
           </span>
         </div>
@@ -672,7 +672,7 @@ function VersionPanel({
           <span>
             {gw.otaMessage ?? OTA_STAGE_LABEL[gw.otaState] ?? 'Falha na atualização'}
             {gw.otaState === 'expired'
-              ? ` Versão instalada: ${version ? `v${version}` : 'desconhecida'}. Verifique o gateway no local e, quando ele voltar a ficar online, dispare a atualização novamente.`
+              ? ` Versão instalada: ${version ? `v${version}` : 'desconhecida'}. Verifique o gateway no local e, quando ele voltar a ficar online, dispare a atualização novamente. Se ele não voltar sozinho, reinstale o agente no local — o pacote atual inclui o launcher corrigido, que se recupera de atualizações falhadas.`
               : ''}
           </span>
         </div>

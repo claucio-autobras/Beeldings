@@ -25,6 +25,9 @@ export const DICT_CORE: Record<string, string> = {
   'Filtrar por cliente': 'Filter by client',
   'Todos Clientes': 'All Clients',
   'Inativo': 'Inactive',
+  'Buscar cliente…': 'Search client…',
+  'Ver mais': 'See more',
+  'Nenhum resultado.': 'No results.',
   'Filtrar por site': 'Filter by site',
   'Todos os Sites': 'All Sites',
   'Nenhum site cadastrado.': 'No sites registered.',
@@ -128,6 +131,12 @@ export const DICT_CORE: Record<string, string> = {
   'Automatizando processos.': 'Automating processes.',
   'Inteligência': 'Intelligence',
   'que transforma.': 'that transforms.',
+  'Plataforma de gestão predial inteligente': 'Smart building management platform',
+  'Seu prédio,': 'Your building,',
+  'vivo em tempo real.': 'alive in real time.',
+  'Inteligência que transforma.': 'Intelligence that transforms.',
+  'Monitore seus sites, alarmes e equipamentos em um só lugar.':
+    'Monitor your sites, alarms and equipment in one place.',
   'Segurança e performance para impulsionar seu negócio com tecnologia de ponta.':
     'Security and performance to boost your business with cutting-edge technology.',
 };

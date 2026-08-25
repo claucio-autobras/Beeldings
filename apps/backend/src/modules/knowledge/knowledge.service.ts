@@ -1,8 +1,16 @@
+import { readFile } from 'fs/promises';
+import { join } from 'path';
 import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { KnowledgeType, KnowledgeStatus, Prisma } from '@prisma/client';
+import { KnowledgeClass, KnowledgeType, KnowledgeStatus, Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { EmbeddingsService } from './embeddings.service.js';
+import {
+  extractSeedRecords,
+  normalizeSeedCase,
+  type NormalizedSeedCase,
+  type SeedFile,
+} from './case-import.util.js';
 
 export interface CreateKnowledgeInput {
   type: KnowledgeType;
@@ -35,7 +43,38 @@ export interface KnowledgeSearchHit {
   equipmentModel: string | null;
   content: string;
   similarity: number;
+  // ─── Metadados de caso técnico (type = CASE; null nos demais) ─────────────
+  caseId: string | null;
+  knowledgeClass: KnowledgeClass | null;
+  caseSeverity: string | null;
+  protocol: string | null;
+  subsystem: string | null;
+  vendorScope: string | null;
+  symptom: string | null;
+  sourceUrl: string | null;
 }
+
+/** Resultado da importação (idempotente) da seed de casos técnicos. */
+export interface SeedImportResult {
+  total: number;
+  imported: number;
+  skippedExisting: number;
+  invalid: number;
+}
+
+/**
+ * Estado de uma importação de seed em segundo plano. Em memória (mesma
+ * premissa do OCR de PDF): o clique e o polling vêm do mesmo navegador; se o
+ * poll cair em outra instância, o cliente mostra que o import segue em segundo
+ * plano e recarrega a lista — a importação é idempotente, nada se perde.
+ */
+export type SeedImportJob =
+  | { status: 'pending' }
+  | { status: 'done'; result: SeedImportResult }
+  | { status: 'error'; message: string };
+
+/** Janela para o frontend buscar o resultado após o término do import. */
+const SEED_JOB_TTL_MS = 10 * 60_000;
 
 // Alvo de tamanho por chunk (caracteres) e sobreposição para não cortar contexto
 // no meio de uma ideia entre dois chunks vizinhos.
@@ -55,6 +94,42 @@ export class KnowledgeService {
     private readonly prisma: PrismaService,
     private readonly embeddings: EmbeddingsService,
   ) {}
+
+  // Importações de seed em segundo plano, por importId. O endpoint respondia
+  // sincronamente, mas ~100 casos × embeddings passam dos 30s que o proxy de
+  // produção tolera — o request estourava com 500 mesmo com o import concluindo.
+  private readonly seedImportJobs = new Map<string, SeedImportJob>();
+
+  /** Estado de uma importação de seed (null = desconhecido/expirado). */
+  getSeedImportJob(importId: string): SeedImportJob | null {
+    return this.seedImportJobs.get(importId) ?? null;
+  }
+
+  private setSeedImportJob(importId: string, job: SeedImportJob): void {
+    this.seedImportJobs.set(importId, job);
+    if (job.status !== 'pending') {
+      setTimeout(() => this.seedImportJobs.delete(importId), SEED_JOB_TTL_MS).unref?.();
+    }
+  }
+
+  /**
+   * Dispara a importação da seed em segundo plano e retorna o id para polling.
+   * A importação em si (importSeedCases) permanece idempotente.
+   */
+  beginImportSeedCases(userId: string | null): { importId: string } {
+    const importId = randomUUID();
+    this.setSeedImportJob(importId, { status: 'pending' });
+    void this.importSeedCases(userId)
+      .then((result) => this.setSeedImportJob(importId, { status: 'done', result }))
+      .catch((err: Error) => {
+        this.logger.error(`Importação da seed falhou: ${err.message}`);
+        this.setSeedImportJob(importId, {
+          status: 'error',
+          message: 'Falha ao importar os casos técnicos. Tente novamente.',
+        });
+      });
+    return { importId };
+  }
 
   /** Fatia o texto em pedaços ~CHUNK_TARGET, com sobreposição entre vizinhos. */
   private chunk(text: string): string[] {
@@ -230,6 +305,15 @@ export class KnowledgeService {
         anonymized: true,
         createdAt: true,
         updatedAt: true,
+        caseId: true,
+        knowledgeClass: true,
+        caseSeverity: true,
+        protocol: true,
+        subsystem: true,
+        vendorScope: true,
+        evidenceStrength: true,
+        sourceUrl: true,
+        tags: true,
         _count: { select: { chunks: true } },
       },
     });
@@ -282,6 +366,14 @@ export class KnowledgeService {
         equipmentModel: string | null;
         content: string;
         similarity: number;
+        caseId: string | null;
+        knowledgeClass: KnowledgeClass | null;
+        caseSeverity: string | null;
+        protocol: string | null;
+        subsystem: string | null;
+        vendorScope: string | null;
+        symptom: string | null;
+        sourceUrl: string | null;
       }>
     >`
       SELECT
@@ -293,7 +385,15 @@ export class KnowledgeService {
         d."equipment_type" AS "equipmentType",
         d."equipment_model" AS "equipmentModel",
         c."content" AS "content",
-        1 - (c."embedding" <=> ${vec}::vector) AS "similarity"
+        1 - (c."embedding" <=> ${vec}::vector) AS "similarity",
+        d."case_id" AS "caseId",
+        d."knowledge_class"::text AS "knowledgeClass",
+        d."case_severity" AS "caseSeverity",
+        d."protocol" AS "protocol",
+        d."subsystem" AS "subsystem",
+        d."vendor_scope" AS "vendorScope",
+        d."symptom" AS "symptom",
+        d."source_url" AS "sourceUrl"
       FROM "knowledge_chunks" c
       JOIN "knowledge_docs" d ON d."id" = c."doc_id"
       WHERE d."status" = 'APPROVED'
@@ -310,6 +410,97 @@ export class KnowledgeService {
     `;
 
     return rows.map((r) => ({ ...r, similarity: Number(r.similarity) }));
+  }
+
+  // ─── Importação da seed de casos técnicos ─────────────────────────────────
+
+  /** Caminho do JSON da seed empacotado com o backend (asset do nest-cli). */
+  private seedFilePath(): string {
+    return join(__dirname, 'assets', 'bluebee-seed-kb-v1-100-bms-cases.json');
+  }
+
+  /**
+   * Importa a seed de casos técnicos (BB-BMS-XXXX) empacotada com o app.
+   * IDEMPOTENTE: deduplica por case_id — rodar de novo não duplica casos e
+   * futuros lotes podem reaproveitar a mesma rota. Casos entram já APPROVED
+   * (curadoria feita na origem da seed) e anonymized (conteúdo genérico, sem
+   * dados de tenant).
+   */
+  async importSeedCases(userId: string | null): Promise<SeedImportResult> {
+    const raw = await readFile(this.seedFilePath(), 'utf8');
+    const records = extractSeedRecords(JSON.parse(raw) as SeedFile);
+
+    const normalized: NormalizedSeedCase[] = [];
+    let invalid = 0;
+    const seen = new Set<string>();
+    for (const rec of records) {
+      const n = normalizeSeedCase(rec);
+      if (!n || seen.has(n.caseId)) {
+        invalid += 1;
+        continue;
+      }
+      seen.add(n.caseId);
+      normalized.push(n);
+    }
+
+    // Dedupe por case_id: só cria o que ainda não existe.
+    const existing = await this.prisma.knowledgeDoc.findMany({
+      where: { caseId: { in: normalized.map((n) => n.caseId) } },
+      select: { caseId: true },
+    });
+    const existingIds = new Set(existing.map((e) => e.caseId));
+    const toCreate = normalized.filter((n) => !existingIds.has(n.caseId));
+
+    let imported = 0;
+    for (const c of toCreate) {
+      try {
+        const doc = await this.prisma.knowledgeDoc.create({
+          data: {
+            type: KnowledgeType.CASE,
+            title: c.title,
+            content: c.content,
+            equipmentType: c.equipmentType,
+            source: c.source,
+            anonymized: true,
+            status: KnowledgeStatus.APPROVED,
+            approvedByUserId: userId,
+            approvedAt: new Date(),
+            createdByUserId: userId,
+            caseId: c.caseId,
+            knowledgeClass: c.knowledgeClass,
+            caseSeverity: c.caseSeverity,
+            protocol: c.protocol,
+            subsystem: c.subsystem,
+            vendorScope: c.vendorScope,
+            symptom: c.symptom,
+            evidenceStrength: c.evidenceStrength,
+            sourceUrl: c.sourceUrl,
+            tags: c.tags,
+          },
+        });
+        await this.reindex(doc.id, c.content);
+        imported += 1;
+      } catch (e: unknown) {
+        // Corrida entre duas importações simultâneas: o índice único de
+        // case_id rejeita o segundo insert → conta como já existente.
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+          existingIds.add(c.caseId);
+          continue;
+        }
+        throw e;
+      }
+    }
+
+    const result: SeedImportResult = {
+      total: records.length,
+      imported,
+      skippedExisting: existingIds.size,
+      invalid,
+    };
+    this.logger.log(
+      `Seed de casos técnicos: ${imported} importado(s), ${result.skippedExisting} já existente(s), ${invalid} inválido(s).`,
+    );
+    return result;
   }
 
   /**

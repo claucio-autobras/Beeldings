@@ -5,6 +5,30 @@
 declare module 'net-snmp' {
   export const Version1: number;
   export const Version2c: number;
+  export const Version3: number;
+
+  /** Níveis de segurança USM (SNMPv3). */
+  export const SecurityLevel: {
+    readonly noAuthNoPriv: number;
+    readonly authNoPriv: number;
+    readonly authPriv: number;
+  };
+
+  /** Protocolos de autenticação USM (md5, sha, sha224, sha256, sha384, sha512). */
+  export const AuthProtocols: { readonly [key: string]: unknown };
+
+  /** Protocolos de privacidade USM (des, aes, aes256b, aes256r). */
+  export const PrivProtocols: { readonly [key: string]: unknown };
+
+  /** Usuário USM para createV3Session. */
+  export interface V3User {
+    name: string;
+    level: number;
+    authProtocol?: unknown;
+    authKey?: string;
+    privProtocol?: unknown;
+    privKey?: string;
+  }
 
   /**
    * Subconjunto de ObjectType usado pelo gateway para classificar varbinds de
@@ -27,6 +51,8 @@ declare module 'net-snmp' {
     retries?: number;
     timeout?: number;
     version?: number;
+    /** contextName SNMPv3 (createV3Session). */
+    context?: string;
   }
 
   export interface Session {
@@ -41,6 +67,12 @@ declare module 'net-snmp' {
   export function createSession(
     target: string,
     community: string,
+    options?: SessionOptions,
+  ): Session;
+
+  export function createV3Session(
+    target: string,
+    user: V3User,
     options?: SessionOptions,
   ): Session;
 

@@ -31,8 +31,8 @@ export const InputField = forwardRef<HTMLInputElement, InputFieldProps>(
             ref={ref}
             id={id}
             className={cn(
-              'block h-11 w-full rounded-lg border border-slate-300 bg-card text-sm text-slate-900 placeholder-slate-400 transition-colors',
-              'focus:border-cyan-600 focus:outline-none focus:ring-2 focus:ring-cyan-600/20',
+              'block h-11 w-full rounded-xl border border-slate-200 bg-slate-50/60 text-sm text-slate-900 placeholder-slate-400 transition',
+              'focus:border-cyan-600 focus:bg-card focus:outline-none focus:ring-4 focus:ring-cyan-600/10',
               Icon ? 'pl-10' : 'pl-3',
               trailing ? 'pr-11' : 'pr-3',
               className,

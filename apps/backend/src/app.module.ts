@@ -26,6 +26,8 @@ import { AiModule } from './modules/ai/ai.module';
 import { KnowledgeModule } from './modules/knowledge/knowledge.module';
 import { AutomationModule } from './modules/automation/automation.module';
 import { NotificationRecipientsModule } from './modules/notification-recipients/notification-recipients.module';
+import { InsightsModule } from './modules/insights/insights.module';
+import { ExternalNotificationsModule } from './modules/external-notifications/external-notifications.module';
 
 @Module({
   imports: [
@@ -66,6 +68,8 @@ import { NotificationRecipientsModule } from './modules/notification-recipients/
     AiModule,
     AutomationModule,
     NotificationRecipientsModule,
+    InsightsModule,
+    ExternalNotificationsModule,
   ],
   controllers: [AppController],
   providers: [

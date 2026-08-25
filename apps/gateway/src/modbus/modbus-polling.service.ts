@@ -340,6 +340,13 @@ export class ModbusPollingService implements OnModuleDestroy {
     state.busy = true;
     try {
       await this.runPollCycle(state, device);
+    } catch (err) {
+      // Isolamento do ciclo: exceção inesperada não pode escapar como unhandled
+      // rejection (disparo é `void pollDevice(...)`) — loga e o próximo ciclo segue.
+      this.logger.error(
+        `[${device.deviceId}] Ciclo Modbus abortado por erro inesperado: ` +
+          `${(err as Error)?.stack ?? (err as Error)?.message ?? String(err)}`,
+      );
     } finally {
       state.busy = false;
     }
@@ -356,6 +363,12 @@ export class ModbusPollingService implements OnModuleDestroy {
 
     const startedAt = Date.now();
     const blocks = this.planBlocks(device.registers);
+
+    // Sinaliza erro de conexão/timeout durante as leituras deste ciclo (TCP):
+    // um socket que estourou timeout pode ficar "zumbi" (isOpen=true, mas
+    // degradando todos os ciclos seguintes) — ao final do ciclo a conexão é
+    // descartada para que o próximo ciclo reconecte limpo.
+    const cycle = { connectionSuspect: false };
 
     const ordered: OrderedTelemetryPoint[] = [];
     for (const block of blocks) {
@@ -385,8 +398,12 @@ export class ModbusPollingService implements OnModuleDestroy {
           );
         }
       } else {
-        ordered.push(...(await this.readBlock(state.client!, block, device)));
+        ordered.push(...(await this.readBlock(state.client!, block, device, cycle)));
       }
+    }
+
+    if (!isRtu && cycle.connectionSuspect) {
+      this.invalidateConnection(state, device);
     }
 
     const elapsedMs = Date.now() - startedAt;
@@ -533,6 +550,7 @@ export class ModbusPollingService implements OnModuleDestroy {
     client: ModbusRTU,
     block: RegisterBlock,
     device: ModbusDeviceBlock,
+    cycle?: { connectionSuspect: boolean },
   ): Promise<OrderedTelemetryPoint[]> {
     const { registerType, regs } = block;
     const start = Math.min(...regs.map((r) => r.addr));
@@ -554,6 +572,12 @@ export class ModbusPollingService implements OnModuleDestroy {
           : await client.readHoldingRegisters(start, count);
       return this.decodeRegisters(regs, start, res.buffer);
     } catch (err) {
+      // Timeout/erro de socket compromete a conexão TCP inteira — marca o ciclo
+      // para descartar o client ao final (o próximo ciclo reconecta limpo).
+      // Exceções Modbus de endereço (illegal address etc.) NÃO invalidam.
+      if (cycle && this.isConnectionError(err as Error)) {
+        cycle.connectionSuspect = true;
+      }
       if (regs.length === 1) {
         this.logger.debug(
           `[${device.deviceId}] Falha ao ler ${regs[0].reg.tag} ` +
@@ -566,14 +590,46 @@ export class ModbusPollingService implements OnModuleDestroy {
         client,
         { registerType, regs: regs.slice(0, mid) },
         device,
+        cycle,
       );
       const right = await this.readBlock(
         client,
         { registerType, regs: regs.slice(mid) },
         device,
+        cycle,
       );
       return [...left, ...right];
     }
+  }
+
+  /**
+   * Heurística de erro de conexão/transporte (vs. exceção Modbus de dados):
+   * timeouts e erros de socket indicam conexão degradada que deve ser refeita.
+   */
+  private isConnectionError(err: Error): boolean {
+    const msg = (err?.message ?? String(err)).toLowerCase();
+    return (
+      /timed?[\s-]?out|timeout/.test(msg) ||
+      /port not open|not connected|closed|destroyed/.test(msg) ||
+      /econnreset|econnrefused|ehostunreach|enetunreach|epipe|socket/.test(msg)
+    );
+  }
+
+  /**
+   * Fecha e descarta o client TCP após timeout/erro de leitura, garantindo que
+   * o próximo ciclo abra uma conexão nova (sem socket zumbi degradando ciclos).
+   */
+  private invalidateConnection(state: ActiveModbusPoll, device: ModbusDeviceBlock): void {
+    this.logger.warn(
+      `[${device.deviceId}] Timeout/erro de conexão Modbus TCP em ${this.deviceLabel(device)} — ` +
+        'conexão descartada; o próximo ciclo reconectará',
+    );
+    try {
+      state.client?.close(() => undefined);
+    } catch {
+      // fechar conexão suspeita é best-effort
+    }
+    state.client = new ModbusRTU();
   }
 
   /** Extrai/decode registradores holding/input da fatia do buffer do bloco. */

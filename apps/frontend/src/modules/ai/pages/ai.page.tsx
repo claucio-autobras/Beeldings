@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   BookOpen,
+  FileText,
   Lightbulb,
   Loader2,
   MessageSquare,
@@ -20,6 +21,7 @@ import {
   SimilarCasesList,
   type SimilarCaseView,
 } from '../components/SimilarCasesList';
+import InsightsPanel from '../components/InsightsPanel';
 
 interface ChatSource {
   docId: string;
@@ -29,6 +31,8 @@ interface ChatSource {
 }
 
 interface ChatMessage {
+  /** Id persistido — presente nas mensagens vindas do histórico. */
+  id?: string;
   role: 'user' | 'assistant';
   content: string;
   sources?: ChatSource[];
@@ -42,12 +46,32 @@ interface ConversationSummary {
   updatedAt: string;
 }
 
-interface ChatResponse {
-  reply: string;
+// O POST /ai/chat responde na hora (o proxy de produção corta requests >30s):
+// a resposta da IA é gerada em segundo plano e buscada via polling.
+interface ChatStartResponse {
+  pending: true;
   conversationId: string;
   title: string;
-  sources: ChatSource[];
-  similarCases?: SimilarCaseView[];
+  userMessageId: string;
+}
+
+type ChatPollResponse =
+  | { status: 'pending' }
+  | {
+      status: 'done';
+      reply: string;
+      sources: ChatSource[];
+      similarCases?: SimilarCaseView[];
+    }
+  | { status: 'error'; message: string };
+
+/** Intervalo entre polls do resultado do turno. */
+const CHAT_POLL_INTERVAL_MS = 2500;
+/** Teto do polling — bem acima do pior caso observado (30–45s com RAG). */
+const CHAT_POLL_TIMEOUT_MS = 4 * 60_000;
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
 interface SuggestionAlarm {
@@ -85,8 +109,8 @@ export default function AiPage() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Aba de sugestões por equipamento
-  const [tab, setTab] = useState<'chat' | 'suggest'>('chat');
+  // Abas: sugestões por equipamento e insights periódicos
+  const [tab, setTab] = useState<'chat' | 'suggest' | 'insights'>('chat');
   const [devices, setDevices] = useState<Device[]>([]);
   const [devicesLoaded, setDevicesLoaded] = useState(false);
   const [selectedDevice, setSelectedDevice] = useState('');
@@ -141,6 +165,18 @@ export default function AiPage() {
     try {
       const detail = await apiGet<{ messages: ChatMessage[] }>(`/ai/conversations/${id}`);
       setMessages(detail.messages);
+      // Turno pendente: o último registro é do usuário (a resposta ainda está
+      // sendo gerada em segundo plano). Retoma o "Pensando…" e o polling para
+      // não perder a resposta ao navegar/recarregar.
+      const last = detail.messages[detail.messages.length - 1];
+      if (last && last.role === 'user' && last.id) {
+        setLoading(true);
+        try {
+          await pollChatResult(id, last.id);
+        } finally {
+          setLoading(false);
+        }
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erro ao carregar a conversa.');
       setMessages([]);
@@ -165,6 +201,49 @@ export default function AiPage() {
     }
   }
 
+  /**
+   * Busca por polling o turno do assistente gerado em segundo plano após a
+   * mensagem `userMessageId`. Falhas de rede pontuais não desistem: o backend
+   * persiste o resultado, então a próxima tentativa o encontra.
+   */
+  async function pollChatResult(conversationId: string, userMessageId: string) {
+    const startedAt = Date.now();
+    let done = false;
+    while (Date.now() - startedAt < CHAT_POLL_TIMEOUT_MS) {
+      await sleep(CHAT_POLL_INTERVAL_MS);
+      let poll: ChatPollResponse;
+      try {
+        poll = await apiGet<ChatPollResponse>(
+          `/ai/chat/result?conversationId=${encodeURIComponent(conversationId)}&after=${encodeURIComponent(userMessageId)}`,
+        );
+      } catch {
+        continue;
+      }
+      if (poll.status === 'pending') continue;
+      if (poll.status === 'error') {
+        setError(poll.message || 'Erro ao falar com o assistente.');
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            content: poll.reply || '(sem resposta)',
+            sources: poll.sources ?? [],
+            similarCases: poll.similarCases ?? [],
+          },
+        ]);
+        void refreshConversations();
+      }
+      done = true;
+      break;
+    }
+    if (!done) {
+      setError(
+        'A resposta está demorando mais que o esperado. Ela ficará salva nesta conversa — reabra-a em instantes.',
+      );
+    }
+  }
+
   async function sendMessage(text: string) {
     const content = text.trim();
     if (!content || loading) return;
@@ -175,21 +254,12 @@ export default function AiPage() {
     setLoading(true);
 
     try {
-      const res = await apiPost<ChatResponse>('/ai/chat', {
+      const res = await apiPost<ChatStartResponse>('/ai/chat', {
         conversationId: activeId,
         content,
       });
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: res.reply || '(sem resposta)',
-          sources: res.sources ?? [],
-          similarCases: res.similarCases ?? [],
-        },
-      ]);
       if (!activeId) setActiveId(res.conversationId);
-      void refreshConversations();
+      await pollChatResult(res.conversationId, res.userMessageId);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erro ao falar com o assistente.');
     } finally {
@@ -349,7 +419,21 @@ export default function AiPage() {
           <Lightbulb className="h-4 w-4" />
           Sugestões por equipamento
         </button>
+        <button
+          type="button"
+          onClick={() => setTab('insights')}
+          className={`flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition ${
+            tab === 'insights'
+              ? 'border-cyan-600 text-cyan-700'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <FileText className="h-4 w-4" />
+          Insights
+        </button>
       </div>
+
+      {tab === 'insights' && <InsightsPanel />}
 
       {tab === 'suggest' && (
         <div className="flex flex-col gap-4">

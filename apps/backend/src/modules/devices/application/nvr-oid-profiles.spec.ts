@@ -98,18 +98,42 @@ describe('GENERIC_NVR_PROFILE e NVR_TABLE_OIDS — contratos do sync-disks', () 
     expect(hasVendorOids(detected.id)).toBe(true);
   });
 
-  it('perfil detectado de sysDescr Dahua possui diskStatusMap para normalização', () => {
+  it('Dahua oficial: SEM statusMap (physicalVolumeStatus é texto) e uso em %', () => {
     const detected = detectNvrProfile('Dahua NVR firmware 3.0', null, null);
     expect(detected.id).toBe('dahua-nvr');
     const tableEntry = NVR_TABLE_OIDS[detected.id];
     expect(tableEntry).toBeDefined();
-    expect(tableEntry.disk.statusMap).toEqual({ 0: 1, 1: 2, 2: 0 });
+    // physicalVolumeStatus (2.4.1.1.5) é DisplayString — sem enum numérico.
+    expect(tableEntry.disk.statusMap).toBeUndefined();
+    // physicalVolumeUsage (2.4.1.1.6) é percentual — disk_used vira uso em %.
+    expect(tableEntry.disk.usedIsPercent).toBe(true);
+    // physicalVolumeTotal (2.4.1.1.7) já é GB nativo.
+    expect(tableEntry.disk.diskScale ?? 1).toBe(1);
+    // Árvore OFICIAL 1004849.2 (a antiga …1004849.1 era do ipSAN).
+    expect(tableEntry.disk.status).toBe('1.3.6.1.4.1.1004849.2.4.1.1.5');
+    expect(tableEntry.disk.capacityGb).toBe('1.3.6.1.4.1.1004849.2.4.1.1.7');
+    expect(tableEntry.disk.usedGb).toBe('1.3.6.1.4.1.1004849.2.4.1.1.6');
+    expect(tableEntry.channel.status).toBe('1.3.6.1.4.1.1004849.2.10.1.1.1.1.2');
   });
 
-  it('Hikvision NVR_TABLE_OIDS não tem statusMap (enum já é canônico)', () => {
+  it('Hikvision oficial: hikDiskTable com statusMap (enum oficial → canônico) e MB→GB', () => {
     const tableEntry = NVR_TABLE_OIDS['hikvision-nvr'];
     expect(tableEntry).toBeDefined();
-    expect(tableEntry.disk.statusMap).toBeUndefined();
+    // Enum oficial hikDiskStatus → canônico.
+    expect(tableEntry.disk.statusMap).toEqual({ 0: 1, 1: 3, 2: 2, 3: 2, 4: 2, 5: 1, 6: 0, 10: 4, 11: 4 });
+    // hikDiskTable oficial (hikEntity 50001.1.241.1): status col 3, free col 4, cap col 5.
+    expect(tableEntry.disk.status).toBe('1.3.6.1.4.1.50001.1.241.1.3');
+    expect(tableEntry.disk.freeGb).toBe('1.3.6.1.4.1.50001.1.241.1.4');
+    expect(tableEntry.disk.capacityGb).toBe('1.3.6.1.4.1.50001.1.241.1.5');
+    // Unidade oficial: MB → GB via diskScale 0.001.
+    expect(tableEntry.disk.diskScale).toBe(0.001);
+    expect(tableEntry.disk.usedIsPercent).toBeUndefined();
+  });
+
+  it('Intelbras (OEM Dahua) compartilha a tabela oficial e o uso em %', () => {
+    const tableEntry = NVR_TABLE_OIDS['intelbras-nvr'];
+    expect(tableEntry.disk.status).toBe('1.3.6.1.4.1.1004849.2.4.1.1.5');
+    expect(tableEntry.disk.usedIsPercent).toBe(true);
   });
 });
 

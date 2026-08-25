@@ -141,7 +141,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
   if (error || !project) {
     return (
       <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-        Erro ao carregar projeto: {error ? (error as Error).message : 'não encontrado'}
+        Erro ao carregar gateway: {error ? (error as Error).message : 'não encontrado'}
       </div>
     );
   }
@@ -156,7 +156,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
         className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
-        Voltar para Projetos
+        Voltar para Gateways
       </button>
 
       {/* Header */}
@@ -235,7 +235,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
             {reprovision.error && <p className="text-xs text-red-600">{(reprovision.error as Error).message}</p>}
           </div>
         ) : (
-          <div className="px-5 py-6 text-sm text-muted-foreground">Este projeto não possui gateway.</div>
+          <div className="px-5 py-6 text-sm text-muted-foreground">Este gateway não possui dispositivo MQTT configurado.</div>
         )}
       </div>
 
@@ -303,7 +303,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
         </div>
         {screens.length === 0 ? (
           <div className="px-5 py-6 text-sm text-muted-foreground">
-            Nenhuma tela sinótica criada para este projeto ainda. Crie em{' '}
+            Nenhuma tela sinótica criada para este gateway ainda. Crie em{' '}
             <button onClick={() => router.push('/scada')} className="font-medium text-cyan-700 hover:underline">Telas</button>.
           </div>
         ) : (

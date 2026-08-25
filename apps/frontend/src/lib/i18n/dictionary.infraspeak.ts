@@ -77,4 +77,10 @@ export const DICT_INFRASPEAK: Record<string, string> = {
   'Mensagens': 'Messages',
   'Identificadores': 'Identifiers',
   'ID externo': 'External ID',
+  'Mostrando': 'Showing',
+  'de': 'of',
+  'chamados': 'requests',
+  'Página': 'Page',
+  'Anterior': 'Previous',
+  'Próxima': 'Next',
 };

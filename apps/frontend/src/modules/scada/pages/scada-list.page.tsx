@@ -84,7 +84,7 @@ export default function ScadaListPage() {
         <div>
           <h1 className="text-2xl font-semibold text-foreground">Telas Graficas</h1>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            {scadaProjects.length} {scadaProjects.length === 1 ? 'projeto' : 'projetos'} — selecione um projeto para ver e criar telas
+            {scadaProjects.length} {scadaProjects.length === 1 ? 'projeto' : 'projetos'} — selecione um cliente para ver e criar telas
           </p>
         </div>
         {canEdit && (
@@ -108,7 +108,7 @@ export default function ScadaListPage() {
       ) : scadaProjects.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card py-20">
           <FolderKanban className="h-10 w-10 text-muted-foreground" strokeWidth={1} />
-          <p className="mt-3 text-sm font-medium text-foreground">Nenhuma projeto de interface</p>
+          <p className="mt-3 text-sm font-medium text-foreground">Nenhum projeto de telas</p>
           <p className="mt-1 text-xs text-muted-foreground">
             {canEdit ? 'Clique em "Adicionar Projeto" para começar' : 'Aguarde o integrador configurar os projetos'}
           </p>

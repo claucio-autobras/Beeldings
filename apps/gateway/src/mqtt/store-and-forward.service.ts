@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
 
-interface PendingMessage {
+export interface PendingMessage {
   topic: string;
   payload: string;
   qos: 0 | 1;
@@ -77,16 +77,27 @@ export class StoreAndForwardService implements OnModuleInit {
     this.logger.debug(`Mensagem enfileirada — total na fila: ${this.queue.length}`);
   }
 
-  /** Retorna e remove todas as mensagens pendentes para reenvio. */
-  drain(): PendingMessage[] {
-    if (this.queue.length === 0) return [];
+  /**
+   * Snapshot das mensagens pendentes SEM removê-las da fila (drain crash-safe).
+   *
+   * O reenvio deve confirmar cada mensagem via `remove()` somente após o ack de
+   * publicação — se o gateway cair no meio do reenvio, as mensagens ainda não
+   * publicadas continuam no disco e são reenviadas no próximo boot.
+   */
+  peekAll(): PendingMessage[] {
+    return [...this.queue];
+  }
 
-    const pending = [...this.queue];
-    this.queue.length = 0;
-    this.schedulePersist();
-
-    this.logger.log(`Drenando ${pending.length} mensagem(ns) da fila (store-and-forward)`);
-    return pending;
+  /**
+   * Remove uma mensagem específica da fila (comparação por referência) após a
+   * confirmação de publicação, persistindo a remoção em disco.
+   */
+  remove(message: PendingMessage): void {
+    const idx = this.queue.indexOf(message);
+    if (idx >= 0) {
+      this.queue.splice(idx, 1);
+      this.schedulePersist();
+    }
   }
 
   hasPending(): boolean {

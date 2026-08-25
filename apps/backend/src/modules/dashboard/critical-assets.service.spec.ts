@@ -251,6 +251,118 @@ describe('CriticalAssetsService (papéis claros e itens sempre visíveis)', () =
     expect(data.assets[0].faultSource).toBeNull();
   });
 
+  // ── Fallback durável de valor/duração (Task: durações do papel STATUS) ──
+
+  it('ponto status sem lastValue persistido (BMS) usa a última amostra da trend: desligado com duração', async () => {
+    trendRecords = [
+      { trendId: 'tr1', timestamp: T(10 * 3600_000), value: 1 },
+      { trendId: 'tr1', timestamp: T(6 * 3600_000), value: 0 }, // desligou → stoppedSince
+      { trendId: 'tr1', timestamp: T(1 * 3600_000), value: 0 }, // amostra vigente = 0
+    ];
+    const prisma = makePrisma([
+      device({ points: [{
+        id: 'p1', tag: 'ST', objectName: 'Status', opRole: 'status',
+        lastValue: null, lastValueAt: null,
+        trends: [{ id: 'tr1', enabled: true }],
+      }] }),
+    ]);
+    const svc = new CriticalAssetsService(prisma, statusOnline);
+    const data = await svc.compute(window);
+    expect(data.assets).toHaveLength(1);
+    expect(data.assets[0].state).toBe('stopped');
+    expect(data.assets[0].stoppedSince).toBe(T(6 * 3600_000).toISOString());
+    expect(data.assets[0].stoppedMs).toBeGreaterThan(5.9 * 3600_000);
+    expect(data.assets[0].stoppedMs).toBeLessThan(6.1 * 3600_000);
+  });
+
+  it('ponto status sem lastValue persistido com trend ligada: running com activeSince', async () => {
+    trendRecords = [
+      { trendId: 'tr1', timestamp: T(9 * 3600_000), value: 0 },
+      { trendId: 'tr1', timestamp: T(4 * 3600_000), value: 1 }, // religou → activeSince
+      { trendId: 'tr1', timestamp: T(1 * 3600_000), value: 1 },
+    ];
+    const prisma = makePrisma([
+      device({ points: [{
+        id: 'p1', tag: 'ST', objectName: 'Status', opRole: 'status',
+        lastValue: null, lastValueAt: null,
+        trends: [{ id: 'tr1', enabled: true }],
+      }] }),
+    ]);
+    const svc = new CriticalAssetsService(prisma, statusOnline);
+    const data = await svc.compute(window);
+    expect(data.assets).toHaveLength(1);
+    expect(data.assets[0].state).toBe('running');
+    expect(data.assets[0].activeSince).toBe(T(4 * 3600_000).toISOString());
+    expect(data.assets[0].activeMs).toBeGreaterThan(3.9 * 3600_000);
+    expect(data.assets[0].activeMs).toBeLessThan(4.1 * 3600_000);
+  });
+
+  it('ponto status sem lastValue e sem trend: sem evidência alguma → sem dados (nunca duração fake)', async () => {
+    trendRecords = [];
+    const prisma = makePrisma([
+      device({ points: [{
+        id: 'p1', tag: 'ST', objectName: 'Status', opRole: 'status',
+        lastValue: null, lastValueAt: null, trends: [],
+      }] }),
+    ]);
+    const svc = new CriticalAssetsService(prisma, statusOnline);
+    const data = await svc.compute(window);
+    expect(data.assets).toHaveLength(1);
+    expect(data.assets[0].state).toBe('unknown');
+    expect(data.assets[0].activeNow).toBeNull();
+    expect(data.assets[0].stoppedMs).toBeNull();
+    expect(data.assets[0].activeMs).toBeNull();
+  });
+
+  // ── Ponto STATUS de câmera: estado derivado do canal da câmera ──
+
+  it('ponto STATUS de câmera (sem opRole) online: running com activeSince do status_event', async () => {
+    trendRecords = [];
+    const eventAt = T(7 * 3600_000);
+    const points = [{
+      id: 'ps1', tag: 'STATUS', objectName: 'Status (online/offline)', opRole: null,
+      critical: true, lastValue: 1, lastValueAt: T(60_000), deviceId: 'dev1',
+      trends: [],
+      device: device({ protocol: 'snmp', points: [{ tag: 'STATUS', lastValue: 1 }] }),
+    }];
+    const prisma = makePrisma([], [], points);
+    (prisma as unknown as { $queryRaw: jest.Mock }).$queryRaw = jest
+      .fn()
+      .mockResolvedValue([{ entity_id: 'dev1', status: 'online', at: eventAt }]);
+    const svc = new CriticalAssetsService(prisma, statusOnline);
+    const data = await svc.compute(window);
+    expect(data.assets).toHaveLength(1);
+    const a = data.assets[0];
+    expect(a.kind).toBe('point');
+    expect(a.state).toBe('running');
+    expect(a.pointRole).toBe('status');
+    expect(a.activeSince).toBe(eventAt.toISOString());
+    expect(a.activeMs).toBeGreaterThan(6.9 * 3600_000);
+    expect(a.activeMs).toBeLessThan(7.1 * 3600_000);
+  });
+
+  it('ponto STATUS de câmera offline: no_response com offlineSince do status_event (não "sem dados")', async () => {
+    trendRecords = [];
+    const eventAt = T(2 * 3600_000);
+    const points = [{
+      id: 'ps1', tag: 'STATUS', objectName: 'Status (online/offline)', opRole: null,
+      critical: true, lastValue: 0, lastValueAt: T(60_000), deviceId: 'dev1',
+      trends: [],
+      device: device({ protocol: 'snmp', points: [{ tag: 'STATUS', lastValue: 0 }] }),
+    }];
+    const prisma = makePrisma([], [], points);
+    (prisma as unknown as { $queryRaw: jest.Mock }).$queryRaw = jest
+      .fn()
+      .mockResolvedValue([{ entity_id: 'dev1', status: 'offline', at: eventAt }]);
+    const svc = new CriticalAssetsService(prisma, statusOnline);
+    const data = await svc.compute(window);
+    expect(data.assets).toHaveLength(1);
+    expect(data.assets[0].state).toBe('no_response');
+    expect(data.assets[0].offlineSince).toBe(eventAt.toISOString());
+    expect(data.assets[0].offlineMs).toBeGreaterThan(1.9 * 3600_000);
+    expect(data.assets[0].offlineMs).toBeLessThan(2.1 * 3600_000);
+  });
+
   it('device com ponto fault ativo (papel no ponto do device) entra em falha sem alarme', async () => {
     trendRecords = [];
     const prisma = makePrisma([

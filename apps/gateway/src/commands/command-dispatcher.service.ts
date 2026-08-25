@@ -213,6 +213,16 @@ export class CommandDispatcherService {
         community: String(command.params.community ?? 'public'),
         current: parseProbes(command.params.current),
         candidates: parseProbes(command.params.candidates),
+        // Dicas de identificação do device (opcionais): permitem que perfis
+        // de fabricante aportem raízes de walk proprietárias na descoberta.
+        deviceType:
+          typeof command.params.deviceType === 'string'
+            ? command.params.deviceType
+            : undefined,
+        manufacturer:
+          typeof command.params.manufacturer === 'string'
+            ? command.params.manufacturer
+            : undefined,
       };
       if (!diagnoseCommand.ip) {
         this.logger.error(

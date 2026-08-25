@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import Anthropic from '@anthropic-ai/sdk';
 import type { MessageParam } from '@anthropic-ai/sdk/resources/messages';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CFTV_PROTOCOLS, EXCLUDE_VIRTUAL_DEVICES } from '../prisma/device-filters.js';
 import { KnowledgeService } from '../knowledge/knowledge.service.js';
@@ -18,6 +19,11 @@ import {
   type CaseSearchTarget,
   type SimilarOperationalCase,
 } from './operational-memory.util.js';
+import {
+  extractKnowledgeTarget,
+  rankKnowledgeHits,
+  sanitizeKnowledgeCaseIds,
+} from '../knowledge/knowledge-ranking.util.js';
 import {
   buildLiveStatusBlock,
   detectLiveStatusIntent,
@@ -40,9 +46,54 @@ export interface ConversationSummary {
   updatedAt: Date;
 }
 
-export interface ConversationDetail extends ConversationSummary {
-  messages: ChatMessage[];
+/** Mensagem do histórico com os metadados persistidos do turno do assistente. */
+export interface ConversationMessage extends ChatMessage {
+  /** Id persistido — âncora para retomar o polling de um turno pendente. */
+  id: string;
+  sources?: ChatSource[];
+  similarCases?: SimilarOperationalCase[];
+  /** true quando o turno do assistente registrou uma falha de geração. */
+  error?: boolean;
 }
+
+export interface ConversationDetail extends ConversationSummary {
+  messages: ConversationMessage[];
+}
+
+/**
+ * Resposta imediata do POST /ai/chat: o turno passou a ser processado em
+ * segundo plano porque o proxy de produção corta requests >30s. O cliente
+ * busca o resultado via getChatResult (polling), que é durável (banco) e
+ * funciona mesmo com múltiplas instâncias do backend.
+ */
+export interface ChatStartResult {
+  pending: true;
+  conversationId: string;
+  title: string;
+  /** Id da mensagem do usuário já persistida — âncora do polling. */
+  userMessageId: string;
+}
+
+export type ChatPollResult =
+  | { status: 'pending' }
+  | {
+      status: 'done';
+      reply: string;
+      sources: ChatSource[];
+      similarCases: SimilarOperationalCase[];
+    }
+  | { status: 'error'; message: string };
+
+/** Formato do JSON persistido em AiMessage.data para turnos do assistente. */
+interface AssistantTurnData {
+  sources?: ChatSource[];
+  similarCases?: SimilarOperationalCase[];
+  error?: boolean;
+}
+
+/** Mensagem amigável quando a geração falha — persistida para o polling ver. */
+const CHAT_FAILURE_MESSAGE =
+  'Não consegui gerar a resposta desta vez. Tente novamente em instantes.';
 
 export interface ChatSource {
   docId: string;
@@ -134,27 +185,63 @@ export interface FirstActionResult {
 // junto com o contexto recuperado da base de conhecimento (RAG).
 const BASE_PROMPT = `Você é o Bluebee, assistente especialista da plataforma Beeldings — uma plataforma multi-tenant de supervisão predial (BMS/SCADA).
 Ajuda operadores e gestores com alarmes, dispositivos/gateways, telemetria, tendências (trends), automações e relatórios.
+Atua como COPILOTO técnico de diagnóstico em automação predial (BACnet IP e MS/TP, Modbus RTU/TCP, MQTT, SNMP, CFTV/ONVIF, HVAC, incêndio, energia): apoia o raciocínio do técnico, mas NUNCA o substitui — a decisão e a execução em campo são sempre do profissional.
 Quando se apresentar ou for perguntado sobre sua identidade, diga que é o Bluebee, assistente da plataforma Beeldings.
-Responda SEMPRE em português do Brasil, de forma clara, objetiva e técnica.`;
+Responda SEMPRE em português do Brasil, de forma clara, objetiva e técnica.
+
+Classes de conhecimento dos casos técnicos da base (ordem de confiança, da maior para a menor):
+1. FIELD_VALIDATED — validado em campo por técnico;
+2. DOCUMENTED — baseado em documentação oficial de fabricante/norma;
+3. DERIVED — derivado por engenharia a partir de padrões documentados (NUNCA apresente como ocorrência real de campo);
+4. SYNTHETIC — cenário sintético de treinamento (sempre com ressalva explícita).
+
+Política anti-alucinação (vale para TODAS as respostas):
+- NUNCA invente códigos de alarme, modelos, versões de firmware, medições, parâmetros ou identificadores de caso (case_id). Só cite o que estiver no contexto fornecido.
+- Quando faltar evidência, diga: "Não há evidência suficiente para afirmar isso com segurança." e proponha como obter a informação.
+
+Segurança em campo (sempre que a orientação envolver risco):
+- Risco elétrico (painéis energizados, medições em barramentos): oriente a executar apenas profissional qualificado, com EPI e procedimentos da empresa (NR-10).
+- Sistemas de detecção/combate a incêndio: nunca oriente desabilitar, inibir ou "dar bypass" em proteções, intertravamentos ou supervisões; alterações exigem procedimento formal.
+- Prefira sempre o teste menos invasivo primeiro; mudanças de configuração devem ser registradas e reversíveis.`;
+
+// Formato de resposta diagnóstica do método Bluebee (master prompt): usado nas
+// regras do chat quando a pergunta é de troubleshooting. NÃO se aplica aos
+// fluxos com contrato próprio (primeira ação em JSON estrito, sugestões).
+const DIAGNOSTIC_FORMAT_RULES = `Formato de resposta para perguntas de TROUBLESHOOTING (problema/falha/sintoma a diagnosticar):
+1. **Diagnóstico inicial** — leitura curta do problema com base no que foi informado.
+2. **Causas mais prováveis** — lista ordenada da mais provável para a menos provável.
+3. **Verifique nesta ordem** — sequência numerada de testes/verificações, do menos invasivo para o mais invasivo.
+4. **Casos semelhantes na base** — SOMENTE se o contexto trouxer casos técnicos relevantes (entradas "Caso técnico BB-..."): cite cada um com o case_id EXATO e a classificação real, ex.: "Caso BB-BMS-0007 (DOCUMENTED)". Caso DERIVED deve ser apresentado como derivado de documentação — NUNCA como ocorrência real de campo. Se nenhum caso do contexto for de fato semelhante, escreva: "Não encontrei um caso suficientemente semelhante na base Bluebee." e siga com a árvore de diagnóstico geral.
+5. **Próxima ação recomendada** — o próximo passo objetivo (ou a pergunta que reduziria as hipóteses).
+6. **Nível de confiança: ALTA/MÉDIA/BAIXA** — ALTA só com caso/documento que cobre exatamente o cenário; MÉDIA quando há cobertura parcial; BAIXA quando é raciocínio geral.
+- Se faltarem dados essenciais para diagnosticar, faça 1–3 perguntas objetivas que mais reduzem hipóteses ANTES de aprofundar (pode combinar com um diagnóstico preliminar).
+- Priorize evidência por classe: FIELD_VALIDATED > DOCUMENTED > DERIVED > SYNTHETIC.
+- Perguntas que NÃO são de troubleshooting (conceito, plataforma, consulta) seguem em texto normal, sem esse formato.`;
 
 const RAG_RULES = `Regras importantes (aterramento — siga estritamente):
 - Baseie a resposta no CONTEXTO da base de conhecimento abaixo e no histórico da conversa.
 - Dados técnicos de equipamentos (especificações, faixas, pinagem, bornes, endereços, parâmetros, jumpers, procedimentos de instalação/configuração) devem vir EXCLUSIVAMENTE do contexto abaixo. Nunca complete a partir de conhecimento prévio sobre o equipamento, mesmo que pareça plausível.
-- Sempre que usar uma informação do contexto, cite a fonte entre colchetes pelo título do documento, ex.: [MCP17 - Manual do integrador].
+- Sempre que usar uma informação do contexto, cite a fonte entre colchetes pelo título do documento, ex.: [MCP17 - Manual do integrador]. Para casos técnicos, cite pelo case_id e classificação, ex.: Caso BB-BMS-0012 (DERIVED).
+- NUNCA cite um case_id que não esteja literalmente no contexto abaixo.
 - Se a informação pedida NÃO estiver no contexto, diga explicitamente que ela não consta na base de conhecimento (mesmo que o contexto traga outros trechos do mesmo manual) e sugira registrá-la — NÃO invente valores, modelos, números de série, tabelas ou procedimentos.
 - Não misture dados de modelos diferentes: se o contexto for de outro modelo que não o perguntado, avise que a base não cobre o modelo solicitado.
-- Você não tem acesso direto a leituras em tempo real; para um valor específico, oriente onde o operador encontra na plataforma.`;
+- Você não tem acesso direto a leituras em tempo real; para um valor específico, oriente onde o operador encontra na plataforma.
+
+${DIAGNOSTIC_FORMAT_RULES}`;
 
 const NO_CONTEXT_RULES = `Regras importantes (aterramento — siga estritamente):
 - A base de conhecimento não retornou nada relevante para esta pergunta.
 - Se a pergunta for sobre dados técnicos de um equipamento específico (especificações, parâmetros, procedimentos, pinagem), responda que essa informação não consta na base de conhecimento e sugira registrá-la — NÃO responda de memória.
 - Fora isso, responda apenas com orientação geral e segura sobre BMS/SCADA, deixando claro que é orientação geral.
-- NÃO invente dados específicos (valores, modelos, números de série, procedimentos proprietários). Se não souber, diga que não sabe.`;
+- NÃO invente dados específicos (valores, modelos, números de série, procedimentos proprietários). Se não souber, diga que não sabe.
+- Em perguntas de TROUBLESHOOTING: comece dizendo explicitamente "Não encontrei um caso suficientemente semelhante na base Bluebee." e siga com uma árvore de diagnóstico GERAL no mesmo formato (diagnóstico inicial, causas prováveis ordenadas, "verifique nesta ordem" do menos ao mais invasivo, próxima ação, nível de confiança — no máximo MÉDIA sem caso/documento da base). NUNCA cite case_id algum.
+
+${DIAGNOSTIC_FORMAT_RULES}`;
 
 const SUGGEST_RULES = `Tarefa: sugerir ações de manutenção/operação para um equipamento.
-- Baseie as recomendações EXCLUSIVAMENTE nos playbooks/documentos do CONTEXTO abaixo e, quando presentes, nos "CASOS SEMELHANTES JÁ RESOLVIDOS" (precedentes anônimos do sistema). NÃO invente passos, valores ou procedimentos.
+- Baseie as recomendações EXCLUSIVAMENTE nos playbooks/documentos/casos técnicos do CONTEXTO abaixo e, quando presentes, nos "CASOS SEMELHANTES JÁ RESOLVIDOS" (precedentes anônimos do sistema). NÃO invente passos, valores ou procedimentos.
 - Apresente as ações como uma lista enumerada, ordenadas da mais provável/segura para a menos.
-- Para cada ação, cite a fonte entre colchetes pelo título, ex.: [Playbook Chiller — Alta Pressão].
+- Para cada ação, cite a fonte entre colchetes pelo título, ex.: [Playbook Chiller — Alta Pressão]; casos técnicos da base pelo case_id e classificação, ex.: [Caso BB-BMS-0012 (DERIVED)] — NUNCA cite um case_id fora do contexto, e nunca apresente caso DERIVED como ocorrência real de campo.
 - Deixe explícito que são SUGESTÕES; a decisão e a execução são responsabilidade do operador.
 - Se o contexto não cobrir o caso, diga claramente que não há playbook aplicável e sugira registrar a experiência.`;
 
@@ -230,6 +317,26 @@ export class AiService {
     return new Anthropic({ apiKey });
   }
 
+  /**
+   * Conclusão bruta com system prompt do chamador (ex.: insights executivos).
+   * Sem RAG, sem persistência de conversa. Lança em falha (chave ausente,
+   * erro da API) — o chamador decide como degradar.
+   */
+  async completeWithSystem(system: string, userPrompt: string, maxTokens = 2048): Promise<string> {
+    const client = this.getClient();
+    const response = await client.messages.create({
+      model: this.model,
+      max_tokens: maxTokens,
+      system,
+      messages: [{ role: 'user', content: userPrompt }],
+    });
+    return response.content
+      .filter((block): block is Anthropic.TextBlock => block.type === 'text')
+      .map((block) => block.text)
+      .join('')
+      .trim();
+  }
+
   /** Lista as conversas do próprio usuário, da mais recente para a mais antiga. */
   async listConversations(userId: string): Promise<ConversationSummary[]> {
     return this.prisma.aiConversation.findMany({
@@ -254,10 +361,17 @@ export class AiService {
       id: conversation.id,
       title: conversation.title,
       updatedAt: conversation.updatedAt,
-      messages: conversation.messages.map((m) => ({
-        role: m.role === 'assistant' ? 'assistant' : 'user',
-        content: m.content,
-      })),
+      messages: conversation.messages.map((m) => {
+        const data = (m.data ?? {}) as AssistantTurnData;
+        return {
+          id: m.id,
+          role: m.role === 'assistant' ? ('assistant' as const) : ('user' as const),
+          content: m.content,
+          sources: data.sources,
+          similarCases: data.similarCases,
+          error: data.error === true ? true : undefined,
+        };
+      }),
     };
   }
 
@@ -272,10 +386,13 @@ export class AiService {
   }
 
   /**
-   * Processa um novo turno do usuário: cria a conversa se necessário, carrega o
-   * histórico como contexto, chama o provedor de IA e persiste ambas as mensagens.
+   * Inicia um novo turno do usuário: cria a conversa se necessário, persiste a
+   * mensagem do usuário na hora e dispara a geração da resposta em segundo
+   * plano. O request retorna imediatamente (o proxy de produção corta requests
+   * >30s e respostas com RAG podem levar 30–45s); o cliente busca o resultado
+   * via getChatResult, que lê do banco e funciona em qualquer instância.
    */
-  async chat(
+  async startChat(
     userId: string,
     tenantId: string | null,
     conversationId: string | null,
@@ -288,7 +405,7 @@ export class AiService {
        */
       liveData?: boolean;
     } = {},
-  ): Promise<ChatResult> {
+  ): Promise<ChatStartResult> {
     let conversation:
       | { id: string; title: string }
       | null = null;
@@ -312,20 +429,154 @@ export class AiService {
       });
     }
 
-    // Histórico prévio como contexto (limitado para conter o tamanho do prompt).
-    const previous = await this.prisma.aiMessage.findMany({
-      where: { conversationId: conversation.id },
+    // Persiste o turno do usuário antes de responder: é a âncora durável do
+    // polling (o assistente vem depois dela) e garante que a pergunta não se
+    // perde mesmo se a geração falhar.
+    const userMessage = await this.prisma.aiMessage.create({
+      data: { conversationId: conversation.id, role: 'user', content },
+      select: { id: true },
+    });
+    // Atualiza updatedAt para a conversa subir na lista de histórico.
+    await this.prisma.aiConversation.update({ where: { id: conversation.id }, data: {} });
+
+    // Fire-and-forget: falhas são persistidas como turno de erro do assistente
+    // (runChatTurn nunca rejeita), então o polling sempre termina.
+    void this.runChatTurn(tenantId, conversation.id, content, options);
+
+    return {
+      pending: true,
+      conversationId: conversation.id,
+      title: conversation.title,
+      userMessageId: userMessage.id,
+    };
+  }
+
+  /**
+   * Resultado de um turno iniciado por startChat. Procura o turno do
+   * assistente persistido após a mensagem do usuário (âncora). Durável: lê do
+   * banco, então sobrevive a restart e a polling em outra instância.
+   */
+  async getChatResult(
+    userId: string,
+    conversationId: string,
+    afterMessageId: string,
+  ): Promise<ChatPollResult> {
+    const anchor = await this.prisma.aiMessage.findFirst({
+      where: {
+        id: afterMessageId,
+        conversationId,
+        conversation: { userId },
+      },
+      select: { createdAt: true },
+    });
+    if (!anchor) {
+      throw new NotFoundException('Mensagem não encontrada.');
+    }
+
+    const assistant = await this.prisma.aiMessage.findFirst({
+      where: {
+        conversationId,
+        role: 'assistant',
+        createdAt: { gte: anchor.createdAt },
+      },
+      orderBy: { createdAt: 'asc' },
+      select: { content: true, data: true },
+    });
+    if (!assistant) {
+      return { status: 'pending' };
+    }
+
+    const data = (assistant.data ?? {}) as AssistantTurnData;
+    if (data.error === true) {
+      return { status: 'error', message: assistant.content };
+    }
+    return {
+      status: 'done',
+      reply: assistant.content,
+      sources: data.sources ?? [],
+      similarCases: data.similarCases ?? [],
+    };
+  }
+
+  /**
+   * Gera e persiste o turno do assistente em segundo plano. Nunca rejeita:
+   * qualquer falha vira um turno de erro persistido (data.error=true) para o
+   * polling encerrar com mensagem clara em vez de ficar pendente para sempre.
+   */
+  private async runChatTurn(
+    tenantId: string | null,
+    conversationId: string,
+    content: string,
+    options: { liveData?: boolean },
+  ): Promise<void> {
+    try {
+      const { reply, sources, similarCases } = await this.generateChatTurn(
+        tenantId,
+        conversationId,
+        content,
+        options,
+      );
+      await this.prisma.$transaction([
+        this.prisma.aiMessage.create({
+          data: {
+            conversationId,
+            role: 'assistant',
+            content: reply,
+            data: { sources, similarCases } as unknown as Prisma.InputJsonValue,
+          },
+        }),
+        // Atualiza updatedAt para a conversa subir na lista de histórico.
+        this.prisma.aiConversation.update({ where: { id: conversationId }, data: {} }),
+      ]);
+    } catch (err) {
+      this.logger.error(
+        `Falha ao gerar turno do chat (conversa ${conversationId}): ${(err as Error).message}`,
+      );
+      try {
+        await this.prisma.aiMessage.create({
+          data: {
+            conversationId,
+            role: 'assistant',
+            content: CHAT_FAILURE_MESSAGE,
+            data: { error: true } as unknown as Prisma.InputJsonValue,
+          },
+        });
+      } catch (persistErr) {
+        this.logger.error(
+          `Falha ao persistir turno de erro do chat (conversa ${conversationId}): ${(persistErr as Error).message}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Miolo da geração de um turno: histórico como contexto, RAG, contexto ao
+   * vivo, memória operacional, chamada ao provedor e sanitização anti-alucinação.
+   */
+  private async generateChatTurn(
+    tenantId: string | null,
+    conversationId: string,
+    content: string,
+    options: { liveData?: boolean },
+  ): Promise<{
+    reply: string;
+    sources: ChatSource[];
+    similarCases: SimilarOperationalCase[];
+  }> {
+    // Histórico como contexto (limitado para conter o tamanho do prompt). O
+    // turno do usuário já foi persistido por startChat, então já vem incluso.
+    const history = await this.prisma.aiMessage.findMany({
+      where: { conversationId: conversationId },
       orderBy: { createdAt: 'asc' },
       select: { role: true, content: true },
     });
 
-    const contextMessages: ChatMessage[] = [
-      ...previous.map((m) => ({
+    const contextMessages: ChatMessage[] = history
+      .map((m) => ({
         role: m.role === 'assistant' ? ('assistant' as const) : ('user' as const),
         content: m.content,
-      })),
-      { role: 'user' as const, content },
-    ].slice(-MAX_CONTEXT_MESSAGES);
+      }))
+      .slice(-MAX_CONTEXT_MESSAGES);
 
     // RAG: recupera os trechos mais relevantes da base de conhecimento. A busca
     // degrada com segurança — se o serviço de embeddings falhar, segue sem
@@ -336,8 +587,16 @@ export class AiService {
       // priorizamos os chunks desse modelo (boost com fallback — perguntas
       // comparativas citam vários modelos e todos são priorizados).
       const boostModels = await this.detectMentionedModels(content);
-      const found = await this.knowledge.search(content, RAG_TOP_K, { boostModels });
-      hits = found.filter((h) => h.similarity >= MIN_SIMILARITY);
+      // Sobre-busca + re-ranqueamento ciente de caso: recupera 2× candidatos e
+      // reordena favorecendo classe de conhecimento superior (FIELD_VALIDATED >
+      // DOCUMENTED > DERIVED > SYNTHETIC) e correspondência de protocolo/
+      // fabricante/equipamento citados na pergunta.
+      const found = await this.knowledge.search(content, RAG_TOP_K * 2, { boostModels });
+      hits = rankKnowledgeHits(
+        found.filter((h) => h.similarity >= MIN_SIMILARITY),
+        extractKnowledgeTarget(content),
+        RAG_TOP_K,
+      );
     } catch (err) {
       this.logger.warn(`Busca na base de conhecimento indisponível: ${(err as Error).message}`);
     }
@@ -384,30 +643,15 @@ export class AiService {
     );
     // Anti-alucinação: citações [Caso N] fora dos candidatos recuperados são
     // neutralizadas — a IA só afirma precedente que a busca de fato encontrou.
-    const reply = sanitizeCaseCitations(rawReply, similarCases.length);
+    // O mesmo vale para case_id de casos técnicos (BB-XXX-NNNN): só sobrevive
+    // citação de caso que o RAG de fato trouxe no contexto.
+    const reply = sanitizeKnowledgeCaseIds(
+      sanitizeCaseCitations(rawReply, similarCases.length),
+      this.retrievedCaseIds(hits),
+    );
     const sources = this.dedupeSources(hits);
 
-    await this.prisma.$transaction([
-      this.prisma.aiMessage.create({
-        data: { conversationId: conversation.id, role: 'user', content },
-      }),
-      this.prisma.aiMessage.create({
-        data: { conversationId: conversation.id, role: 'assistant', content: reply },
-      }),
-      // Atualiza updatedAt para a conversa subir na lista de histórico.
-      this.prisma.aiConversation.update({
-        where: { id: conversation.id },
-        data: {},
-      }),
-    ]);
-
-    return {
-      reply,
-      conversationId: conversation.id,
-      title: conversation.title,
-      sources,
-      similarCases,
-    };
+    return { reply, sources, similarCases };
   }
 
   /**
@@ -592,8 +836,17 @@ export class AiService {
     let hits: KnowledgeSearchHit[] = [];
     if (query) {
       try {
-        const found = await this.knowledge.search(query, RAG_TOP_K, { type: 'PLAYBOOK' });
-        hits = found.filter((h) => h.similarity >= MIN_SIMILARITY);
+        // Playbooks continuam a base principal; casos técnicos da seed entram
+        // como fonte adicional quando relevantes (mesmo contrato da resposta).
+        const [playbooks, cases] = await Promise.all([
+          this.knowledge.search(query, RAG_TOP_K, { type: 'PLAYBOOK' }),
+          this.knowledge.search(query, RAG_TOP_K, { type: 'CASE' }),
+        ]);
+        hits = rankKnowledgeHits(
+          [...playbooks, ...cases].filter((h) => h.similarity >= MIN_SIMILARITY),
+          extractKnowledgeTarget(query),
+          RAG_TOP_K,
+        );
       } catch (err) {
         this.logger.warn(`Busca na base indisponível (sugestão): ${(err as Error).message}`);
       }
@@ -639,7 +892,10 @@ Alarmes recentes:\n${alarmsText}\n\nComo agir?`;
       SUGGEST_RULES,
       similarCases,
     );
-    const suggestion = sanitizeCaseCitations(rawSuggestion, similarCases.length);
+    const suggestion = sanitizeKnowledgeCaseIds(
+      sanitizeCaseCitations(rawSuggestion, similarCases.length),
+      this.retrievedCaseIds(hits),
+    );
 
     return {
       deviceId: device.id,
@@ -820,8 +1076,15 @@ Alarmes recentes:\n${alarmsText}\n\nComo agir?`;
 
     let hits: KnowledgeSearchHit[] = [];
     try {
-      const found = await this.knowledge.search(queryParts.join('. '), RAG_TOP_K);
-      hits = found.filter((h) => h.similarity >= MIN_SIMILARITY);
+      // Sobre-busca + re-ranqueamento ciente de caso (mesma regra do chat):
+      // classe de conhecimento superior e correspondência de protocolo/
+      // fabricante do ativo sobem no contexto.
+      const found = await this.knowledge.search(queryParts.join('. '), RAG_TOP_K * 2);
+      hits = rankKnowledgeHits(
+        found.filter((h) => h.similarity >= MIN_SIMILARITY),
+        extractKnowledgeTarget(queryParts.join('. ')),
+        RAG_TOP_K,
+      );
     } catch (err) {
       this.logger.warn(`Busca na base indisponível (primeira ação): ${(err as Error).message}`);
     }
@@ -877,14 +1140,21 @@ ${
       );
       suggestion = this.parseFirstAction(raw, hits.length > 0);
       if (suggestion) {
+        const caseIds = this.retrievedCaseIds(hits);
         suggestion = {
           ...suggestion,
           steps: suggestion.steps.map((s) => ({
             ...s,
-            text: sanitizeCaseCitations(s.text, similarCases.length),
+            text: sanitizeKnowledgeCaseIds(
+              sanitizeCaseCitations(s.text, similarCases.length),
+              caseIds,
+            ),
           })),
           note: suggestion.note
-            ? sanitizeCaseCitations(suggestion.note, similarCases.length)
+            ? sanitizeKnowledgeCaseIds(
+                sanitizeCaseCitations(suggestion.note, similarCases.length),
+                caseIds,
+              )
             : suggestion.note,
         };
       }
@@ -976,10 +1246,31 @@ ${
     }
   }
 
-  /** Monta o bloco de contexto (RAG) a ser injetado no system prompt. */
+  /** case_ids efetivamente recuperados pelo RAG (para a salvaguarda de citação). */
+  private retrievedCaseIds(hits: KnowledgeSearchHit[]): string[] {
+    return hits.map((h) => h.caseId).filter((id): id is string => Boolean(id));
+  }
+
+  /**
+   * Monta o bloco de contexto (RAG) a ser injetado no system prompt. Casos
+   * técnicos (type=CASE) ganham cabeçalho com os metadados estruturados
+   * (case_id, classificação, severidade, protocolo, fabricante, fonte) — é o
+   * que permite a citação padrão "Caso BB-BMS-XXXX (CLASSIFICAÇÃO)".
+   */
   private buildContext(hits: KnowledgeSearchHit[]): string {
     return hits
       .map((h, i) => {
+        if (h.caseId && h.knowledgeClass) {
+          const metaParts = [
+            `classificação: ${h.knowledgeClass}`,
+            h.caseSeverity ? `severidade: ${h.caseSeverity}` : null,
+            h.protocol ? `protocolo: ${h.protocol}` : null,
+            h.subsystem ? `subsistema: ${h.subsystem}` : null,
+            h.vendorScope ? `fabricante: ${h.vendorScope}` : null,
+            h.source ? `fonte: ${h.source}${h.sourceUrl ? ` (${h.sourceUrl})` : ''}` : null,
+          ].filter(Boolean);
+          return `[${i + 1}] Caso técnico ${h.caseId} — ${metaParts.join(' | ')}\n${h.content}`;
+        }
         const meta = [h.equipmentType, h.equipmentModel].filter(Boolean).join(' / ');
         const header = meta ? `${h.title} (${meta})` : h.title;
         return `[${i + 1}] ${header}\n${h.content}`;

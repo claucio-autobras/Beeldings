@@ -16,4 +16,6 @@ kind = "web"
   [services.production]
   build = [ "bash", "scripts/build-production.sh" ]
   run = [ "bash", "scripts/start-production.sh" ]
-  
+
+  [services.production.health.startup]
+  path = "/login"

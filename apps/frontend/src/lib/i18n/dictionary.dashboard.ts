@@ -58,6 +58,19 @@ export const DICT_DASHBOARD: Record<string, string> = {
   'Ver alarme': 'View alarm',
   'Fechar': 'Close',
 
+  // ── CriticalAssetInfoModal (painel informativo do cliente) ──
+  'Ativo crítico': 'Critical asset',
+  'Sem resposta há': 'No response for',
+  'Ligado há': 'Running for',
+  'Desligado há': 'Off for',
+  'desde': 'since',
+  'Sem dados de duração': 'No duration data',
+  'Última comunicação': 'Last communication',
+  'O equipamento parou de se comunicar com a plataforma — as leituras dele estão indisponíveis até a comunicação voltar. A equipe técnica acompanha este estado.':
+    'The equipment stopped communicating with the platform — its readings are unavailable until communication is restored. The technical team monitors this state.',
+  'Ver no SCADA': 'View in SCADA',
+  'Ver no CFTV': 'View in CCTV',
+
   // ── ActivityFeedCard ──
   'Atividade Recente': 'Recent Activity',
   'Trilha de auditoria': 'Audit trail',
@@ -138,17 +151,9 @@ export const DICT_DASHBOARD: Record<string, string> = {
   'Nenhum alarme no período': 'No alarms in the period',
   'Nenhum equipamento disparou alarmes na janela selecionada': 'No equipment triggered alarms in the selected window',
 
-  // ── AdminTrendCard ──
-  'Evolução no período': 'Trend over the period',
-  'Alarmes disparados e quedas de comunicação ao longo do período (todos os clientes ativos)':
-    'Alarms triggered and communication drops over the period (all active clients)',
+  // ── Séries de quedas (offline) — usadas no SeverityTimelineCard unificado ──
   'Alarmes disparados': 'Alarms triggered',
   'Quedas (offline)': 'Drops (offline)',
-  'Nada registrado no período': 'Nothing recorded in the period',
-  'Sem alarmes disparados nem quedas de comunicação na janela selecionada':
-    'No alarms triggered and no communication drops in the selected window',
-  'Alarmes disparados e quedas de comunicação por bucket de tempo':
-    'Alarms triggered and communication drops per time bucket',
 
   // ── TenantRankingCard (score composto) ──
   'Ordenado por críticos em falha, gateways offline, alarmes e backlog de ACK':
@@ -173,11 +178,18 @@ export const DICT_DASHBOARD: Record<string, string> = {
   'Média': 'Medium',
   'Alta': 'High',
   'Alarmes ao longo do tempo': 'Alarms over time',
+  'Alarmes e quedas no período': 'Alarms and drops in the period',
   'Distribuição por severidade no período selecionado':
     'Distribution by severity in the selected period',
+  'Alarmes por severidade e quedas de comunicação (todos os clientes ativos)':
+    'Alarms by severity and communication drops (all active clients)',
   'Nenhum alarme disparado no período': 'No alarms triggered in the period',
+  'Nenhum alarme nem queda de comunicação no período':
+    'No alarms or communication drops in the period',
   'Nada registrado na janela selecionada': 'Nothing recorded in the selected window',
   'Alarmes por severidade ao longo do tempo': 'Alarms by severity over time',
+  'Alarmes por severidade e quedas de comunicação ao longo do tempo':
+    'Alarms by severity and communication drops over time',
   'clique para ver': 'click to view',
 
   // ── TenantRankingCard ──

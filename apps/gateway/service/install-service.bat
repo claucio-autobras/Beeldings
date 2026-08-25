@@ -40,7 +40,7 @@ if not exist "%NSSM%" (
 )
 if not exist "%DIR%.env" (
   echo [AVISO] Arquivo .env nao encontrado em "%DIR%".
-  echo         Baixe o .env do projeto na plataforma BlueBee e coloque aqui.
+  echo         Baixe o .env do gateway na plataforma BlueBee e coloque aqui.
   echo.
 )
 

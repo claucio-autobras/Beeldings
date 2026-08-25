@@ -116,7 +116,7 @@ export class ProjectsService {
     } catch (err) {
       this.logger.error(
         `Falha ao provisionar gateway ${gatewayId} no EMQX: ${(err as Error).message}. ` +
-        'O projeto foi criado mas o gateway não tem credenciais MQTT ativas.',
+        'O gateway foi criado mas não tem credenciais MQTT ativas.',
       );
     }
 
@@ -219,7 +219,7 @@ export class ProjectsService {
     });
 
     if (!project) {
-      throw new NotFoundException(`Project ${id} não encontrado`);
+      throw new NotFoundException(`Gateway ${id} não encontrado`);
     }
 
     if (project.gateway) {
@@ -238,7 +238,7 @@ export class ProjectsService {
       where: tenantId ? { id, tenantId } : { id },
       select: { id: true },
     });
-    if (!project) throw new NotFoundException(`Project ${id} não encontrado`);
+    if (!project) throw new NotFoundException(`Gateway ${id} não encontrado`);
 
     if (dto.name !== undefined && !dto.name.trim()) {
       throw new BadRequestException('name não pode ser vazio');
@@ -274,7 +274,7 @@ export class ProjectsService {
     });
 
     if (!project?.gateway) {
-      throw new NotFoundException(`Gateway para o projeto ${projectId} não encontrado`);
+      throw new NotFoundException(`Gateway não encontrado para o ID ${projectId}`);
     }
 
     const { gateway } = project;
@@ -297,7 +297,7 @@ export class ProjectsService {
     });
 
     if (!project?.gateway) {
-      throw new NotFoundException(`Gateway para o projeto ${projectId} não encontrado`);
+      throw new NotFoundException(`Gateway não encontrado para o ID ${projectId}`);
     }
 
     const { gateway } = project;
@@ -320,7 +320,7 @@ export class ProjectsService {
       where: tenantId ? { id, tenantId } : { id },
     });
 
-    if (!project) throw new NotFoundException(`Project ${id} não encontrado`);
+    if (!project) throw new NotFoundException(`Gateway ${id} não encontrado`);
 
     const gatewayId = project.gatewayId;
 

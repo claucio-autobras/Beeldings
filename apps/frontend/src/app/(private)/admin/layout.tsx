@@ -14,6 +14,7 @@ const PRIVILEGED_PREFIXES = [
   '/admin/settings',
   '/admin/cluster',
   '/admin/knowledge',
+  '/admin/snmp-mibs',
 ];
 
 // Perfis com acesso completo à área de administração

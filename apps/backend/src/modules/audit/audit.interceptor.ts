@@ -67,13 +67,14 @@ const AUDIT_ROUTES: Record<string, AuditRoute> = {
 
   // Clientes / Sites / Projetos / Gateways
   'POST /tenants': { action: 'CREATE', entity: 'Cliente' },
+  'PATCH /tenants/:id': { action: 'UPDATE', entity: 'Cliente' },
   'PATCH /tenants/:id/status': { action: 'UPDATE', entity: 'Cliente' },
   'DELETE /tenants/:id': { action: 'DELETE', entity: 'Cliente' },
   'POST /sites': { action: 'CREATE', entity: 'Site' },
   'DELETE /sites/:id': { action: 'DELETE', entity: 'Site' },
-  'POST /projects': { action: 'CREATE', entity: 'Projeto' },
-  'PATCH /projects/:id': { action: 'UPDATE', entity: 'Projeto' },
-  'DELETE /projects/:id': { action: 'DELETE', entity: 'Projeto' },
+  'POST /projects': { action: 'CREATE', entity: 'Gateway' },
+  'PATCH /projects/:id': { action: 'UPDATE', entity: 'Gateway' },
+  'DELETE /projects/:id': { action: 'DELETE', entity: 'Gateway' },
   'DELETE /gateways/:id': { action: 'DELETE', entity: 'Gateway' },
   'POST /gateways/:id/reprovision': { action: 'UPDATE', entity: 'Gateway' },
   'POST /gateways/:id/update/cancel': { action: 'UPDATE', entity: 'Atualização do gateway' },

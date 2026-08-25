@@ -6,6 +6,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Optional,
   Param,
   Patch,
   Post,
@@ -18,22 +19,47 @@ import type { AuthenticatedUser } from '../auth/domain/interfaces/auth.interface
 import {
   resolveTenantScope,
   resolveBodyTenantScope,
-  isGlobalRole,
 } from '../auth/presentation/tenant-scope.util.js';
 import { NotificationRecipientsService } from './notification-recipients.service.js';
 import type {
   CreateRecipientInput,
   UpdateRecipientInput,
 } from './notification-recipients.service.js';
+// ExternalNotificationsModule é @Global — exporta ExternalNotificationsService
+// para todo o grafo de módulos sem importação explícita adicional.
+// Importação de valor (não `import type`) é necessária para que o compilador
+// de metadados emita o token de DI correto no reflect-metadata.
+import { ExternalNotificationsService } from '../external-notifications/external-notifications.service.js';
 
 @Controller('notification-recipients')
 @UseGuards(JwtAuthGuard)
 export class NotificationRecipientsController {
-  constructor(private readonly service: NotificationRecipientsService) {}
+  constructor(
+    private readonly service: NotificationRecipientsService,
+    // @Optional() porque em testes unitários de NotificationRecipientsModule
+    // o ExternalNotificationsModule pode não estar carregado. Em prod a injeção
+    // sempre resolve (módulo é @Global e está no AppModule).
+    @Optional()
+    private readonly externalNotifications: ExternalNotificationsService,
+  ) {}
 
   /** Escopo de tenant via query string (GET list). */
   private scope(user: AuthenticatedUser, queryTenantId?: string): string | undefined {
     return resolveTenantScope(user, queryTenantId);
+  }
+
+  /**
+   * GET /notification-recipients/providers-status
+   * Retorna se os provedores externos (Resend, Z-API) estão configurados.
+   * Rota estática — deve aparecer ANTES de /:id para não ser capturada como parâmetro.
+   */
+  @Get('/providers-status')
+  getProvidersStatus(): { email: boolean; whatsapp: boolean } {
+    if (!this.externalNotifications) {
+      // Fallback seguro: módulo não carregado (testes unitários).
+      return { email: false, whatsapp: false };
+    }
+    return this.externalNotifications.providersStatus();
   }
 
   /**

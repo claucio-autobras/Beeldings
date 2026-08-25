@@ -1,4 +1,10 @@
-import type { AuthUser, LoginCredentials, LoginResponse, AuthSession } from '../types/auth.types';
+import type {
+  AuthUser,
+  LoginCredentials,
+  LoginOutcome,
+  LoginResponse,
+  AuthSession,
+} from '../types/auth.types';
 import { usePreferencesStore, clearCachedPreferences } from '@/modules/preferences/preferences.store';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
@@ -73,6 +79,8 @@ export function clearSession(): void {
   purgeLegacySession();
   // Cookie do modo demonstração (o cookie real é HttpOnly e só o backend expira).
   document.cookie = `${SESSION_COOKIE_NAME}=; path=/; max-age=0; SameSite=Lax`;
+  // Limpa o cookie de tema para não vazar preferência para o próximo usuário.
+  document.cookie = 'bluebee_theme=; path=/; max-age=0; SameSite=Lax';
 }
 
 /**
@@ -88,7 +96,7 @@ export function purgeLegacySession(): void {
 
 // ─── signIn ───────────────────────────────────────────────────────────────────
 
-export async function signIn(credentials: LoginCredentials): Promise<AuthSession> {
+export async function signIn(credentials: LoginCredentials): Promise<AuthSession | LoginOutcome> {
   if (USE_MOCK) {
     return signInMock(credentials);
   }
@@ -107,7 +115,8 @@ export async function signIn(credentials: LoginCredentials): Promise<AuthSession
 
   // O accessToken do corpo é IGNORADO de propósito: a sessão do browser é o
   // cookie HttpOnly setado pelo backend nesta resposta.
-  const data = (await res.json()) as LoginResponse;
+  const data = (await res.json()) as LoginOutcome;
+  if ('requiresTwoFactor' in data) return data;
   const session: AuthSession = { user: data.user };
 
   saveSession(session);
@@ -117,6 +126,41 @@ export async function signIn(credentials: LoginCredentials): Promise<AuthSession
     usePreferencesStore.getState().setPreferences(data.user.preferences);
   }
   return session;
+}
+
+export async function verifyEmailTwoFactor(challengeId: string, code: string): Promise<AuthSession> {
+  const res = await fetch(`${API_URL}/auth/two-factor/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ challengeId, code }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string };
+    throw new Error(body.message ?? 'Não foi possível confirmar o código');
+  }
+  const data = (await res.json()) as LoginResponse;
+  const session: AuthSession = { user: data.user };
+  saveSession(session);
+  purgeLegacySession();
+  if (data.user.preferences) usePreferencesStore.getState().setPreferences(data.user.preferences);
+  return session;
+}
+
+export async function resendEmailTwoFactor(
+  challengeId: string,
+): Promise<{ resent: boolean; retryAfterSeconds?: number }> {
+  const res = await fetch(`${API_URL}/auth/two-factor/resend`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({ challengeId }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string };
+    throw new Error(body.message ?? 'Não foi possível reenviar o código');
+  }
+  return (await res.json()) as { resent: boolean; retryAfterSeconds?: number };
 }
 
 // ─── signOut ──────────────────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, Network, Plus, Radio, Wifi } from 'lucide-react';
 import { useCurrentUser } from '@/hooks/useCurrentUser';
@@ -61,6 +62,23 @@ export default function DevicesPage() {
 
   // Detalhe selecionado
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
+
+  // Deep-link do card Ativos Críticos (perfil técnico): ?deviceId=…&pointId=…
+  // abre direto o detalhe do dispositivo com o ponto em destaque.
+  const searchParams = useSearchParams();
+  const deepLinkDeviceId = searchParams.get('deviceId');
+  const deepLinkPointId = searchParams.get('pointId');
+  const [highlightPointId, setHighlightPointId] = useState<string | null>(null);
+  const deepLinkConsumed = useRef(false);
+  useEffect(() => {
+    // Detalhe técnico é do perfil técnico — cliente ignora o deep-link.
+    if (!isAdmin || deepLinkConsumed.current || !deepLinkDeviceId || !data) return;
+    const target = data.find((d) => d.id === deepLinkDeviceId);
+    if (!target) return;
+    deepLinkConsumed.current = true;
+    setHighlightPointId(deepLinkPointId);
+    setSelectedDevice(target);
+  }, [isAdmin, data, deepLinkDeviceId, deepLinkPointId]);
 
   // Toggle de ativo crítico (estrela) — reflete imediatamente no cache.
   const [togglingCriticalId, setTogglingCriticalId] = useState<string | null>(null);
@@ -133,11 +151,16 @@ export default function DevicesPage() {
 
   // ── Tela de detalhe ──────────────────────────────────────────────────────
   if (selectedDevice) {
+    const closeDetail = () => {
+      setSelectedDevice(null);
+      setHighlightPointId(null);
+    };
     if (selectedDevice.protocol === 'bacnet') {
       return (
         <BACnetDeviceDetail
           device={selectedDevice as BACnetDevice}
-          onBack={() => setSelectedDevice(null)}
+          onBack={closeDetail}
+          highlightPointId={highlightPointId ?? undefined}
         />
       );
     }
@@ -145,14 +168,16 @@ export default function DevicesPage() {
       return (
         <MqttDeviceDetail
           device={selectedDevice as MqttDevice}
-          onBack={() => setSelectedDevice(null)}
+          onBack={closeDetail}
+          highlightPointId={highlightPointId ?? undefined}
         />
       );
     }
     return (
       <ModbusDeviceDetail
         device={selectedDevice as ModbusDevice}
-        onBack={() => setSelectedDevice(null)}
+        onBack={closeDetail}
+        highlightPointId={highlightPointId ?? undefined}
       />
     );
   }

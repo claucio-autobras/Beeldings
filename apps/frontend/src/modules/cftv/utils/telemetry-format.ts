@@ -73,7 +73,13 @@ export function liveOrSeed(
   /** Valor sentinela do firmware — "dado não confiável". */
   unreliable?: boolean;
 } | undefined {
-  const entry = live.get(deviceTagKey(camera.id, tag));
+  // Tags are part of the wire contract, but older SCA records may contain
+  // lowercase/mixed-case tags. Resolve them canonically so a valid STATUS
+  // packet is not lost merely because the persisted point uses another case.
+  const canonicalTag = tag.trim().toUpperCase();
+  const entry =
+    live.get(deviceTagKey(camera.id, canonicalTag)) ??
+    live.get(deviceTagKey(camera.id, tag));
   if (entry) {
     return {
       value: entry.value,
@@ -82,7 +88,7 @@ export function liveOrSeed(
       unreliable: entry.unreliable,
     };
   }
-  const point = camera.points.find((p) => p.tag === tag);
+  const point = camera.points.find((p) => p.tag.trim().toUpperCase() === canonicalTag);
   if (point && point.lastValueAt) {
     return {
       value: point.lastValue,
@@ -146,11 +152,13 @@ export function cameraHealthFromReader(
   camera: Camera,
   getReading: (deviceId: string, tag: string) => { value: number | boolean | string | null; timestamp: string | null } | null,
 ): CameraHealthInfo {
-  if (!camera.points.some((p) => p.tag === 'STATUS')) return { health: 'unknown' };
+  if (!camera.points.some((p) => p.tag.trim().toUpperCase() === 'STATUS')) {
+    return { health: 'unknown' };
+  }
 
   // Live first, then persisted seed (mirrors liveOrSeed priority).
   const liveEntry = getReading(camera.id, 'STATUS');
-  const point = camera.points.find((p) => p.tag === 'STATUS');
+  const point = camera.points.find((p) => p.tag.trim().toUpperCase() === 'STATUS');
   const seedTimestamp = point?.lastValueAt ?? null;
   const seedValue = seedTimestamp ? (point?.lastValue ?? null) : null;
   const entry = liveEntry ?? (seedTimestamp ? { value: seedValue, timestamp: seedTimestamp } : null);

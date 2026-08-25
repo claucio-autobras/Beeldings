@@ -353,12 +353,12 @@ export default function AddModbusDeviceModal({ open, onClose, onCreated }: Props
               )}
             </div>
 
-            {/* Projeto — define o gateway */}
+            {/* Gateway — define o gateway do dispositivo */}
             <div>
-              <label className={labelCls}>Projeto <span className="text-red-500">*</span></label>
+              <label className={labelCls}>Gateway <span className="text-red-500">*</span></label>
               <select className={selectCls} value={projectId} onChange={(e) => handleProjectChange(e.target.value)} disabled={!siteId}>
                 <option value="">
-                  {!siteId ? 'Selecione um local primeiro' : siteProjects.length === 0 ? 'Nenhum projeto neste local' : 'Selecione o projeto'}
+                  {!siteId ? 'Selecione um local primeiro' : siteProjects.length === 0 ? 'Nenhum gateway neste local' : 'Selecione o gateway'}
                 </option>
                 {siteProjects.map((p) => (
                   <option key={p.id} value={p.id} disabled={!p.gateway}>
@@ -366,7 +366,7 @@ export default function AddModbusDeviceModal({ open, onClose, onCreated }: Props
                   </option>
                 ))}
               </select>
-              <p className="text-[11px] text-muted-foreground mt-1">O dispositivo será vinculado ao gateway deste projeto.</p>
+              <p className="text-[11px] text-muted-foreground mt-1">O dispositivo será vinculado a este gateway.</p>
             </div>
 
             {/* Modo de conexão */}

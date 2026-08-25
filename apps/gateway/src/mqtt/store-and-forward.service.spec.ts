@@ -49,7 +49,7 @@ describe('StoreAndForwardService', () => {
 
     const svc2 = makeService();
     expect(svc2.pendingCount()).toBe(1);
-    expect(svc2.drain()[0].topic).toBe('topic/a');
+    expect(svc2.peekAll()[0].topic).toBe('topic/a');
   });
 
   it('tolera arquivo totalmente corrompido sem travar e preserva o original', () => {
@@ -73,8 +73,7 @@ describe('StoreAndForwardService', () => {
 
     const svc = makeService();
     expect(svc.pendingCount()).toBe(2);
-    const drained = svc.drain();
-    expect(drained.map((m) => m.topic)).toEqual(['t1', 't2']);
+    expect(svc.peekAll().map((m) => m.topic)).toEqual(['t1', 't2']);
   });
 
   it('regrava a fila recuperada no arquivo canônico e persiste após reboot sem mutação', () => {
@@ -95,7 +94,54 @@ describe('StoreAndForwardService', () => {
 
     // Segundo boot (simula crash antes de qualquer enqueue/drain): dados persistem.
     const svc2 = makeService();
-    expect(svc2.drain().map((m) => m.topic)).toEqual(['t1', 't2']);
+    expect(svc2.peekAll().map((m) => m.topic)).toEqual(['t1', 't2']);
+  });
+
+  it('peekAll não remove mensagens — crash antes da confirmação preserva a fila', async () => {
+    const svc = makeService();
+    svc.enqueue('t1', 'p1', 1);
+    svc.enqueue('t2', 'p2', 1);
+    await svc.flush();
+
+    // Snapshot para reenvio NÃO esvazia a fila (diferente do drain antigo).
+    const snapshot = svc.peekAll();
+    expect(snapshot).toHaveLength(2);
+    expect(svc.pendingCount()).toBe(2);
+    await svc.flush();
+
+    // Simula crash no meio do reenvio (nenhuma confirmação chegou): reboot
+    // recarrega TODAS as mensagens do disco.
+    const svc2 = makeService();
+    expect(svc2.pendingCount()).toBe(2);
+  });
+
+  it('remove() confirma mensagem individual e persiste a remoção', async () => {
+    const svc = makeService();
+    svc.enqueue('t1', 'p1', 1);
+    svc.enqueue('t2', 'p2', 1);
+    svc.enqueue('t3', 'p3', 1);
+    await svc.flush();
+
+    const snapshot = svc.peekAll();
+    // Confirma a publicação de t1 e t3; t2 "falhou" e permanece.
+    svc.remove(snapshot[0]);
+    svc.remove(snapshot[2]);
+    await svc.flush();
+
+    expect(svc.pendingCount()).toBe(1);
+    expect(svc.peekAll()[0].topic).toBe('t2');
+
+    // Crash após as confirmações parciais: só a não confirmada sobrevive no disco.
+    const svc2 = makeService();
+    expect(svc2.peekAll().map((m) => m.topic)).toEqual(['t2']);
+  });
+
+  it('remove() de mensagem desconhecida é inofensivo', async () => {
+    const svc = makeService();
+    svc.enqueue('t1', 'p1', 1);
+    svc.remove({ topic: 'x', payload: 'y', qos: 1, enqueuedAt: 'z' });
+    expect(svc.pendingCount()).toBe(1);
+    await svc.flush();
   });
 
   it('conta descartes por fila cheia (observável)', async () => {

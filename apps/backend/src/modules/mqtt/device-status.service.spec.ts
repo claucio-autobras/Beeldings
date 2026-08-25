@@ -76,6 +76,70 @@ describe('DeviceStatusService — liveness explícito de gateway', () => {
     expect(service.getStatus(GW)).toBe('offline');
   });
 
+  it('telemetria ENFILEIRADA (evento anterior à queda) NÃO reanima gateway offline', () => {
+    // Gateway publica normalmente, cai (LWT), e a fila store-and-forward
+    // entrega DEPOIS uma telemetria antiga: recebida agora, mas com timestamp
+    // de payload anterior à queda — não é prova de vida.
+    const offlineAt = Date.now();
+    service.markGatewayStatus(GW, 'offline');
+    expect(service.getStatus(GW)).toBe('offline');
+
+    jest.advanceTimersByTime(10_000);
+    service.markSeen(GW, offlineAt - 60_000); // evento 60s ANTES da queda
+    expect(service.getStatus(GW)).toBe('offline');
+  });
+
+  it('telemetria com evento POSTERIOR à queda reanima o gateway', () => {
+    const offlineAt = Date.now();
+    service.markGatewayStatus(GW, 'offline');
+
+    jest.advanceTimersByTime(10_000);
+    service.markSeen(GW, offlineAt + 5_000); // evento DEPOIS da queda
+    expect(service.getStatus(GW)).toBe('online');
+  });
+
+  it('timestamp de payload no FUTURO é truncado para agora (não fabrica vida futura)', () => {
+    service.markGatewayStatus(GW, 'offline');
+    jest.advanceTimersByTime(2_000);
+    service.markSeen(GW, Date.now() + 3_600_000); // relógio do gateway adiantado
+    expect(service.getStatus(GW)).toBe('online'); // vale como "agora", que é > queda
+    expect(service.getLastSeen(GW)).toBe(new Date().toISOString());
+  });
+
+  it('evento antigo não regride o lastEventAt de uma prova de vida mais nova', () => {
+    const offlineAt = Date.now();
+    jest.advanceTimersByTime(1_000);
+    service.markSeen(GW, Date.now()); // prova de vida nova
+    jest.advanceTimersByTime(1_000);
+    service.markSeen(GW, offlineAt - 60_000); // reentrega atrasada da fila
+    service.markGatewayStatus(GW, 'offline');
+    // nada chegou após o offline → segue offline (independente da ordem acima)
+    expect(service.getStatus(GW)).toBe('offline');
+  });
+
+  it('janela de heartbeat de dispositivo é truncada no teto de 24h', () => {
+    const DEV = 'dev-mqtt-1';
+    // payload malicioso/defeituoso: janela de ~10 anos
+    service.markDeviceHeartbeat(DEV, 10 * 365 * 24 * 60 * 60_000);
+    expect(service.getStatus(DEV)).toBe('online');
+
+    // dentro do teto (24h) ainda vale…
+    jest.advanceTimersByTime(23 * 60 * 60_000);
+    expect(service.getStatus(DEV)).toBe('online');
+
+    // …mas além de 24h expira (a janela absurda foi truncada)
+    jest.advanceTimersByTime(2 * 60 * 60_000);
+    expect(service.getStatus(DEV)).toBe('offline');
+  });
+
+  it('janela de heartbeat inválida (<= 0 ou NaN) cai no padrão de 45s', () => {
+    const DEV = 'dev-mqtt-2';
+    service.markDeviceHeartbeat(DEV, Number.NaN);
+    expect(service.getStatus(DEV)).toBe('online');
+    jest.advanceTimersByTime(46_000);
+    expect(service.getStatus(DEV)).toBe('offline');
+  });
+
   it('dispositivos sem sinal explícito continuam derivando status da telemetria', () => {
     const DEV = 'device-1';
     expect(service.getStatus(DEV)).toBe('offline');

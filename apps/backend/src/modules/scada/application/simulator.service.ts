@@ -290,11 +290,11 @@ export class SimulatorService {
       select: { id: true, tenantId: true, siteId: true },
     });
     if (!project) {
-      throw new NotFoundException(`Projeto ${projectId} não encontrado`);
+      throw new NotFoundException(`Gateway ${projectId} não encontrado`);
     }
     const isGlobal = GLOBAL_ROLES.has(user.role);
     if (!isGlobal && user.tenantId !== project.tenantId) {
-      throw new ForbiddenException('Sem acesso a este projeto');
+      throw new ForbiddenException('Sem acesso a este gateway');
     }
     if (access === 'manage' && !isGlobal) {
       throw new ForbiddenException('Sem permissão para gerir a bancada de testes');
@@ -323,7 +323,7 @@ export class SimulatorService {
     }
     const projectId = this.deviceProjectId(device);
     if (!projectId) {
-      throw new BadRequestException('Dispositivo virtual sem projeto associado');
+      throw new BadRequestException('Dispositivo virtual sem gateway associado');
     }
     // Reaproveita a validação de isolamento/permissão do projeto.
     await this.resolveProject(projectId, user, access);

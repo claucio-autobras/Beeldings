@@ -13,10 +13,19 @@ export interface SnmpHealthTestDto {
   gatewayId: string;
   ip: string;
   port: number;
-  snmpVersion: '1' | '2c';
+  snmpVersion: '1' | '2c' | '3';
   community: string;
+  /** Credenciais USM decifradas (SNMPv3) — só trafegam backend → gateway. */
+  v3?: import('./snmp-diagnose.service.js').DiagnoseSnmpV3 | null;
   /** OIDs a ler no teste, keyed pela métrica ('cpu', 'memory', …). */
   oids: Record<string, string>;
+}
+
+/** Detalhe por OID (gateways ≥1.22 — ausente em gateways antigos). */
+export interface SnmpTestDetail {
+  value: number | null;
+  raw: string | null;
+  type: string | null;
 }
 
 export type SnmpHealthTestResult =
@@ -26,6 +35,8 @@ export type SnmpHealthTestResult =
       reachable: boolean;
       /** Valor cru lido por métrica (null = OID sem resposta/não suportado). */
       values: Record<string, number | null>;
+      /** Valor bruto + tipo ASN.1 por métrica (opcional — gateway novo). */
+      details?: Record<string, SnmpTestDetail>;
     }
   | { success: false; error: string };
 
@@ -38,6 +49,7 @@ interface TestResultPayload {
   success: boolean;
   reachable?: boolean;
   values?: Record<string, number | null>;
+  details?: Record<string, SnmpTestDetail>;
   error?: string;
 }
 
@@ -81,6 +93,8 @@ export class SnmpHealthTestService implements OnModuleInit {
         port: dto.port,
         snmpVersion: dto.snmpVersion,
         community: dto.community,
+        // Credenciais v3 decifradas SÓ no payload MQTT ao gateway.
+        ...(dto.snmpVersion === '3' && dto.v3 ? { v3: dto.v3 } : {}),
         oids: dto.oids,
       },
     };
@@ -141,6 +155,7 @@ export class SnmpHealthTestService implements OnModuleInit {
         success: true,
         reachable: Boolean(payload.reachable),
         values: payload.values ?? {},
+        ...(payload.details ? { details: payload.details } : {}),
       });
     } else {
       pending.resolve({

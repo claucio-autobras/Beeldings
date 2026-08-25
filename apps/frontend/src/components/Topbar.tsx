@@ -143,15 +143,28 @@ function buildNotifications(
 
 // ─── Tenant Filter Dropdown ───────────────────────────────────────────────────
 
+const TENANT_COMPACT_LIMIT = 5;
+
+function normalizeName(s: string) {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+
 interface TenantFilterDropdownProps {
   selectedTenantId: string | null;
   tenants: TenantOption[];
-  onSelect: (id: string | null) => void;
+  onSelect: (id: string | null, name?: string | null) => void;
   onClose: () => void;
 }
 
 function TenantFilterDropdown({ selectedTenantId, tenants, onSelect, onClose }: TenantFilterDropdownProps) {
   const t = useT();
+  const [query, setQuery] = useState('');
+  const [expanded, setExpanded] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-focus the search field when the dropdown opens.
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose();
@@ -160,20 +173,54 @@ function TenantFilterDropdown({ selectedTenantId, tenants, onSelect, onClose }: 
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  const q = normalizeName(query.trim());
+  const isSearching = q.length > 0;
+  const filtered = isSearching
+    ? tenants.filter((ten) => normalizeName(ten.name).includes(q))
+    : tenants;
+
+  // Compact mode: show first TENANT_COMPACT_LIMIT tenants; always include the
+  // currently-selected tenant so it remains visible even when collapsed.
+  let visibleTenants: TenantOption[];
+  let hiddenCount = 0;
+  if (isSearching || expanded) {
+    visibleTenants = filtered;
+  } else {
+    const first = tenants.slice(0, TENANT_COMPACT_LIMIT);
+    const firstIds = new Set(first.map((ten) => ten.id));
+    const pinned: TenantOption[] = [];
+    if (selectedTenantId && !firstIds.has(selectedTenantId)) {
+      const sel = tenants.find((ten) => ten.id === selectedTenantId);
+      if (sel) pinned.push(sel);
+    }
+    const compact = [...first, ...pinned];
+    hiddenCount = tenants.length - compact.length;
+    visibleTenants = compact;
+  }
+
   return (
-    <div className="absolute left-0 top-full mt-1.5 z-50 w-56 rounded-xl border border-border bg-card shadow-xl overflow-hidden">
-      <div className="px-3 py-2.5 border-b border-border">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+    <div className="absolute left-0 top-full mt-1.5 z-50 w-64 rounded-xl border border-border bg-card shadow-xl overflow-hidden">
+      <div className="px-3 pt-2.5 pb-2 border-b border-border">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">
           {t('Filtrar por cliente')}
         </p>
+        <input
+          ref={inputRef}
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={t('Buscar cliente…')}
+          className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-cyan-500"
+        />
       </div>
-      <div className="py-1">
+      <div className="py-1 max-h-72 overflow-y-auto">
+        {/* "Todos Clientes" always visible */}
         <button
           type="button"
-          onClick={() => { onSelect(null); onClose(); }}
+          onClick={() => { onSelect(null, null); onClose(); }}
           className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-sm transition-colors ${
             selectedTenantId === null
-              ? 'bg-cyan-50 text-cyan-700 font-medium dark:text-cyan-300'
+              ? 'bg-cyan-50 text-cyan-700 font-medium dark:bg-cyan-950/40 dark:text-cyan-300'
               : 'text-foreground hover:bg-muted/40'
           }`}
         >
@@ -183,14 +230,15 @@ function TenantFilterDropdown({ selectedTenantId, tenants, onSelect, onClose }: 
             <span className="ml-auto h-1.5 w-1.5 rounded-full bg-cyan-600" />
           )}
         </button>
-        {tenants.map((tenant) => (
+
+        {visibleTenants.map((tenant) => (
           <button
             key={tenant.id}
             type="button"
-            onClick={() => { onSelect(tenant.id); onClose(); }}
+            onClick={() => { onSelect(tenant.id, tenant.name); onClose(); }}
             className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-sm transition-colors ${
               selectedTenantId === tenant.id
-                ? 'bg-cyan-50 text-cyan-700 font-medium dark:text-cyan-300'
+                ? 'bg-cyan-50 text-cyan-700 font-medium dark:bg-cyan-950/40 dark:text-cyan-300'
                 : 'text-foreground hover:bg-muted/40'
             }`}
           >
@@ -206,6 +254,22 @@ function TenantFilterDropdown({ selectedTenantId, tenants, onSelect, onClose }: 
             )}
           </button>
         ))}
+
+        {/* "Ver mais" expander — only in compact mode with overflow */}
+        {!isSearching && !expanded && hiddenCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            className="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium text-cyan-600 hover:bg-muted/40 transition-colors dark:text-cyan-400"
+          >
+            {t('Ver mais')} ({hiddenCount})
+          </button>
+        )}
+
+        {/* No search results */}
+        {isSearching && visibleTenants.length === 0 && (
+          <p className="px-3 py-2.5 text-xs text-muted-foreground">{t('Nenhum resultado.')}</p>
+        )}
       </div>
     </div>
   );
@@ -330,7 +394,7 @@ export function Topbar({ onMenuClick, sidebarPinned, onToggleSidebar }: TopbarPr
   // sem precisar recarregar a página.
   useAlarmRealtime();
 
-  const { selectedTenantId, setTenant } = useTenantFilter();
+  const { selectedTenantId, selectedTenantName: persistedTenantName, setTenant } = useTenantFilter();
   const { selectedSiteId, setSite } = useSiteFilter();
 
   // Admin usa o tenant selecionado globalmente; cliente usa o próprio tenantId
@@ -345,11 +409,38 @@ export function Topbar({ onMenuClick, sidebarPinned, onToggleSidebar }: TopbarPr
     ? (sites.find((s) => s.id === selectedSiteId)?.name ?? null)
     : null;
 
-  // Ao trocar de cliente (admin), zera o site selecionado para não vazar escopo.
+  // Tracks the tenantId for which we are waiting to auto-select the first site.
+  // Set when the admin picks a new tenant; cleared once sites load or the user
+  // manually picks a site first (so we never overwrite a deliberate choice).
+  const pendingAutoSelectTenantRef = useRef<string | null>(null);
+
+  // Ao trocar de cliente (admin), zera o site e agenda auto-seleção do primeiro site.
   useEffect(() => {
-    if (isAdmin) setSite(null);
+    if (!isAdmin) return;
+    if (selectedTenantId) {
+      pendingAutoSelectTenantRef.current = selectedTenantId;
+    } else {
+      pendingAutoSelectTenantRef.current = null;
+    }
+    setSite(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTenantId]);
+
+  // Auto-selects the first site once the sites list loads for the newly selected tenant.
+  useEffect(() => {
+    if (!isAdmin) return;
+    const pending = pendingAutoSelectTenantRef.current;
+    if (!pending) return;
+    // Guard: tenant changed again before sites loaded.
+    if (pending !== selectedTenantId) {
+      pendingAutoSelectTenantRef.current = null;
+      return;
+    }
+    if (sites.length === 0) return; // still loading or genuinely no sites
+    setSite(sites[0].id);
+    pendingAutoSelectTenantRef.current = null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sites, selectedTenantId]);
 
   // Permite que o card "Sites" do dashboard abra este seletor.
   useEffect(() => {
@@ -378,9 +469,24 @@ export function Topbar({ onMenuClick, sidebarPinned, onToggleSidebar }: TopbarPr
   const acknowledgeAlarm = useAcknowledgeAlarm();
   const devices = useDevices(effectiveTenantId ?? undefined).data ?? [];
 
+  // Ordem de prioridade: nome fresco da query → nome persistido no localStorage
+  // → null. NUNCA exibe o UUID como fallback visível.
   const selectedTenantName = selectedTenantId
-    ? (tenants.find((t) => t.id === selectedTenantId)?.name ?? selectedTenantId)
+    ? (tenants.find((t) => t.id === selectedTenantId)?.name ?? persistedTenantName ?? null)
     : null;
+
+  // Migração de estado legado: usuários com tenant salvo antes deste deploy têm
+  // somente o ID no localStorage (sem nome e sem cookie). Assim que useTenants
+  // resolve, persistimos o par id+nome para que o próximo refresh já seja
+  // imediato (o servidor lerá o cookie e renderizará o nome correto).
+  useEffect(() => {
+    if (!selectedTenantId) return;
+    const freshName = tenants.find((t) => t.id === selectedTenantId)?.name;
+    if (!freshName) return;
+    if (freshName === persistedTenantName) return; // já sincronizado
+    setTenant(selectedTenantId, freshName);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTenantId, persistedTenantName, tenants]);
 
   // Identidade do cliente na topbar: cliente logado vê o próprio tenant;
   // admin vê o cliente selecionado no filtro (nada em "Todos os Clientes").
@@ -542,7 +648,9 @@ export function Topbar({ onMenuClick, sidebarPinned, onToggleSidebar }: TopbarPr
               >
                 <Building2 size={13} strokeWidth={1.5} className={selectedTenantId ? 'text-cyan-600 dark:text-cyan-400' : 'text-slate-400'} />
                 <span className="max-w-[120px] truncate">
-                  {selectedTenantName ?? t('Todos Clientes')}
+                  {selectedTenantId !== null && selectedTenantName === null
+                    ? '\u2026'
+                    : (selectedTenantName ?? t('Todos Clientes'))}
                 </span>
                 <ChevronDown
                   size={12}
@@ -637,7 +745,11 @@ export function Topbar({ onMenuClick, sidebarPinned, onToggleSidebar }: TopbarPr
                   <SiteFilterDropdown
                     selectedSiteId={selectedSiteId}
                     sites={sites}
-                    onSelect={setSite}
+                    onSelect={(id) => {
+                      // Cancel any pending auto-select so manual choice is not overwritten.
+                      pendingAutoSelectTenantRef.current = null;
+                      setSite(id);
+                    }}
                     onClose={() => setSiteFilterOpen(false)}
                   />
                 </>

@@ -17,6 +17,14 @@ misses a clean/LWT drop. LWT is broker-driven on real disconnect → reliable.
 - Explicit `offline` (LWT/shutdown) wins over recent telemetry — EXCEPT if
   telemetry arrived AFTER the offline timestamp (gateway came back and publishes
   data before the next heartbeat). That recovery clause lives in `getStatus()`.
+- The recovery clause compares the telemetry's PAYLOAD timestamp (event time),
+  not receive time: the gateway's store-and-forward queue re-delivers OLD
+  messages after reconnect, and receive-time-only comparison would reanimate a
+  dead gateway with stale data. `markSeen(id, eventAtMs?)` keeps a monotonic
+  `lastEventAt` (future timestamps clamped to now); only `eventAt > offline.at`
+  reactivates online. New telemetry paths MUST pass the payload timestamp.
+- MQTT `device-heartbeat` timeout windows are capped at 24h and invalid values
+  fall back to the 45s default — never trust client-supplied windows blindly.
 - Explicit `online` only holds within the heartbeat window (`HEARTBEAT_THRESHOLD_MS`
   = 45s = 3× the gateway's 15s heartbeat). Keep the two in lockstep if you change
   the gateway interval (`HEARTBEAT_INTERVAL_MS` in gateway-mqtt.service).

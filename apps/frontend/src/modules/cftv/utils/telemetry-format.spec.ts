@@ -157,6 +157,17 @@ describe('cenário 3 — gateway volta online + STATUS=1 recente', () => {
     // Dado recente vence o LWT
     expect(result.health).toBe('online');
   });
+
+  it('aceita tag STATUS com capitalização legada no ponto persistido', () => {
+    const camera = makeCamera({
+      lastValue: null,
+      lastValueAt: null,
+      gatewayOnline: null,
+    });
+    camera.points[0].tag = 'status';
+    const result = cameraHealthInfo(camera, liveWith('cam-1', 1, ts(-FRESH_AGE_MS)));
+    expect(result.health).toBe('online');
+  });
 });
 
 // ─── Cenário 4: gateway online + STATUS=0 ────────────────────────────────────

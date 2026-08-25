@@ -285,14 +285,18 @@ export class BacnetMqttSubscriber implements OnModuleInit {
 
     // Marca device E gateway como vistos agora — base única do status ao vivo
     // (online/offline). tenant/gateway vêm do tópico: bluebee/{tenant}/gateway/{id}/telemetry
+    // O timestamp do PAYLOAD acompanha a marcação: telemetria antiga reentregue
+    // pela fila store-and-forward não pode reanimar um gateway derrubado por LWT.
     const parts = topic.split('/');
     const tenantId = parts[1];
+    const eventAtMs = typeof data.timestamp === 'string' ? Date.parse(data.timestamp) : NaN;
+    const eventAt = Number.isFinite(eventAtMs) ? eventAtMs : undefined;
     if (data.deviceId) {
-      this.deviceStatus.markSeen(data.deviceId);
+      this.deviceStatus.markSeen(data.deviceId, eventAt);
     }
     const gatewayId = parts[3];
     if (gatewayId) {
-      this.deviceStatus.markSeen(gatewayId);
+      this.deviceStatus.markSeen(gatewayId, eventAt);
     }
 
     // Escopo por tenant (room) — isolamento entre clientes de tenants diferentes.

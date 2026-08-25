@@ -89,9 +89,15 @@ const CRITICAL_MARK_HINT =
 interface Props {
   device: BACnetDevice;
   onBack: () => void;
+  /** Deep-link do card Ativos Críticos: ponto a destacar/rolar até. */
+  highlightPointId?: string;
 }
 
-export default function BACnetDeviceDetail({ device: initialDevice, onBack }: Props) {
+export default function BACnetDeviceDetail({ device: initialDevice, onBack, highlightPointId }: Props) {
+  // Rola até o ponto destacado assim que ele renderiza (uma vez).
+  const scrollToHighlight = (el: HTMLElement | null) => {
+    el?.scrollIntoView({ block: 'center' });
+  };
   const [device, setDevice] = useState<BACnetDevice>({
     ...initialDevice,
     points: initialDevice.points ?? [],
@@ -374,7 +380,15 @@ export default function BACnetDeviceDetail({ device: initialDevice, onBack }: Pr
               const expanded = expandedPointId === p.id;
 
               return (
-                <div key={p.id} className={expanded ? 'bg-muted/30' : ''}>
+                <div
+                  key={p.id}
+                  ref={p.id === highlightPointId ? scrollToHighlight : undefined}
+                  className={
+                    p.id === highlightPointId
+                      ? 'bg-cyan-50/70 ring-1 ring-inset ring-cyan-300 dark:bg-cyan-950/30 dark:ring-cyan-800'
+                      : expanded ? 'bg-muted/30' : ''
+                  }
+                >
                   <div
                     onClick={() => setExpandedPointId(expanded ? null : p.id)}
                     className="cursor-pointer px-4 py-3 space-y-2 transition-colors active:bg-muted/20"
@@ -543,8 +557,13 @@ export default function BACnetDeviceDetail({ device: initialDevice, onBack }: Pr
                   return (
                     <Fragment key={p.id}>
                     <tr
+                      ref={p.id === highlightPointId ? scrollToHighlight : undefined}
                       onClick={() => setExpandedPointId(expanded ? null : p.id)}
-                      className={`cursor-pointer transition-colors ${expanded ? 'bg-muted/30' : 'hover:bg-muted/20'}`}
+                      className={`cursor-pointer transition-colors ${
+                        p.id === highlightPointId
+                          ? 'bg-cyan-50/70 ring-1 ring-inset ring-cyan-300 dark:bg-cyan-950/30 dark:ring-cyan-800'
+                          : expanded ? 'bg-muted/30' : 'hover:bg-muted/20'
+                      }`}
                     >
                       {/* Nome / Tag */}
                       <td className="px-4 py-3">

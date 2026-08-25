@@ -91,3 +91,25 @@ export async function resolveRecipients(params: {
   if (params.siteId) qs.set('siteId', params.siteId);
   return apiGet<ResolvedRecipient[]>(`/notification-recipients/resolve?${qs.toString()}`);
 }
+
+export interface ProvidersStatus {
+  email: boolean;
+  whatsapp: boolean;
+}
+
+export interface TestChannelResult {
+  ok: boolean;
+  error?: string;
+  providersStatus: ProvidersStatus;
+}
+
+export async function getProvidersStatus(): Promise<ProvidersStatus> {
+  return apiGet<ProvidersStatus>('/notification-recipients/providers-status');
+}
+
+export async function testChannel(
+  recipientId: string,
+  channel: 'email' | 'whatsapp',
+): Promise<TestChannelResult> {
+  return apiPost<TestChannelResult>(`/notification-recipients/${recipientId}/test`, { channel });
+}

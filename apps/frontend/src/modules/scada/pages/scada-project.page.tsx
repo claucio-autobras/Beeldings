@@ -70,7 +70,7 @@ export default function ScadaProjectPage({ projectId }: { projectId: string }) {
       <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-red-200 bg-red-50 py-16">
         <p className="text-sm font-medium text-red-700">Erro ao carregar projeto</p>
         <p className="mt-1 text-xs text-red-600">{(error as Error)?.message}</p>
-        <Link href="/scada" className="mt-3 text-xs font-medium text-primary hover:underline">Voltar para projetos</Link>
+        <Link href="/scada" className="mt-3 text-xs font-medium text-primary hover:underline">Voltar para Projetos</Link>
       </div>
     );
   }
@@ -110,7 +110,7 @@ export default function ScadaProjectPage({ projectId }: { projectId: string }) {
       ) : screens.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card py-20">
           <Monitor className="h-10 w-10 text-muted-foreground" strokeWidth={1} />
-          <p className="mt-3 text-sm font-medium text-foreground">Nenhuma tela neste projeto</p>
+          <p className="mt-3 text-sm font-medium text-foreground">Nenhuma tela neste Cliente</p>
           <p className="mt-1 text-xs text-muted-foreground">
             {canEdit ? 'Clique em "Nova Tela" para criar a primeira' : 'Aguarde o integrador configurar as telas'}
           </p>

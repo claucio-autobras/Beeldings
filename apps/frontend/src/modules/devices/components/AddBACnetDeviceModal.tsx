@@ -475,7 +475,7 @@ export default function AddBACnetDeviceModal({ open, onClose, onCreated }: Props
                           <span>{s.name}</span>
                           {typeof s._count?.projects === 'number' && (
                             <span className="ml-2 text-xs text-muted-foreground">
-                              ({s._count.projects} projeto{s._count.projects !== 1 ? 's' : ''})
+                              ({s._count.projects} gateway{s._count.projects !== 1 ? 's' : ''})
                             </span>
                           )}
                         </div>
@@ -493,10 +493,10 @@ export default function AddBACnetDeviceModal({ open, onClose, onCreated }: Props
                 )}
               </div>
 
-              {/* Projeto — define o gateway do dispositivo */}
+              {/* Gateway — define o gateway do dispositivo */}
               <div>
                 <label className={labelCls}>
-                  Projeto <span className="text-red-500">*</span>
+                  Gateway <span className="text-red-500">*</span>
                 </label>
                 <select
                   className={selectCls}
@@ -508,8 +508,8 @@ export default function AddBACnetDeviceModal({ open, onClose, onCreated }: Props
                     {!siteId
                       ? 'Selecione um local primeiro'
                       : siteProjects.length === 0
-                        ? 'Nenhum projeto neste local'
-                        : 'Selecione o projeto'}
+                        ? 'Nenhum gateway neste local'
+                        : 'Selecione o gateway'}
                   </option>
                   {siteProjects.map((p) => (
                     <option key={p.id} value={p.id} disabled={!p.gateway}>
@@ -518,7 +518,7 @@ export default function AddBACnetDeviceModal({ open, onClose, onCreated }: Props
                   ))}
                 </select>
                 <p className="text-[11px] text-muted-foreground mt-1">
-                  O dispositivo será vinculado ao gateway deste projeto.
+                  O dispositivo será vinculado a este gateway.
                 </p>
               </div>
 

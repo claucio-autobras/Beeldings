@@ -87,7 +87,7 @@ function ClientViewer() {
                     </span>
                     <span className="mt-0.5 block truncate text-xs text-muted-foreground">
                       {typeof projects === 'number'
-                        ? `${projects} ${projects === 1 ? 'projeto' : 'projetos'}`
+                        ? `${projects} ${projects === 1 ? 'gateway' : 'gateways'}`
                         : 'Toque para visualizar'}
                     </span>
                   </span>

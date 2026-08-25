@@ -195,6 +195,90 @@ export class TenantsController {
   }
 
   /**
+   * PATCH /tenants/:id — edita nome e/ou slug do cliente. Apenas ADMIN.
+   * O slug é normalizado (minúsculas, hifens) como no fluxo de criação e a
+   * colisão com outro cliente vira 400 amigável em vez de estourar a
+   * constraint única do banco. Resposta no formato TenantItem, o mesmo que a
+   * tela de Ajustes espera para atualizar lista/seletor/topbar.
+   */
+  @Patch(':id')
+  async updateTenant(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() body: { name?: string; slug?: string },
+  ) {
+    if (user.role !== 'ADMIN') {
+      throw new BadRequestException('Apenas administradores podem editar clientes');
+    }
+
+    const tenant = await this.prisma.tenant.findUnique({ where: { id } });
+    if (!tenant) throw new NotFoundException('Cliente não encontrado');
+
+    const data: { name?: string; slug?: string } = {};
+
+    if (body?.name !== undefined) {
+      if (typeof body.name !== 'string' || body.name.trim().length === 0) {
+        throw new BadRequestException('Nome do cliente não pode ser vazio');
+      }
+      data.name = body.name.trim();
+    }
+
+    if (body?.slug !== undefined) {
+      if (typeof body.slug !== 'string') {
+        throw new BadRequestException('Slug inválido');
+      }
+      const slug = body.slug
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '');
+      if (!slug) {
+        throw new BadRequestException(
+          'Slug inválido: use letras minúsculas, números e hífens (ex.: minha-empresa)',
+        );
+      }
+      if (slug !== tenant.slug) {
+        const existing = await this.prisma.tenant.findUnique({ where: { slug } });
+        if (existing && existing.id !== id) {
+          throw new BadRequestException('Já existe um cliente com este slug');
+        }
+      }
+      data.slug = slug;
+    }
+
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException('Informe name e/ou slug');
+    }
+
+    let updated;
+    try {
+      updated = await this.prisma.tenant.update({
+        where: { id },
+        data,
+        include: { _count: { select: { sites: true, devices: true } } },
+      });
+    } catch (err) {
+      // P2002 = violação de unicidade (corrida entre o check e o update).
+      if ((err as { code?: string })?.code === 'P2002') {
+        throw new BadRequestException('Já existe um cliente com este slug');
+      }
+      throw err;
+    }
+
+    return {
+      id: updated.id,
+      name: updated.name,
+      slug: updated.slug,
+      active: updated.active,
+      logoUrl: updated.logoUrl,
+      accentColor: updated.accentColor,
+      siteCount: updated._count.sites,
+      deviceCount: updated._count.devices,
+      createdAt: updated.createdAt.toISOString(),
+    };
+  }
+
+  /**
    * PATCH /tenants/:id/auto-trend — liga/desliga a cobertura automática de
    * trends (historização padrão em novos pontos). Apenas ADMIN. Não mexe nas
    * trends já criadas; afeta somente cadastros/syncs futuros.

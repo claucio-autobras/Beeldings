@@ -1,6 +1,7 @@
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { EmqxProvisioningService } from './emqx-provisioning.service.js';
+import { AuditService, type AuditActor } from '../../audit/audit.service.js';
 import type { CreateSiteDto } from './dtos/create-site.dto.js';
 import type { UpdateSiteDto } from './dtos/update-site.dto.js';
 import type { Site } from '@prisma/client';
@@ -12,6 +13,7 @@ export class SitesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly emqx: EmqxProvisioningService,
+    private readonly audit: AuditService,
   ) {}
 
   /**
@@ -66,7 +68,12 @@ export class SitesService {
     return site;
   }
 
-  async update(id: string, tenantId: string | undefined, dto: UpdateSiteDto): Promise<Site> {
+  async update(
+    id: string,
+    tenantId: string | undefined,
+    dto: UpdateSiteDto,
+    actor?: AuditActor | null,
+  ): Promise<Site> {
     const site = await this.prisma.site.findFirst({
       where: tenantId ? { id, tenantId } : { id },
     });
@@ -76,6 +83,16 @@ export class SitesService {
     if (dto.name !== undefined) {
       const trimmed = dto.name.trim();
       if (trimmed.length === 0) throw new BadRequestException('name não pode ser vazio');
+
+      // Unicidade: não pode existir outro site com o mesmo nome para o mesmo cliente.
+      const conflict = await this.prisma.site.findFirst({
+        where: { tenantId: site.tenantId, name: trimmed, id: { not: id } },
+        select: { id: true },
+      });
+      if (conflict) {
+        throw new ConflictException(`Já existe um site com o nome "${trimmed}" para este cliente`);
+      }
+
       data.name = trimmed;
     }
     if (dto.location !== undefined) {
@@ -87,7 +104,24 @@ export class SitesService {
 
     if (Object.keys(data).length === 0) return site;
 
-    return this.prisma.site.update({ where: { id }, data });
+    const updated = await this.prisma.site.update({ where: { id }, data });
+
+    // Registra renomeação no audit log (fire-and-forget, nunca derruba a operação).
+    if (data.name !== undefined && data.name !== site.name) {
+      void this.audit.record({
+        actor,
+        action: 'UPDATE',
+        entityType: 'Site',
+        entityId: id,
+        entityName: updated.name,
+        change: `Nome: "${site.name}" → "${updated.name}"`,
+        before: { name: site.name },
+        after: { name: updated.name },
+        tenantId: site.tenantId,
+      });
+    }
+
+    return updated;
   }
 
   async delete(id: string, tenantId: string | undefined): Promise<void> {

@@ -18,4 +18,6 @@ Regras duras:
 
 Disponibilidade por credencial, não protocolo: câmera SNMP também pode ter `onvifUsername/onvifPasswordEnc` (porta em `config.onvifPort`, pois `device.port` é a do SNMP) e/ou `rtspUrl`. Backend valida presença de creds/RTSP (não protocol); API expõe `liveViewAvailable` que gateia o botão no CFTV e no CameraWidget. Sem usuário ONVIF o gateway roda modo RTSP-only (nunca tenta connectOnvif). Mudança no gateway = bump de versão + manifest --update.
 
+No card CFTV, “Ao vivo” é sempre visível: habilita somente com `liveViewAvailable` e câmera online; indisponível explica se falta fonte ONVIF/RTSP, se está offline, ou ambos. **Why:** protocolo de monitoramento e canal de vídeo são independentes; botão ausente oculta a ação corretiva. **How to apply:** preserve este contrato no card CFTV sem iniciar sessão para ações desabilitadas; comportamento do widget SCADA é separado.
+
 UI: estados terminais (UNSUPPORTED/erro/sinal perdido) NUNCA reiniciam a sessão sozinhos — auto-restart pós-falha de keepalive só quando a sessão estava saudável (live/connecting), senão o 404 da sessão encerrada vira loop de restart. Retomada é sempre ação explícita do operador.

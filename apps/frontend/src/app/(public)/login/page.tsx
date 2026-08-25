@@ -7,7 +7,7 @@ import { useT } from '@/lib/i18n';
 export default function LoginPage() {
   const t = useT();
   return (
-    <main className="grid min-h-screen bg-card lg:grid-cols-2">
+    <main className="grid min-h-screen bg-card lg:grid-cols-[1.05fr_1fr]">
       {/* Painel de marca — visível a partir de lg */}
       <LoginBrandPanel />
 

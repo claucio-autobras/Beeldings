@@ -45,7 +45,7 @@ export class ProjectsController {
     for (const field of ['address', 'technicalContact']) {
       if (field in body) {
         throw new BadRequestException(
-          `O campo "${field}" não é mais aceito em projetos — cadastre endereço/contato no Site.`,
+          `O campo "${field}" não é mais aceito em gateways — cadastre endereço/contato no Site.`,
         );
       }
     }
@@ -189,7 +189,7 @@ export class ProjectsController {
   ): Promise<Project> {
     this.rejectLegacyProjectFields(body as Record<string, unknown>);
     if (user.role !== 'ADMIN' && user.role !== 'CCO' && user.role !== 'SUPERVISOR') {
-      throw new BadRequestException('Sem permissão para editar projetos');
+      throw new BadRequestException('Sem permissão para editar gateways');
     }
     const tenantId = resolveTenantScope(user);
     return this.projectsService.update(id, tenantId, body);
@@ -203,7 +203,7 @@ export class ProjectsController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<void> {
     if (user.role !== 'ADMIN' && user.role !== 'CCO') {
-      throw new BadRequestException('Sem permissão para excluir projetos');
+      throw new BadRequestException('Sem permissão para excluir gateways');
     }
     const tenantId = resolveTenantScope(user);
     return this.projectsService.delete(id, tenantId);

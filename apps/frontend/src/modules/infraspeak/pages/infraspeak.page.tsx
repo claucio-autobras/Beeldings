@@ -1,7 +1,17 @@
 'use client';
 
-import { useState } from 'react';
-import { CheckCircle2, ClipboardList, Clock, Plus, RefreshCw, TriangleAlert, Wrench } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import {
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  ClipboardList,
+  Clock,
+  Plus,
+  RefreshCw,
+  TriangleAlert,
+  Wrench,
+} from 'lucide-react';
 import { ApiError } from '@/lib/api-client';
 import { useT } from '@/lib/i18n';
 import { useInfraspeakRequests } from '../hooks/useInfraspeakRequests';
@@ -11,6 +21,9 @@ import { PRIORITY_FILTER_OPTIONS, STATE_FILTER_OPTIONS } from '../infraspeak.lab
 
 type StateFilter = string | 'all';
 type PriorityFilter = number | 'all';
+
+/** Chamados exibidos por página na tabela (paginação local). */
+const PAGE_SIZE = 30;
 
 /**
  * Traduz o erro técnico da integração em uma mensagem acionável para o usuário.
@@ -57,18 +70,31 @@ export default function InfraspeakPage() {
   const [stateFilter, setStateFilter] = useState<StateFilter>('all');
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>('all');
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [page, setPage] = useState(1);
 
-  const { data, isLoading, isFetching, error, refetch } = useInfraspeakRequests({
+  const { data, dataUpdatedAt, isLoading, isFetching, error, refetch } = useInfraspeakRequests({
     state: stateFilter === 'all' ? undefined : stateFilter,
     priority: priorityFilter === 'all' ? undefined : priorityFilter,
   });
 
-  const items = data?.data ?? [];
+  const items = useMemo(() => data?.data ?? [], [data]);
+
+  // Paginação local: a lista completa já vem do backend; aqui só fatiamos a
+  // exibição. Os cartões de resumo continuam calculados sobre o total.
+  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pageItems = useMemo(
+    () => items.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
+    [items, currentPage],
+  );
+
   const openCount = items.filter((i) => !i.completedDate && !i.solved).length;
+  // "SLA vencido" comparado ao instante da última atualização dos dados
+  // (dataUpdatedAt): valor estável entre renders, atualizado a cada refetch.
   const overdueCount = items.filter((i) => {
     if (!i.nextSlaDate || i.completedDate || i.solved) return false;
     const d = new Date(i.nextSlaDate.replace(' ', 'T'));
-    return !Number.isNaN(d.getTime()) && d.getTime() < Date.now();
+    return !Number.isNaN(d.getTime()) && d.getTime() < dataUpdatedAt;
   }).length;
 
   const cards = [
@@ -139,7 +165,10 @@ export default function InfraspeakPage() {
           <span className="text-xs font-medium text-muted-foreground">{t('Estado:')}</span>
           <button
             type="button"
-            onClick={() => setStateFilter('all')}
+            onClick={() => {
+              setStateFilter('all');
+              setPage(1);
+            }}
             className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
               stateFilter === 'all'
                 ? 'border-cyan-600 bg-cyan-50 text-cyan-700 dark:bg-cyan-500/10 dark:text-cyan-400'
@@ -152,7 +181,10 @@ export default function InfraspeakPage() {
             <button
               key={f.value}
               type="button"
-              onClick={() => setStateFilter(f.value)}
+              onClick={() => {
+                setStateFilter(f.value);
+                setPage(1);
+              }}
               className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
                 stateFilter === f.value
                   ? 'border-cyan-600 bg-cyan-50 text-cyan-700 dark:bg-cyan-500/10 dark:text-cyan-400'
@@ -167,7 +199,10 @@ export default function InfraspeakPage() {
           <span className="text-xs font-medium text-muted-foreground">{t('Prioridade:')}</span>
           <button
             type="button"
-            onClick={() => setPriorityFilter('all')}
+            onClick={() => {
+              setPriorityFilter('all');
+              setPage(1);
+            }}
             className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
               priorityFilter === 'all'
                 ? 'border-cyan-600 bg-cyan-50 text-cyan-700 dark:bg-cyan-500/10 dark:text-cyan-400'
@@ -180,7 +215,10 @@ export default function InfraspeakPage() {
             <button
               key={f.value}
               type="button"
-              onClick={() => setPriorityFilter(f.value)}
+              onClick={() => {
+                setPriorityFilter(f.value);
+                setPage(1);
+              }}
               className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
                 priorityFilter === f.value
                   ? 'border-cyan-600 bg-cyan-50 text-cyan-700 dark:bg-cyan-500/10 dark:text-cyan-400'
@@ -219,7 +257,41 @@ export default function InfraspeakPage() {
           {t('Consultando chamados na Infraspeak…')}
         </div>
       ) : (
-        <InfraspeakRequestsTable items={items} />
+        <>
+          <InfraspeakRequestsTable items={pageItems} />
+          {items.length > PAGE_SIZE && (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs text-muted-foreground">
+                {t('Mostrando')} {(currentPage - 1) * PAGE_SIZE + 1}–
+                {Math.min(currentPage * PAGE_SIZE, items.length)} {t('de')} {items.length}{' '}
+                {t('chamados')}
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPage(Math.max(1, currentPage - 1))}
+                  disabled={currentPage <= 1}
+                  className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <ChevronLeft size={13} />
+                  {t('Anterior')}
+                </button>
+                <span className="text-xs font-medium text-muted-foreground">
+                  {t('Página')} {currentPage} {t('de')} {totalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPage(Math.min(totalPages, currentPage + 1))}
+                  disabled={currentPage >= totalPages}
+                  className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {t('Próxima')}
+                  <ChevronRight size={13} />
+                </button>
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

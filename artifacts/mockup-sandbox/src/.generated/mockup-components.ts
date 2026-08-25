@@ -8,5 +8,6 @@ export const modules: ModuleMap = {
   "./components/mockups/ativos-criticos/DashboardComCard.tsx": () => import("../components/mockups/ativos-criticos/DashboardComCard.tsx"),
   "./components/mockups/ativos-criticos/ToggleCFTV.tsx": () => import("../components/mockups/ativos-criticos/ToggleCFTV.tsx"),
   "./components/mockups/ativos-criticos/ToggleDispositivos.tsx": () => import("../components/mockups/ativos-criticos/ToggleDispositivos.tsx"),
-  "./components/mockups/client-dashboard/Cliente.tsx": () => import("../components/mockups/client-dashboard/Cliente.tsx")
+  "./components/mockups/client-dashboard/Cliente.tsx": () => import("../components/mockups/client-dashboard/Cliente.tsx"),
+  "./components/mockups/login-beeldings/Moderno.tsx": () => import("../components/mockups/login-beeldings/Moderno.tsx")
 };

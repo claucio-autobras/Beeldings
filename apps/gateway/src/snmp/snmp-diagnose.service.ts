@@ -3,7 +3,21 @@ import { OnEvent } from '@nestjs/event-emitter';
 import * as snmp from 'net-snmp';
 
 import { GatewayMqttService } from '../mqtt/gateway-mqtt.service';
-import { classifySnmpError, parseSnmpNumber } from './snmp-read.util';
+import {
+  classifySnmpError,
+  createSnmpSession,
+  parseSnmpNumber,
+  type SnmpV3Credentials,
+} from './snmp-read.util';
+import {
+  resolveWalkRoots,
+  walkSnmpSubtree,
+  type DiscoveredSnmpObject,
+  type WalkErrorKind,
+  type WalkRoot,
+} from './snmp-walk.util';
+import { resolveDiscoveryWalkRoots } from '../profiles/profile-registry';
+import { resolveCanonicalMetrics, type OidReadResult as CanonicalOidReadResult } from './snmp-canonical-resolver';
 
 /** OID candidato a testar (vem dos perfis de fabricante do backend). */
 interface DiagnoseOidProbe {
@@ -19,12 +33,20 @@ export interface SnmpDiagnoseCommand {
   gateway_id: string;
   ip: string;
   port: number;
-  snmpVersion: '1' | '2c';
+  snmpVersion: '1' | '2c' | '3';
   community: string;
+  /** Credenciais USM (SNMPv3) — gateways antigos ignoram o campo. */
+  v3?: SnmpV3Credentials | null;
   /** OIDs atualmente cadastrados nos pontos da câmera. */
   current: DiagnoseOidProbe[];
   /** OIDs candidatos de todos os perfis conhecidos (deduplicados no backend). */
   candidates: DiagnoseOidProbe[];
+  /**
+   * Dicas de identificação do device (opcionais — gateways antigos ignoram):
+   * permitem que perfis de fabricante aportem raízes de walk proprietárias.
+   */
+  deviceType?: string;
+  manufacturer?: string;
 }
 
 /** Resultado de um GET individual. */
@@ -44,16 +66,43 @@ interface SharedSnmpSession {
   close: () => void;
 }
 
-interface WalkEntry {
-  oid: string;
-  value: string;
-}
-
+/**
+ * Seção de walk no resultado. `entries` preserva o shape legado
+ * ({ oid, value }) acrescido dos campos novos (type, numeric, index) —
+ * consumidores antigos continuam funcionando.
+ */
 interface WalkSection {
   root: string;
   label: string;
-  entries: WalkEntry[];
+  entries: DiscoveredSnmpObject[];
   truncated: boolean;
+  /** Objetos encontrados nesta subárvore. */
+  found: number;
+  /** Varbinds descartados por motivo (nunca por sufixo/tipo válido). */
+  discarded: Record<string, number>;
+  /** Erro terminal do walk desta raiz (null = ok). */
+  error: WalkErrorKind | null;
+  durationMs: number;
+}
+
+/** Estatísticas agregadas do walk (diagnóstico enriquecido). */
+interface WalkStats {
+  /** Alvo do walk — SEM a community (credencial nunca sai no resultado). */
+  target: { ip: string; port: number; snmpVersion: string };
+  roots: Array<{
+    root: string;
+    label: string;
+    found: number;
+    discarded: number;
+    truncated: boolean;
+    durationMs: number;
+    error: WalkErrorKind | null;
+  }>;
+  totalFound: number;
+  totalDiscarded: number;
+  discardedReasons: Record<string, number>;
+  errors: Array<{ root: string; error: WalkErrorKind }>;
+  walkDurationMs: number;
 }
 
 /** Timeout por request SNMP no diagnóstico. */
@@ -71,11 +120,53 @@ const PING_ATTEMPTS = 3;
 /** Pausa entre tentativas do ping inicial. */
 const PING_RETRY_INTERVAL_MS = 500;
 
-/** Limite de entradas por subárvore no walk resumido. */
-const WALK_MAX_ENTRIES = 150;
+/**
+ * Limite de entradas por subárvore no walk de descoberta. Alto o bastante
+ * para árvores enterprise reais (o iDFlex expõe ~46 objetos; switches podem
+ * expor centenas via IF-MIB), mas com teto contra loops/tabelas gigantes.
+ */
+const WALK_MAX_ENTRIES = 2000;
 
-/** Tempo máximo por subárvore no walk (ms). */
-const WALK_TIMEOUT_MS = 12_000;
+/** Orçamento de tempo por subárvore no walk (ms). */
+const WALK_ROOT_BUDGET_MS = 15_000;
+
+/**
+ * Orçamento TOTAL da fase de walk (ms) — o diagnóstico completo precisa caber
+ * no timeout de 120s do backend mesmo com várias raízes lentas.
+ */
+const WALK_TOTAL_BUDGET_MS = 60_000;
+
+/**
+ * Orçamento PONTA-A-PONTA do diagnóstico (GETs + retry + walk), compartilhado
+ * por todas as fases. Precisa ficar com folga abaixo do timeout de 120s do
+ * backend: no pior caso (nenhum OID responde — cada GET consome
+ * DIAG_TIMEOUT_MS + GET_INTERVAL_MS), o gateway ainda publica o resultado a
+ * tempo em vez de o backend descartar a resposta como "gateway indisponível".
+ */
+export const DIAG_TOTAL_BUDGET_MS = 100_000;
+
+/**
+ * Reserva mínima para a fase de walk: as fases de GET/retry nunca podem
+ * avançar além de (orçamento total − reserva), garantindo que o walk sempre
+ * rode pelo menos com esta janela.
+ */
+export const WALK_MIN_RESERVE_MS = 20_000;
+
+/**
+ * Deadlines derivados do início do diagnóstico — função pura para o teste de
+ * pior caso conseguir validar a aritmética sem subir o serviço.
+ */
+export function diagPhaseDeadlines(startedAt: number): {
+  /** Instante-limite para publicar o resultado (fim do walk). */
+  deadline: number;
+  /** Instante-limite das fases de GET/retry (preserva a reserva do walk). */
+  getPhaseDeadline: number;
+} {
+  return {
+    deadline: startedAt + DIAG_TOTAL_BUDGET_MS,
+    getPhaseDeadline: startedAt + DIAG_TOTAL_BUDGET_MS - WALK_MIN_RESERVE_MS,
+  };
+}
 
 const OID_SYS_DESCR = '1.3.6.1.2.1.1.1.0';
 const OID_SYS_OBJECT_ID = '1.3.6.1.2.1.1.2.0';
@@ -204,6 +295,7 @@ export class SnmpDiagnoseService {
           cause,
           oidResults: {},
           walk: [],
+          canonicalMetrics: resolveCanonicalMetrics(false, {}, []),
           durationMs: Date.now() - startedAt,
         });
         return;
@@ -222,7 +314,18 @@ export class SnmpDiagnoseService {
         tested,
         total: oidList.length,
       });
+      const { deadline, getPhaseDeadline } = diagPhaseDeadlines(startedAt);
       for (const oid of remaining) {
+        // Deadline compartilhado: se os GETs consumiram o orçamento (muitos
+        // OIDs sem resposta a 2,5s cada), os restantes ficam como "não
+        // respondeu" — mesmo desfecho de um timeout — e o walk preserva sua
+        // reserva mínima, mantendo o total abaixo do timeout do backend.
+        if (Date.now() >= getPhaseDeadline) {
+          if (!oidResults[oid]) {
+            oidResults[oid] = { oid, responded: false, value: null, raw: null };
+          }
+          continue;
+        }
         await this.sleep(GET_INTERVAL_MS);
         const r = await this.readOne(shared, oid);
         oidResults[oid] = r ?? { oid, responded: false, value: null, raw: null };
@@ -236,29 +339,40 @@ export class SnmpDiagnoseService {
       }
 
       // Segunda passada: re-testa uma vez só os OIDs que não responderam
-      // (a câmera pode ter descartado pacotes pontualmente).
+      // (a câmera pode ter descartado pacotes pontualmente). Também respeita
+      // o deadline da fase de GETs — o retry é melhoria, nunca estouro.
       const failedOids = remaining.filter((oid) => !oidResults[oid].responded);
       for (const oid of failedOids) {
+        if (Date.now() >= getPhaseDeadline) break;
         await this.sleep(GET_INTERVAL_MS);
         const r = await this.readOne(shared, oid);
         if (r?.responded) oidResults[oid] = r;
       }
       shared.close();
 
-      // Fase 3: walk resumido das subárvores padrão + enterprise detectada.
+      // Fase 3: walk recursivo genérico — descoberta separada da
+      // interpretação. Raízes: padrão (MIB-II/HOST-RESOURCES/ENTITY) +
+      // subárvores declaradas pelo perfil de fabricante (conhecimento
+      // aditivo, ex.: Control iD → 1.3.6.1.4.1.49617.1) + fallback da
+      // enterprise do sysObjectID. NENHUM ramo por fabricante no motor.
       const sysObjectId = oidResults[OID_SYS_OBJECT_ID]?.raw ?? null;
-      const walkRoots: Array<{ root: string; label: string }> = [
-        { root: '1.3.6.1.2.1.1', label: 'MIB-II system' },
-        { root: '1.3.6.1.2.1.2', label: 'MIB-II interfaces' },
-      ];
-      const enterpriseRoot = this.enterpriseRootOf(sysObjectId);
-      if (enterpriseRoot) {
-        walkRoots.push({
-          root: enterpriseRoot,
-          label: `Enterprise do fabricante (${enterpriseRoot})`,
-        });
-      }
+      const sysDescr = oidResults[OID_SYS_DESCR]?.raw ?? null;
+      const profileRoots = resolveDiscoveryWalkRoots({
+        deviceType: command.deviceType ?? null,
+        manufacturer: command.manufacturer ?? null,
+        sysDescr,
+        sysObjectId,
+      });
+      const walkRoots: WalkRoot[] = resolveWalkRoots({
+        profileRoots,
+        sysObjectId,
+      });
 
+      const walkStartedAt = Date.now();
+      // O walk respeita o próprio teto E o deadline ponta-a-ponta: se a fase
+      // de GETs demorou, o orçamento do walk encolhe em vez de estourar o
+      // timeout do backend.
+      const walkDeadline = Math.min(walkStartedAt + WALK_TOTAL_BUDGET_MS, deadline);
       const walk: WalkSection[] = [];
       for (let i = 0; i < walkRoots.length; i++) {
         this.mqttService.publish(progressTopic, {
@@ -267,13 +381,82 @@ export class SnmpDiagnoseService {
           tested: i,
           total: walkRoots.length,
         });
-        const section = await this.walkSubtree(
-          command,
+        const remaining = walkDeadline - Date.now();
+        if (remaining < 1000) {
+          // Orçamento total esgotado: raízes restantes ficam sinalizadas.
+          walk.push({
+            root: walkRoots[i].root,
+            label: walkRoots[i].label,
+            entries: [],
+            truncated: true,
+            found: 0,
+            discarded: {},
+            error: null,
+            durationMs: 0,
+          });
+          continue;
+        }
+        const result = await walkSnmpSubtree(
+          {
+            ip: command.ip,
+            port: command.port,
+            version: command.snmpVersion,
+            community: command.community,
+            v3: command.v3 ?? undefined,
+          },
           walkRoots[i].root,
-          walkRoots[i].label,
+          {
+            maxEntries: WALK_MAX_ENTRIES,
+            budgetMs: Math.min(WALK_ROOT_BUDGET_MS, remaining),
+            requestTimeoutMs: DIAG_TIMEOUT_MS,
+          },
         );
-        walk.push(section);
+        walk.push({
+          root: result.root,
+          label: walkRoots[i].label,
+          entries: result.entries,
+          truncated: result.truncated,
+          found: result.entries.length,
+          discarded: result.discarded,
+          error: result.error,
+          durationMs: result.durationMs,
+        });
       }
+
+      const discardedReasons: Record<string, number> = {};
+      let totalDiscarded = 0;
+      for (const s of walk) {
+        for (const [reason, count] of Object.entries(s.discarded)) {
+          discardedReasons[reason] = (discardedReasons[reason] ?? 0) + count;
+          totalDiscarded += count;
+        }
+      }
+      const walkStats: WalkStats = {
+        // A community NUNCA entra no payload de resultado — é credencial
+        // (equivale a senha em v1/v2c) e o diagnóstico é visível a qualquer
+        // usuário autorizado na UI.
+        target: {
+          ip: command.ip,
+          port: command.port || 161,
+          snmpVersion: command.snmpVersion,
+        },
+        roots: walk.map((s) => ({
+          root: s.root,
+          label: s.label,
+          found: s.found,
+          discarded: Object.values(s.discarded).reduce((a, b) => a + b, 0),
+          truncated: s.truncated,
+          durationMs: s.durationMs,
+          error: s.error,
+        })),
+        totalFound: walk.reduce((a, s) => a + s.found, 0),
+        totalDiscarded,
+        discardedReasons,
+        errors: walk
+          .filter((s) => s.error !== null)
+          .map((s) => ({ root: s.root, error: s.error as WalkErrorKind })),
+        walkDurationMs: Date.now() - walkStartedAt,
+      };
 
       // Cruzamento com o walk: OID testado que aparece no walk com valor foi
       // comprovadamente respondido pela câmera — nunca pode ficar como "não
@@ -293,14 +476,23 @@ export class SnmpDiagnoseService {
         }
       }
 
+      // Resolução de métricas canônicas: cruza GETs + walk contra o catálogo.
+      const canonicalMetrics = resolveCanonicalMetrics(
+        true,
+        oidResults as unknown as Record<string, CanonicalOidReadResult>,
+        walk,
+      );
+
       this.mqttService.publish(resultTopic, {
         command_id: command.command_id,
         success: true,
         reachable: true,
-        sysDescr: oidResults[OID_SYS_DESCR]?.raw ?? null,
+        sysDescr,
         sysObjectId,
         oidResults,
         walk,
+        walkStats,
+        canonicalMetrics,
         durationMs: Date.now() - startedAt,
       });
       this.logger.log(
@@ -326,8 +518,9 @@ export class SnmpDiagnoseService {
   private createSharedSession(target: {
     ip: string;
     port: number;
-    snmpVersion: '1' | '2c';
+    snmpVersion: '1' | '2c' | '3';
     community: string;
+    v3?: SnmpV3Credentials | null;
   }): SharedSnmpSession {
     let session: snmp.Session | null = null;
     let broken = true;
@@ -341,12 +534,16 @@ export class SnmpDiagnoseService {
           // best-effort
         }
       }
-      session = snmp.createSession(target.ip, target.community || 'public', {
-        port: target.port || 161,
-        version: target.snmpVersion === '1' ? snmp.Version1 : snmp.Version2c,
-        timeout: DIAG_TIMEOUT_MS,
-        retries: 1,
-      });
+      session = createSnmpSession(
+        {
+          ip: target.ip,
+          port: target.port,
+          snmpVersion: target.snmpVersion,
+          community: target.community,
+          v3: target.v3 ?? undefined,
+        },
+        { timeoutMs: DIAG_TIMEOUT_MS, retries: 1 },
+      );
       broken = false;
       session.on('error', () => {
         broken = true;
@@ -435,16 +632,25 @@ export class SnmpDiagnoseService {
    * o agente SNMP existe e aceita a community. Timeout = silêncio.
    */
   private getNextProbe(
-    target: { ip: string; port: number; snmpVersion: '1' | '2c' },
+    target: {
+      ip: string;
+      port: number;
+      snmpVersion: '1' | '2c' | '3';
+      v3?: SnmpV3Credentials | null;
+    },
     community: string,
   ): Promise<boolean> {
     return new Promise((resolve) => {
-      const session = snmp.createSession(target.ip, community || 'public', {
-        port: target.port || 161,
-        version: target.snmpVersion === '1' ? snmp.Version1 : snmp.Version2c,
-        timeout: DIAG_TIMEOUT_MS,
-        retries: 1,
-      });
+      const session = createSnmpSession(
+        {
+          ip: target.ip,
+          port: target.port,
+          snmpVersion: target.snmpVersion,
+          community,
+          v3: target.v3 ?? undefined,
+        },
+        { timeoutMs: DIAG_TIMEOUT_MS, retries: 1 },
+      );
       let settled = false;
       const done = (answered: boolean) => {
         if (settled) return;
@@ -470,86 +676,6 @@ export class SnmpDiagnoseService {
       });
       session.on('error', () => done(false));
     });
-  }
-
-  /**
-   * Walk (subtree) limitado em quantidade e tempo — não trava o gateway em
-   * subárvores gigantes. Truncamento é sinalizado no resultado.
-   */
-  private walkSubtree(
-    target: { ip: string; port: number; snmpVersion: '1' | '2c'; community: string },
-    root: string,
-    label: string,
-  ): Promise<WalkSection> {
-    return new Promise((resolve) => {
-      const session = snmp.createSession(target.ip, target.community || 'public', {
-        port: target.port || 161,
-        version: target.snmpVersion === '1' ? snmp.Version1 : snmp.Version2c,
-        timeout: DIAG_TIMEOUT_MS,
-        retries: 0,
-      });
-
-      const entries: WalkEntry[] = [];
-      let truncated = false;
-      let settled = false;
-
-      const finish = () => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeoutHandle);
-        try {
-          session.close();
-        } catch {
-          // best-effort
-        }
-        resolve({ root, label, entries, truncated });
-      };
-
-      const timeoutHandle = setTimeout(() => {
-        truncated = true;
-        finish();
-      }, WALK_TIMEOUT_MS);
-
-      // `subtree` existe em runtime mas falta nas typings do net-snmp.
-      (session as unknown as {
-        subtree: (
-          oid: string,
-          maxRepetitions: number,
-          feedCb: (varbinds: snmp.VarBind[]) => void,
-          doneCb: (error?: Error | null) => void,
-        ) => void;
-      }).subtree(
-        root,
-        20,
-        (varbinds: snmp.VarBind[]) => {
-          for (const vb of varbinds) {
-            if (snmp.isVarbindError(vb)) continue;
-            if (entries.length >= WALK_MAX_ENTRIES) {
-              truncated = true;
-              finish();
-              return;
-            }
-            entries.push({
-              oid: String(vb.oid),
-              value: this.stringifyValue(vb.value),
-            });
-          }
-        },
-        () => finish(),
-      );
-
-      session.on('error', () => finish());
-    });
-  }
-
-  /**
-   * Deriva a raiz enterprise (1.3.6.1.4.1.<n>) do sysObjectID reportado pela
-   * câmera — null quando desconhecido/fora do padrão.
-   */
-  private enterpriseRootOf(sysObjectId: string | null): string | null {
-    if (!sysObjectId) return null;
-    const m = /^1\.3\.6\.1\.4\.1\.(\d+)/.exec(sysObjectId.trim());
-    return m ? `1.3.6.1.4.1.${m[1]}` : null;
   }
 
   /** Representação textual segura de um valor de varbind (Buffer, número, …). */

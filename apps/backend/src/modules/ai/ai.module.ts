@@ -12,5 +12,7 @@ import { OperationalMemoryService } from './operational-memory.service.js';
   imports: [PrismaModule, KnowledgeModule, AlarmsModule],
   controllers: [AiController],
   providers: [AiService, AiRateLimitGuard, OperationalMemoryService],
+  // AiService é exportado para o módulo de Insights (texto executivo periódico).
+  exports: [AiService],
 })
 export class AiModule {}

@@ -96,7 +96,7 @@ export default function GatewayAgentPage() {
           <li><strong>Node.js 20+</strong> instalado (nodejs.org).</li>
           <li>Saída de rede liberada para o broker na porta <strong>TCP 8883</strong> (não precisa abrir porta de entrada).</li>
           <li>Relógio sincronizado por <strong>NTP</strong>.</li>
-          <li>O arquivo <strong>gateway-config.env</strong> do projeto (baixado em Projetos → Baixar gateway-config.env).</li>
+          <li>O arquivo <strong>gateway-config.env</strong> do gateway (baixado em Gateways → Baixar gateway-config.env).</li>
         </ul>
       </section>
 
@@ -142,7 +142,7 @@ journalctl -u beeldings-gateway -f`}
             </li>
             <li>
               Coloque o arquivo <code className="text-xs">gateway-config.env</code> (baixado na
-              criação do projeto do cliente) dentro da pasta.
+              criação do gateway do cliente) dentro da pasta.
             </li>
             <li>
               Clique com o botão direito em <code className="text-xs">instalar.bat</code> e escolha{' '}

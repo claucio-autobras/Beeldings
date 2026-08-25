@@ -1,25 +1,50 @@
 import { apiGet, apiPost, apiPatch, apiDelete, sensitiveActionHeaders } from '@/lib/api-client';
 import type {
+  CustomPointSelection,
   DiagMetric,
   DiagnoseCandidate,
   DiagnoseMetricResult,
+  DiagnoseWalkEntry,
   DiagnoseWalkSection,
+  DiagnoseWalkStats,
+  DiscoveredSnmpObject,
   SnmpDiagnoseOutcome,
   SnmpDiagnoseProgress,
   SnmpUnreachableCause,
   MonitoringProfile,
+  SnmpPointDisplay,
+  SnmpInfoEntry,
+  SnmpCardCategory,
+  LiveOidTestOutcome,
+  MetricProposal,
+  MetricProposalCandidate,
+  MetricConfidence,
+  AppliedOidSelection,
 } from '@/modules/cftv/services/cftv.service';
+import type { SnmpMibSummary } from '@/modules/admin/services/snmp-mib.service';
 
 // Re-export shared types to avoid duplication
 export type {
+  CustomPointSelection,
   DiagMetric,
   DiagnoseCandidate,
   DiagnoseMetricResult,
+  DiagnoseWalkEntry,
   DiagnoseWalkSection,
+  DiagnoseWalkStats,
+  DiscoveredSnmpObject,
   SnmpDiagnoseOutcome,
   SnmpDiagnoseProgress,
   SnmpUnreachableCause,
   MonitoringProfile,
+  SnmpPointDisplay,
+  SnmpInfoEntry,
+  SnmpCardCategory,
+  LiveOidTestOutcome,
+  MetricProposal,
+  MetricProposalCandidate,
+  MetricConfidence,
+  AppliedOidSelection,
 };
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
@@ -39,8 +64,12 @@ export interface ControllerPoint {
   objectName: string;
   metric: string;
   oid: string | null;
+  /** Metadados de exibição do card dinâmico (backend ≥ task 915). */
+  display?: SnmpPointDisplay;
   /** OID comprovadamente inexistente (último diagnóstico SNMP). */
   unsupported?: boolean;
+  healthState?: 'active' | 'broken' | 'suggested' | 'pending';
+  healthReason?: 'missing' | 'type_changed' | 'awaiting_read' | 'not_exposed_by_firmware' | null;
   /** Ponto marcado como ativo crítico. */
   critical?: boolean;
   unit: string;
@@ -48,6 +77,11 @@ export interface ControllerPoint {
   lastValue: number | null;
   lastValueAt: string | null;
   lastValueState: string | null;
+  /**
+   * Indica se o ponto pode ser removido individualmente pelo operador.
+   * false = essencial (STATUS). undefined = backend legado.
+   */
+  removable?: boolean;
 }
 
 /** Perfil de OIDs por fabricante (catálogo do backend). */
@@ -71,10 +105,14 @@ export interface Controller {
   gatewayOnline: boolean | null;
   ip: string;
   port: number;
-  snmpVersion: '1' | '2c';
+  snmpVersion: '1' | '2c' | '3';
   community: string;
+  /** Vista pública da credencial SNMP — chaves NUNCA vêm da API. */
+  snmpCredential?: SnmpCredentialView | null;
   pollingInterval: number;
   manufacturer: string | null;
+  snmpMibId: string | null;
+  snmpMib: Pick<SnmpMibSummary, 'id' | 'label' | 'manufacturer' | 'isOffline'> | null;
   status: 'online' | 'offline';
   lastCommunication: string | null;
   points: ControllerPoint[];
@@ -82,20 +120,44 @@ export interface Controller {
   profileLabel: string;
   profileSource: 'detected' | 'manual' | 'generic';
   profileOverrides: Record<string, string> | null;
+  /** Informações estáticas (firmware, serial, NTP…) do último diagnóstico. */
+  snmpInfo?: SnmpInfoEntry[];
+}
+
+/** Vista pública da credencial SNMP (flags no lugar das chaves). */
+export interface SnmpCredentialView {
+  version: '1' | '2c' | '3';
+  securityName: string | null;
+  authProtocol: string | null;
+  privProtocol: string | null;
+  contextName: string | null;
+  hasAuthKey: boolean;
+  hasPrivKey: boolean;
+}
+
+/** Campos SNMPv3 de formulário (chave vazia na edição = manter a atual). */
+export interface SnmpV3Input {
+  securityName?: string;
+  authProtocol?: string;
+  authKey?: string;
+  privProtocol?: string;
+  privKey?: string;
+  contextName?: string;
 }
 
 /** Payload de criação/edição de controladora. */
-export interface ControllerInput {
+export interface ControllerInput extends SnmpV3Input {
   name?: string;
   siteId?: string;
   tenantId?: string;
   gatewayId?: string;
   ip?: string;
   port?: number;
-  snmpVersion?: '1' | '2c';
+  snmpVersion?: '1' | '2c' | '3';
   community?: string;
   pollingInterval?: number;
   manufacturer?: string | null;
+  snmpMibId?: string | null;
   /** Overrides manuais de OID por ponto. */
   healthOids?: Partial<Record<DiagMetric, string>>;
   profileId?: string | null;
@@ -193,12 +255,12 @@ export async function probeControllerCapabilities(
 /**
  * Testa o SNMP de uma controladora via gateway e pré-visualiza os valores.
  */
-export async function testControllerSnmp(params: {
+export async function testControllerSnmp(params: SnmpV3Input & {
   tenantId: string;
   gatewayId: string;
   ip: string;
   port?: number;
-  snmpVersion?: '1' | '2c';
+  snmpVersion?: '1' | '2c' | '3';
   community?: string;
   manufacturer?: string | null;
   oids?: Partial<Record<AcHealthMetric, string>>;
@@ -253,10 +315,40 @@ export async function getDiagnoseProgress(
   };
 }
 
-/** Aplica OIDs sugeridos pelo diagnóstico. */
+/**
+ * Lê o valor ATUAL de um OID na controladora via gateway (teste ao vivo na
+ * descoberta, antes de aplicar).
+ */
+export async function testControllerOid(
+  controllerId: string,
+  oid: string,
+): Promise<LiveOidTestOutcome> {
+  return apiPost<LiveOidTestOutcome>(`/sca/controllers/${controllerId}/test-oid`, { oid });
+}
+
+/**
+ * Remove um ponto SNMP individual da controladora (para de coletar o OID e
+ * apaga alarmes/trends associados via cascade no banco).
+ */
+export async function removeControllerPoint(
+  controllerId: string,
+  pointId: string,
+): Promise<void> {
+  await apiDelete(`/sca/controllers/${controllerId}/points/${pointId}`);
+}
+
+/** Aplica OIDs sugeridos pelo diagnóstico (+ OIDs livres da descoberta). */
 export async function applySnmpOids(
   controllerId: string,
-  oids: Partial<Record<DiagMetric, string>>,
+  oids: Partial<Record<DiagMetric, AppliedOidSelection>>,
+  customPoints?: CustomPointSelection[],
+  metricConfidence?: Partial<Record<string, MetricConfidence>>,
 ): Promise<Controller> {
-  return apiPost<Controller>(`/sca/controllers/${controllerId}/apply-snmp-oids`, { oids });
+  return apiPost<Controller>(`/sca/controllers/${controllerId}/apply-snmp-oids`, {
+    oids,
+    ...(customPoints?.length ? { customPoints } : {}),
+    ...(metricConfidence && Object.keys(metricConfidence).length
+      ? { metricConfidence }
+      : {}),
+  });
 }

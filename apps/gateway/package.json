@@ -1,6 +1,6 @@
 {
   "name": "@bluebee/gateway",
-  "version": "1.18.0",
+  "version": "1.33.0",
   "description": "BlueBee IoT Gateway — BACnet/Modbus local microservice",
   "author": "",
   "private": true,

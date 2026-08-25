@@ -3,11 +3,91 @@ import * as snmp from 'net-snmp';
 /** Timeout por request SNMP (ms). */
 export const SNMP_TIMEOUT_MS = 3000;
 
+/**
+ * Credenciais SNMPv3 (USM). Chegam em texto claro na config publicada ao
+ * gateway (MQTT autenticado/TLS) — no banco do backend ficam cifradas
+ * (AES-GCM), mesmo padrão das senhas ONVIF.
+ */
+export interface SnmpV3Credentials {
+  securityName: string;
+  /** Derivado das chaves quando ausente: privKey→authPriv, authKey→authNoPriv. */
+  securityLevel?: 'noAuthNoPriv' | 'authNoPriv' | 'authPriv';
+  authProtocol?: 'md5' | 'sha' | 'sha256' | 'sha512';
+  authKey?: string;
+  privProtocol?: 'des' | 'aes' | 'aes256';
+  privKey?: string;
+  contextName?: string;
+}
+
 export interface SnmpTarget {
   ip: string;
   port: number;
-  snmpVersion: '1' | '2c';
+  snmpVersion: '1' | '2c' | '3';
+  /** Community (v1/v2c). Ignorada em v3. */
   community: string;
+  /** Credenciais USM — obrigatórias quando snmpVersion === '3'. */
+  v3?: SnmpV3Credentials;
+}
+
+/** Monta o usuário USM do net-snmp a partir das credenciais v3. */
+export function buildSnmpV3User(v3: SnmpV3Credentials): snmp.V3User {
+  const level =
+    v3.securityLevel ??
+    (v3.privKey ? 'authPriv' : v3.authKey ? 'authNoPriv' : 'noAuthNoPriv');
+  const authProtocolMap: Record<string, unknown> = {
+    md5: snmp.AuthProtocols.md5,
+    sha: snmp.AuthProtocols.sha,
+    sha256: snmp.AuthProtocols.sha256,
+    sha512: snmp.AuthProtocols.sha512,
+  };
+  // 'aes256' → aes256b (Blumenthal); variante Reeder (aes256r) fica p/ futuro.
+  const privProtocolMap: Record<string, unknown> = {
+    des: snmp.PrivProtocols.des,
+    aes: snmp.PrivProtocols.aes,
+    aes256: snmp.PrivProtocols.aes256b,
+  };
+  const user: snmp.V3User = {
+    name: v3.securityName,
+    level: snmp.SecurityLevel[level],
+  };
+  if (level !== 'noAuthNoPriv') {
+    user.authProtocol = authProtocolMap[v3.authProtocol ?? 'sha'] ?? snmp.AuthProtocols.sha;
+    user.authKey = v3.authKey ?? '';
+  }
+  if (level === 'authPriv') {
+    user.privProtocol = privProtocolMap[v3.privProtocol ?? 'aes'] ?? snmp.PrivProtocols.aes;
+    user.privKey = v3.privKey ?? '';
+  }
+  return user;
+}
+
+/**
+ * Cria uma sessão SNMP para o alvo — ÚNICO ponto de criação de sessão da
+ * camada de leitura (GET escalar, tabela e strings). v1/v2c usam community;
+ * v3 usa createV3Session com usuário USM.
+ */
+export function createSnmpSession(
+  target: SnmpTarget,
+  options: { timeoutMs?: number; retries?: number } = {},
+): snmp.Session {
+  const base = {
+    port: target.port || 161,
+    timeout: options.timeoutMs ?? SNMP_TIMEOUT_MS,
+    retries: options.retries ?? 1,
+  };
+  if (target.snmpVersion === '3') {
+    if (!target.v3?.securityName) {
+      throw new Error('SNMPv3 requer securityName nas credenciais');
+    }
+    return snmp.createV3Session(target.ip, buildSnmpV3User(target.v3), {
+      ...base,
+      ...(target.v3.contextName ? { context: target.v3.contextName } : {}),
+    });
+  }
+  return snmp.createSession(target.ip, target.community || 'public', {
+    ...base,
+    version: target.snmpVersion === '1' ? snmp.Version1 : snmp.Version2c,
+  });
 }
 
 /**
@@ -55,6 +135,73 @@ export function parseSnmpNumber(value: unknown): number | null {
   if (!match) return null;
   const n = Number(match[0].replace(',', '.'));
   return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Contrato único para um valor que atravessou a fronteira SNMP.
+ *
+ * O coletor mantém o texto bruto para enums/strings/diagnóstico e só expõe
+ * `numeric` quando a coerção é segura. Consumidores não devem reinterpretar
+ * tipos ASN.1 nem reaplicar conversões de TimeTicks.
+ */
+export interface NormalizedSnmpValue {
+  raw: string;
+  numeric: number | null;
+  type: number | null;
+  typeName: string;
+  unknown: boolean;
+  kind?: 'duration' | 'counter';
+}
+
+const SNMP_TYPE_NAMES: Record<number, string> = {
+  1: 'Boolean',
+  2: 'Integer',
+  4: 'OctetString',
+  5: 'Null',
+  6: 'OID',
+  64: 'IpAddress',
+  65: 'Counter32',
+  66: 'Gauge32',
+  67: 'TimeTicks',
+  68: 'Opaque',
+  70: 'Counter64',
+  128: 'NoSuchObject',
+  129: 'NoSuchInstance',
+  130: 'EndOfMibView',
+};
+
+/** Normaliza exatamente uma vez um varbind retornado pelo net-snmp. */
+export function normalizeSnmpValue(type: number | undefined, value: unknown): NormalizedSnmpValue {
+  const numeric = parseSnmpNumber(value);
+  const typeName = type === undefined ? 'Unknown' : SNMP_TYPE_NAMES[type] ?? `Type${type}`;
+  const raw = Buffer.isBuffer(value) ? value.toString('utf8') : String(value ?? '');
+  if (type === 67) {
+    return {
+      raw,
+      numeric: numeric === null ? null : numeric / 100,
+      type: type ?? null,
+      typeName,
+      unknown: false,
+      kind: 'duration',
+    };
+  }
+  if (type === 65 || type === 70) {
+    return {
+      raw,
+      numeric,
+      type: type ?? null,
+      typeName,
+      unknown: false,
+      kind: 'counter',
+    };
+  }
+  return {
+    raw,
+    numeric,
+    type: type ?? null,
+    typeName,
+    unknown: type === undefined || !Object.prototype.hasOwnProperty.call(SNMP_TYPE_NAMES, type),
+  };
 }
 
 /**
@@ -110,12 +257,7 @@ export function readSnmpStrings(
 const FALLBACK_GET_INTERVAL_MS = 100;
 
 function createSession(target: SnmpTarget): snmp.Session {
-  return snmp.createSession(target.ip, target.community || 'public', {
-    port: target.port || 161,
-    version: target.snmpVersion === '1' ? snmp.Version1 : snmp.Version2c,
-    timeout: SNMP_TIMEOUT_MS,
-    retries: 1,
-  });
+  return createSnmpSession(target);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -215,12 +357,7 @@ export function readSnmpTable(
   columnOidPrefix: string,
 ): Promise<SnmpTableEntry[] | null> {
   return new Promise((resolve) => {
-    const session = snmp.createSession(target.ip, target.community || 'public', {
-      port: target.port || 161,
-      version: target.snmpVersion === '1' ? snmp.Version1 : snmp.Version2c,
-      timeout: SNMP_TIMEOUT_MS,
-      retries: 1,
-    });
+    const session = createSnmpSession(target);
 
     const entries: SnmpTableEntry[] = [];
     let finished = false;
@@ -316,12 +453,7 @@ export function readSnmpTableStrings(
   columnOidPrefix: string,
 ): Promise<SnmpTableStringEntry[] | null> {
   return new Promise((resolve) => {
-    const session = snmp.createSession(target.ip, target.community || 'public', {
-      port: target.port || 161,
-      version: target.snmpVersion === '1' ? snmp.Version1 : snmp.Version2c,
-      timeout: SNMP_TIMEOUT_MS,
-      retries: 1,
-    });
+    const session = createSnmpSession(target);
 
     const entries: SnmpTableStringEntry[] = [];
     let finished = false;

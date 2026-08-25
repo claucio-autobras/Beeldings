@@ -206,7 +206,7 @@ export async function testModbusConnection(params: {
   serial?: import('../types/device.types').ModbusSerialConfig;
 }): Promise<void> {
   if (!params.tenantId || !params.gatewayId) {
-    throw new Error('Selecione o cliente e o projeto (gateway) antes de testar a conexão.');
+    throw new Error('Selecione o cliente e o gateway antes de testar a conexão.');
   }
 
   const data = await apiPost<{ success: boolean; error?: string }>(
@@ -352,7 +352,7 @@ export async function sampleMqttTopic(params: {
   rootTopic?: string;
 }): Promise<MqttSample[]> {
   if (!params.tenantId || !params.gatewayId) {
-    throw new Error('Selecione o cliente e o projeto (gateway) antes de capturar a amostra.');
+    throw new Error('Selecione o cliente e o gateway antes de capturar a amostra.');
   }
   const data = await apiPost<{ success: boolean; error?: string; samples?: MqttSample[] }>(
     '/devices/mqtt/sample-topic',

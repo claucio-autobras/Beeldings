@@ -21,7 +21,12 @@ import { JwtAuthGuard } from './presentation/guards/jwt-auth.guard.js';
 import { RolesGuard } from './presentation/guards/roles.guard.js';
 import { Roles } from './presentation/decorators/roles.decorator.js';
 import { CurrentUser } from './presentation/decorators/current-user.decorator.js';
-import type { AuthenticatedUser, LoginResult } from './domain/interfaces/auth.interface.js';
+import type {
+  AuthenticatedUser,
+  LoginOutcome,
+  LoginResult,
+  TwoFactorRequiredResult,
+} from './domain/interfaces/auth.interface.js';
 import { UserRole } from './domain/interfaces/auth.interface.js';
 import { setSessionCookie, clearSessionCookie } from './session-cookie.js';
 import { TurnstileService } from './application/use-cases/turnstile.service.js';
@@ -49,16 +54,59 @@ export class AuthController {
     @Body() dto: LoginDto,
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
-  ): Promise<LoginResult> {
+  ): Promise<LoginOutcome> {
     const result = await this.authService.login(dto, {
       ip: getClientIp(req),
       userAgent: req.headers['user-agent'] ?? null,
     });
-    // Sessão do browser via cookie HttpOnly (o frontend NÃO armazena o token).
-    // O accessToken continua no corpo para serviços internos/testes que usam
-    // o header Authorization.
+    // Enquanto o 2FA não foi confirmado, NENHUM cookie/JWT é emitido.
+    if ('accessToken' in result) {
+      // Sessão do browser via cookie HttpOnly (o frontend NÃO armazena o token).
+      // O accessToken continua no corpo para serviços internos/testes que usam
+      // o header Authorization.
+      setSessionCookie(res, result.accessToken);
+    }
+    return result;
+  }
+
+  @Post('two-factor/verify')
+  @Throttle({ default: { limit: 10, ttl: 5 * 60_000 } })
+  @HttpCode(HttpStatus.OK)
+  async verifyTwoFactor(
+    @Body() dto: { challengeId?: string; code?: string },
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<LoginResult> {
+    const result = await this.authService.verifyTwoFactor(
+      dto?.challengeId ?? '',
+      dto?.code ?? '',
+      { ip: getClientIp(req), userAgent: req.headers['user-agent'] ?? null },
+    );
     setSessionCookie(res, result.accessToken);
     return result;
+  }
+
+  @Post('two-factor/resend')
+  @Throttle({ default: { limit: 3, ttl: 5 * 60_000 } })
+  @HttpCode(HttpStatus.OK)
+  async resendTwoFactor(
+    @Body() dto: { challengeId?: string },
+  ): Promise<{ resent: boolean; retryAfterSeconds?: number }> {
+    return this.authService.resendTwoFactor(dto?.challengeId ?? '');
+  }
+
+  @Post('forgot-password')
+  @Throttle({ default: { limit: 3, ttl: 15 * 60_000 } })
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async forgotPassword(@Body() dto: { email?: string }): Promise<void> {
+    await this.authService.requestPasswordReset(dto?.email ?? '');
+  }
+
+  @Post('reset-password')
+  @Throttle({ default: { limit: 10, ttl: 15 * 60_000 } })
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async resetPassword(@Body() dto: { token?: string; newPassword?: string }): Promise<void> {
+    await this.authService.resetPassword(dto?.token ?? '', dto?.newPassword ?? '');
   }
 
   // POST /auth/confirm-password — reverifica a senha do operador logado e emite

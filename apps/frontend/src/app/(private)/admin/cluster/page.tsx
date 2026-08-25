@@ -1,9 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, Crown, Database, Loader2, Radio, Server, ServerCog } from 'lucide-react';
-import { apiGet } from '@/lib/api-client';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { ChevronDown, Crown, Database, KeyRound, Loader2, Radio, Server, ServerCog, ShieldAlert } from 'lucide-react';
+import { apiGet, apiPost } from '@/lib/api-client';
 
 interface ClusterStatus {
   isLeader: boolean;
@@ -44,6 +44,34 @@ interface BrokerSnapshot {
   droppedDelta: number | null;
   health: 'healthy' | 'abnormal' | 'unknown';
   error: string | null;
+}
+
+interface CommsHealth {
+  mqtt: {
+    connected: boolean;
+    broker: string;
+    lastError: string | null;
+    authRefused: boolean;
+    lastAuthRefusedAt: string | null;
+  };
+}
+
+interface ReprovisionCounts {
+  total: number;
+  ok: number;
+  failed: number;
+}
+
+interface ReprovisionReport {
+  trigger: 'manual' | 'boot';
+  startedAt: string;
+  finishedAt: string;
+  configured: boolean;
+  gateways: ReprovisionCounts;
+  sensorUsers: ReprovisionCounts;
+  rootDevices: ReprovisionCounts;
+  gatewayRootAcls: ReprovisionCounts;
+  errors: string[];
 }
 
 const ENV_LABEL: Record<StorageStatus['environment'], string> = {
@@ -93,6 +121,18 @@ export default function ClusterStatusPage() {
     queryKey: ['broker-health'],
     queryFn: () => apiGet('/health/broker'),
     refetchInterval: 15_000,
+  });
+
+  // Saúde da conexão MQTT do PRÓPRIO backend — detecta credencial recusada
+  // pelo broker (estado que exige ação do admin, não é instabilidade de rede).
+  const { data: comms } = useQuery<CommsHealth>({
+    queryKey: ['comms-health'],
+    queryFn: () => apiGet('/health/comms'),
+    refetchInterval: 15_000,
+  });
+
+  const reprovision = useMutation<ReprovisionReport, Error>({
+    mutationFn: () => apiPost('/health/broker/reprovision'),
   });
 
   const [storageExpanded, setStorageExpanded] = useState(false);
@@ -259,6 +299,30 @@ export default function ClusterStatusPage() {
         </div>
       )}
 
+      {/* Backend recusado por autenticação no broker */}
+      {comms?.mqtt.authRefused && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-4 shadow-sm dark:border-red-800 dark:bg-red-950/40">
+          <div className="flex items-start gap-3">
+            <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-red-600 dark:text-red-400" />
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-red-700 dark:text-red-400">
+                Backend recusado por autenticação no broker MQTT
+              </p>
+              <p className="mt-1 text-xs text-red-700/90 dark:text-red-400/90">
+                O broker ({comms.mqtt.broker}) recusou a credencial do backend
+                {comms.mqtt.lastAuthRefusedAt
+                  ? ` (última recusa em ${new Date(comms.mqtt.lastAuthRefusedAt).toLocaleString('pt-BR')})`
+                  : ''}
+                . Sem essa conexão não há telemetria, status nem saúde de gateways. Verifique
+                MQTT_USERNAME/MQTT_PASSWORD e se o usuário existe no EMQX — se o estado do broker
+                foi perdido, recrie o usuário do backend no EMQX e use o re-provisionamento abaixo
+                para restaurar as credenciais dos gateways.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Broker MQTT (EMQX) */}
       {broker && broker.configured && (
         <div className="rounded-xl border border-border bg-card px-4 py-4 shadow-sm transition-shadow duration-200 hover:shadow-md">
@@ -320,6 +384,60 @@ export default function ClusterStatusPage() {
               {broker.queueFullDroppedTotal!.toLocaleString('pt-BR')} descarte(s) por fila cheia desde o boot do broker.
             </p>
           )}
+
+          {/* Recuperação: re-provisionamento em massa de credenciais/ACLs */}
+          <div className="mt-4 border-t border-border pt-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs text-muted-foreground">
+                Perdeu o estado do broker (reinstalação/disco)? Recrie as credenciais e ACLs de
+                todos os gateways e dispositivos a partir do cadastro.
+              </p>
+              <button
+                type="button"
+                onClick={() => reprovision.mutate()}
+                disabled={reprovision.isPending}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-muted/30 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted/60 disabled:opacity-60"
+              >
+                {reprovision.isPending
+                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  : <KeyRound className="h-3.5 w-3.5" />}
+                Re-provisionar credenciais
+              </button>
+            </div>
+            {reprovision.isError && (
+              <p className="mt-2 text-xs text-red-600">
+                Falha no re-provisionamento: {reprovision.error.message}
+              </p>
+            )}
+            {reprovision.data && (
+              <div className="mt-2 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                {reprovision.data.configured ? (
+                  <>
+                    <span className="font-medium text-foreground">Concluído:</span>{' '}
+                    gateways {reprovision.data.gateways.ok}/{reprovision.data.gateways.total}
+                    {reprovision.data.sensorUsers.total > 0 &&
+                      ` · sensores ${reprovision.data.sensorUsers.ok}/${reprovision.data.sensorUsers.total}`}
+                    {reprovision.data.rootDevices.total > 0 &&
+                      ` · dispositivos raiz ${reprovision.data.rootDevices.ok}/${reprovision.data.rootDevices.total}`}
+                    {reprovision.data.gatewayRootAcls.total > 0 &&
+                      ` · ACLs raiz ${reprovision.data.gatewayRootAcls.ok}/${reprovision.data.gatewayRootAcls.total}`}
+                    {reprovision.data.errors.length > 0 && (
+                      <ul className="mt-1.5 list-disc space-y-0.5 pl-4 text-red-600">
+                        {reprovision.data.errors.slice(0, 5).map((e) => (
+                          <li key={e}>{e}</li>
+                        ))}
+                        {reprovision.data.errors.length > 5 && (
+                          <li>… e mais {reprovision.data.errors.length - 5} erro(s) — veja os logs do backend.</li>
+                        )}
+                      </ul>
+                    )}
+                  </>
+                ) : (
+                  'EMQX_API_URL não configurado no backend — nada foi provisionado.'
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
       {broker && !broker.configured && (

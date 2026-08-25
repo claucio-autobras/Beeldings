@@ -26,13 +26,16 @@ export const BASE_ACCESS_CONTROLLER_PROFILE: DeviceProfile = {
     { metricKey: 'uptime', oid: '1.3.6.1.2.1.1.3.0', scale: 0.01 },
 
     // ── MIB-II IF-MIB descartes (interface 1) ───────────────────────────────
-    { metricKey: 'packet_loss', oid: '1.3.6.1.2.1.2.2.1.13.1', scale: 1 },
+    { metricKey: 'packet_loss' },
 
     // ── HOST-RESOURCES-MIB hrProcessorLoad (primeira CPU) ───────────────────
-    { metricKey: 'cpu', oid: '1.3.6.1.2.1.25.3.3.1.2.1', scale: 1 },
+    { metricKey: 'cpu', tableOidPrefix: '1.3.6.1.2.1.25.3.3.1.2', scale: 1 },
 
-    // ── UCD-SNMP memAvailReal (kB de RAM disponível) ─────────────────────────
-    { metricKey: 'memory', oid: '1.3.6.1.4.1.2021.4.6.0', scale: 1 },
+    // ── HOST-RESOURCES hrMemorySize (kB de RAM total) ─────────────────────────
+    // hrMemorySize is reported in KBytes; the canonical SCA metric is bytes.
+    { metricKey: 'ram_total', oid: '1.3.6.1.2.1.25.2.2.0', scale: 1024 },
+    // UCD memória recuperável (memAvailReal + buffers + cache), em bytes.
+    { metricKey: 'memory_available', oid: '1.3.6.1.4.1.2021.4.6.0', scale: 1024 },
 
     // ── UCD lm-sensors temperatura (mili-°C → scale 0.001 → °C) ─────────────
     { metricKey: 'temperature', oid: '1.3.6.1.4.1.2021.13.16.2.1.3.1', scale: 0.001 },

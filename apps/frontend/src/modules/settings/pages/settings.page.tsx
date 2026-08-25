@@ -22,6 +22,8 @@ import {
   Phone,
   ChevronDown,
   ChevronUp,
+  Sparkles,
+  WifiOff,
 } from 'lucide-react';
 import { useCurrentUser, type UserRole } from '@/hooks/useCurrentUser';
 import { useT } from '@/lib/i18n';
@@ -41,15 +43,24 @@ import {
   createRecipient,
   updateRecipient,
   deleteRecipient,
+  getProvidersStatus,
+  testChannel,
   type NotificationRecipient,
   type CreateRecipientDto,
   type UpdateRecipientDto,
+  type ProvidersStatus,
 } from '../services/notification-recipients.service';
 import {
   getSites,
   updateSite,
   type SiteItem,
 } from '@/modules/sites/services/sites.service';
+import {
+  getInsightConfig,
+  updateInsightConfig,
+  type InsightConfig,
+  type InsightFrequency,
+} from '@/modules/ai/services/insights.service';
 import PhoneInput from '@/components/PhoneInput';
 import { isValidPhone, normalizePhone } from '@/lib/phone';
 
@@ -712,14 +723,14 @@ function ProjectSection({
     mutationFn: (payload: { id: string; name: string }) =>
       updateProject(payload.id, { name: payload.name }),
     onSuccess: (updated) => {
-      setMsg({ type: 'success', text: t('Projeto atualizado com sucesso.') });
+      setMsg({ type: 'success', text: t('Gateway atualizado com sucesso.') });
       queryClient.setQueryData<ProjectItem[]>(['settings', 'projects', selectedTenantId, selectedSiteId], (prev) =>
         prev ? prev.map((p) => (p.id === updated.id ? { ...p, ...updated } : p)) : prev,
       );
       void queryClient.invalidateQueries({ queryKey: ['projects'] });
     },
     onError: (err: Error) =>
-      setMsg({ type: 'error', text: err.message || t('Não foi possível atualizar o projeto.') }),
+      setMsg({ type: 'error', text: err.message || t('Não foi possível atualizar o gateway.') }),
   });
 
   function handleSubmit(e: React.FormEvent) {
@@ -737,7 +748,7 @@ function ProjectSection({
 
   return (
     <SectionCard
-      title={t('Projeto')}
+      title={t('Gateway')}
       description={t('Sistemas implantados no site selecionado')}
       icon={FolderKanban}
     >
@@ -750,13 +761,13 @@ function ProjectSection({
       ) : projects.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           {selectedSiteId
-            ? t('Nenhum projeto disponível para este site.')
-            : t('Nenhum projeto disponível para este cliente.')}
+            ? t('Nenhum gateway disponível para este site.')
+            : t('Nenhum gateway disponível para este cliente.')}
         </p>
       ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
           {projects.length > 1 && (
-            <Field label={t('Selecionar projeto')} icon={FolderKanban}>
+            <Field label={t('Selecionar gateway')} icon={FolderKanban}>
               <select
                 value={selectedId}
                 onChange={(e) => setSelectedId(e.target.value)}
@@ -770,7 +781,7 @@ function ProjectSection({
               </select>
             </Field>
           )}
-          <Field label={t('Nome do projeto')} icon={FolderKanban}>
+          <Field label={t('Nome do gateway')} icon={FolderKanban}>
             <input
               type="text"
               value={name}
@@ -784,7 +795,7 @@ function ProjectSection({
           {canEdit ? (
             <div className="flex justify-end">
               <SaveButton pending={mutation.isPending} disabled={!dirty}>
-                {t('Salvar projeto')}
+                {t('Salvar gateway')}
               </SaveButton>
             </div>
           ) : (
@@ -1199,6 +1210,139 @@ function DeleteConfirmDialog({
   );
 }
 
+// ─── Insight Settings Section ─────────────────────────────────────────────────
+// Configuração por cliente dos Insights de IA: liga/desliga a geração
+// automática e escolhe a periodicidade (semanal/mensal). A mudança vale a
+// partir do próximo ciclo. Gravação restrita a administradores.
+
+function InsightSettingsSection({
+  role,
+  selectedTenantId,
+}: {
+  role: UserRole;
+  selectedTenantId: string;
+}) {
+  const t = useT();
+  const queryClient = useQueryClient();
+  const canEdit = role === 'ADMIN';
+
+  const { data: config, isLoading } = useQuery<InsightConfig>({
+    queryKey: ['insight-config', selectedTenantId],
+    queryFn: () => getInsightConfig(selectedTenantId || undefined),
+    enabled: !!selectedTenantId,
+  });
+
+  const [enabled, setEnabled] = useState(true);
+  const [frequency, setFrequency] = useState<InsightFrequency>('WEEKLY');
+  const [msg, setMsg] = useState<Msg>(null);
+
+  useEffect(() => {
+    if (!config) return;
+    setEnabled(config.enabled);
+    setFrequency(config.frequency);
+  }, [config]);
+
+  // Limpa o feedback apenas ao trocar de cliente (não no refetch pós-salvar).
+  useEffect(() => {
+    setMsg(null);
+  }, [selectedTenantId]);
+
+  const saveMutation = useMutation({
+    mutationFn: () =>
+      updateInsightConfig({ tenantId: selectedTenantId || undefined, enabled, frequency }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['insight-config', selectedTenantId] });
+      setMsg({ type: 'success', text: t('Configuração salva. Vale a partir do próximo ciclo.') });
+    },
+    onError: (err: Error) => {
+      setMsg({ type: 'error', text: err.message || t('Não foi possível salvar a configuração.') });
+    },
+  });
+
+  const dirty = config ? enabled !== config.enabled || frequency !== config.frequency : false;
+
+  return (
+    <SectionCard
+      title={t('Insights de IA')}
+      description={t('Resumo executivo periódico do cliente, gerado automaticamente pela IA')}
+      icon={Sparkles}
+    >
+      {!selectedTenantId ? (
+        <p className="text-sm text-muted-foreground">
+          {t('Selecione um cliente para configurar os insights.')}
+        </p>
+      ) : isLoading ? (
+        <div className="flex items-center justify-center py-6">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <label className="flex items-center justify-between gap-3">
+            <span className="text-sm text-foreground">{t('Geração automática')}</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={enabled}
+              disabled={!canEdit}
+              onClick={() => setEnabled((v) => !v)}
+              className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                enabled ? 'bg-cyan-600' : 'bg-muted-foreground/30'
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
+                  enabled ? 'left-[22px]' : 'left-0.5'
+                }`}
+              />
+            </button>
+          </label>
+
+          <div className="space-y-1.5">
+            <span className="text-xs font-medium text-muted-foreground">{t('Periodicidade')}</span>
+            <div className="flex gap-2">
+              {(['WEEKLY', 'MONTHLY'] as InsightFrequency[]).map((f) => (
+                <button
+                  key={f}
+                  type="button"
+                  disabled={!canEdit}
+                  onClick={() => setFrequency(f)}
+                  className={`flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                    frequency === f
+                      ? 'border-cyan-500 bg-cyan-500/10 text-cyan-700 dark:text-cyan-400'
+                      : 'border-border text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {f === 'WEEKLY' ? t('Semanal') : t('Mensal')}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            {t(
+              'O insight consolida alarmes, disponibilidade e ativos críticos do período e fica disponível no módulo de IA. A mudança vale a partir do próximo ciclo.',
+            )}
+          </p>
+
+          <Feedback msg={msg} />
+
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => saveMutation.mutate()}
+              disabled={!dirty || saveMutation.isPending}
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-cyan-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {saveMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              {t('Salvar')}
+            </button>
+          )}
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
 // ─── Notification Recipients Section ──────────────────────────────────────────
 
 function NotificationRecipientsSection({
@@ -1230,11 +1374,18 @@ function NotificationRecipientsSection({
     enabled: !!selectedTenantId,
   });
 
+  const { data: providersStatus } = useQuery<ProvidersStatus>({
+    queryKey: ['providers-status'],
+    queryFn: getProvidersStatus,
+    staleTime: 60_000,
+  });
+
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<NotificationRecipient | null>(null);
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<NotificationRecipient | null>(null);
   const [toast, setToast] = useState<Msg>(null);
+  const [testingId, setTestingId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!toast) return;
@@ -1304,6 +1455,22 @@ function NotificationRecipientsSection({
     saveMutation.mutate({ dto, isEdit, id: editing?.id });
   }
 
+  async function handleTestChannel(r: NotificationRecipient, channel: 'email' | 'whatsapp') {
+    setTestingId(`${r.id}_${channel}`);
+    try {
+      const result = await testChannel(r.id, channel);
+      if (result.ok) {
+        setToast({ type: 'success', text: t('Teste enviado com sucesso!') });
+      } else {
+        setToast({ type: 'error', text: `${t('Falha ao enviar teste:')} ${result.error ?? 'erro desconhecido'}` });
+      }
+    } catch (err) {
+      setToast({ type: 'error', text: `${t('Falha ao enviar teste:')} ${(err as Error).message}` });
+    } finally {
+      setTestingId(null);
+    }
+  }
+
   const tenantName = tenants.find((ten) => ten.id === selectedTenantId)?.name ?? '';
 
   const badgeClass =
@@ -1339,8 +1506,24 @@ function NotificationRecipientsSection({
           <p className="p-5 text-sm text-red-600 dark:text-red-400">{t('Não foi possível carregar os destinatários.')}</p>
         ) : (
           <div>
-            {(toast || (tenants.length > 1 && tenantName)) && (
+            {(toast || (tenants.length > 1 && tenantName) || (providersStatus && !providersStatus.email && !providersStatus.whatsapp)) && (
               <div className="space-y-3 px-5 pt-4">
+                {providersStatus && !providersStatus.email && !providersStatus.whatsapp && (
+                  <div className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                    <WifiOff className="h-3.5 w-3.5 shrink-0" />
+                    <span>
+                      <span className="font-semibold">{t('⚠️ Nenhum provedor configurado')}</span>{' '}
+                      — {t('RESEND_API_KEY e/ou credenciais Z-API não configuradas. Notificações externas desabilitadas.')}
+                    </span>
+                  </div>
+                )}
+                {providersStatus && (providersStatus.email || providersStatus.whatsapp) && (!providersStatus.email || !providersStatus.whatsapp) && (
+                  <div className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                    <WifiOff className="h-3.5 w-3.5 shrink-0" />
+                    {!providersStatus.email && <span>{t('E-mail (Resend) não configurado')}</span>}
+                    {!providersStatus.whatsapp && <span>{t('WhatsApp (Z-API) não configurado')}</span>}
+                  </div>
+                )}
                 {toast && <Feedback msg={toast} />}
                 {tenants.length > 1 && tenantName && (
                   <p className="text-xs text-muted-foreground">
@@ -1478,6 +1661,36 @@ function NotificationRecipientsSection({
                         {canEdit && (
                           <td className="px-4 py-3.5 align-top">
                             <div className="flex items-center justify-end gap-1">
+                              {r.emailEnabled && providersStatus?.email && (
+                                <button
+                                  type="button"
+                                  onClick={() => void handleTestChannel(r, 'email')}
+                                  disabled={testingId === `${r.id}_email`}
+                                  className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-cyan-50 hover:text-cyan-600 dark:hover:bg-cyan-950/40 dark:hover:text-cyan-400 disabled:opacity-50"
+                                  title={t('Testar e-mail')}
+                                >
+                                  {testingId === `${r.id}_email` ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  ) : (
+                                    <Mail className="h-3.5 w-3.5" />
+                                  )}
+                                </button>
+                              )}
+                              {r.whatsappEnabled && providersStatus?.whatsapp && (
+                                <button
+                                  type="button"
+                                  onClick={() => void handleTestChannel(r, 'whatsapp')}
+                                  disabled={testingId === `${r.id}_whatsapp`}
+                                  className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-green-50 hover:text-green-600 dark:hover:bg-green-950/40 dark:hover:text-green-400 disabled:opacity-50"
+                                  title={t('Testar WhatsApp')}
+                                >
+                                  {testingId === `${r.id}_whatsapp` ? (
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  ) : (
+                                    <MessageCircle className="h-3.5 w-3.5" />
+                                  )}
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 onClick={() => openEdit(r)}
@@ -1573,7 +1786,7 @@ export default function SettingsPage() {
           <div>
             <h1 className="text-xl font-semibold tracking-tight text-foreground">{t('Ajustes')}</h1>
             <p className="mt-0.5 text-sm text-muted-foreground">
-              {t('Configure clientes, sites, projetos e destinatários de notificação')}
+              {t('Configure clientes, sites, gateways e destinatários de notificação')}
             </p>
           </div>
         </div>
@@ -1605,11 +1818,16 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <NotificationRecipientsSection
-        role={user.role}
-        selectedTenantId={selectedTenantId}
-        tenants={tenants}
-      />
+      <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-3">
+        <div className="xl:col-span-2">
+          <NotificationRecipientsSection
+            role={user.role}
+            selectedTenantId={selectedTenantId}
+            tenants={tenants}
+          />
+        </div>
+        <InsightSettingsSection role={user.role} selectedTenantId={selectedTenantId} />
+      </div>
     </div>
   );
 }

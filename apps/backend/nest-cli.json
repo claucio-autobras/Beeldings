@@ -9,6 +9,11 @@
         "include": "modules/reports/assets/fonts/**/*",
         "outDir": "dist/src",
         "watchAssets": true
+      },
+      {
+        "include": "modules/knowledge/assets/**/*",
+        "outDir": "dist/src",
+        "watchAssets": true
       }
     ]
   }

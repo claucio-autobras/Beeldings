@@ -87,10 +87,14 @@ export const CAMERA_OID_PROFILES: CameraOidProfile[] = [
     label: 'Dahua',
     match: ['dahua'],
     oids: {
-      // DAHUA-SNMP-MIB: cpuUsage / memoryUsage (%) / deviceTemperature (°C)
-      cpu: { oid: '1.3.6.1.4.1.1004849.2.1.3.1.1.1', scale: 1, unit: '%' },
-      memory: { oid: '1.3.6.1.4.1.1004849.2.1.3.2.1.1', scale: 1, unit: '%' },
-      temperature: { oid: '1.3.6.1.4.1.1004849.2.1.3.3.1.1', scale: 1, unit: '°C' },
+      // OIDs OFICIAIS ("Dahua Product Management Information Library",
+      // root 1.3.6.1.4.1.1004849.2): cpuUsage 2.1.3.0 (escalar 0–100),
+      // memoryInfo.memoryUsage 2.1.9.2.0 (0–100 %).
+      cpu: { oid: '1.3.6.1.4.1.1004849.2.1.3.0', scale: 1, unit: '%' },
+      memory: { oid: '1.3.6.1.4.1.1004849.2.1.9.2.0', scale: 1, unit: '%' },
+      // A doc oficial NÃO define objeto de temperatura — fallback UCD genérico
+      // (o OID antigo 2.1.3.3.1.1 vinha de dump comunitário e contradiz a doc).
+      temperature: GENERIC_OIDS.temperature,
       packet_loss: GENERIC_OIDS.packet_loss,
     },
   },
@@ -99,10 +103,10 @@ export const CAMERA_OID_PROFILES: CameraOidProfile[] = [
     label: 'Intelbras',
     match: ['intelbras'],
     oids: {
-      // Firmware Intelbras deriva do Dahua — mesma MIB proprietária
-      cpu: { oid: '1.3.6.1.4.1.1004849.2.1.3.1.1.1', scale: 1, unit: '%' },
-      memory: { oid: '1.3.6.1.4.1.1004849.2.1.3.2.1.1', scale: 1, unit: '%' },
-      temperature: { oid: '1.3.6.1.4.1.1004849.2.1.3.3.1.1', scale: 1, unit: '°C' },
+      // Firmware Intelbras deriva do Dahua — mesma árvore oficial 1004849.2.
+      cpu: { oid: '1.3.6.1.4.1.1004849.2.1.3.0', scale: 1, unit: '%' },
+      memory: { oid: '1.3.6.1.4.1.1004849.2.1.9.2.0', scale: 1, unit: '%' },
+      temperature: GENERIC_OIDS.temperature,
       packet_loss: GENERIC_OIDS.packet_loss,
     },
   },

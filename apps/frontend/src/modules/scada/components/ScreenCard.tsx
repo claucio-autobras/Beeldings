@@ -94,7 +94,7 @@ export function ScreenCard({
           screen.isHome ? (
             <span className="flex items-center justify-center gap-1.5 rounded-lg bg-cyan-50 py-1.5 text-xs font-medium text-cyan-700">
               <Home className="h-3.5 w-3.5" strokeWidth={1.5} />
-              Tela inicial do projeto
+              Tela inicial do gateway
             </span>
           ) : (
             <button

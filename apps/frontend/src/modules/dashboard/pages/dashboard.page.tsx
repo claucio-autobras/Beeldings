@@ -42,7 +42,6 @@ import {
   QuickAccess,
   OperationalSummaryCard,
   TopOffendersCard,
-  AdminTrendCard,
 } from '../components/dashboard.component';
 
 const IS_MOCK = process.env.NEXT_PUBLIC_USE_MOCK === 'true';
@@ -196,7 +195,7 @@ function AdminDashboardView({ period }: { period: DashboardPeriod }) {
         <div className="space-y-4 lg:col-span-2 xl:col-span-3">
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
             <div className="xl:col-span-2">
-              <SeverityTimelineCard period={period} />
+              <SeverityTimelineCard period={period} offlineTrend={overview?.trend} />
             </div>
             <CriticalAssetsCard
               assets={criticalAssets?.assets}
@@ -204,8 +203,6 @@ function AdminDashboardView({ period }: { period: DashboardPeriod }) {
               isLoading={loadingCritical}
             />
           </div>
-
-          <AdminTrendCard trend={overview?.trend} period={period} isLoading={loadingOverview} />
 
           <GatewaysHealthTable tenantNameById={tenantNameById} />
 

@@ -23,9 +23,31 @@ async function bootstrap() {
   // Headers de segurança padrão (Helmet). `crossOriginResourcePolicy` fica
   // cross-origin para que as imagens SCADA servidas abaixo possam ser embutidas
   // pelo frontend mesmo quando acessa o backend por outro domínio/porta.
+  //
+  // CSP: substituímos os defaults amplos de font-src e style-src (que incluem
+  // o wildcard `https:`) por listas explícitas sem wildcard, impedindo que
+  // scanners de segurança (ZAP, Burp) reportem "Wildcard Directive".
   app.use(
     helmet({
       crossOriginResourcePolicy: { policy: 'cross-origin' },
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          baseUri: ["'self'"],
+          // Sem `https:` — apenas self e data URIs para fontes embutidas.
+          fontSrc: ["'self'", 'data:'],
+          formAction: ["'self'"],
+          frameAncestors: ["'self'"],
+          imgSrc: ["'self'", 'data:'],
+          objectSrc: ["'none'"],
+          scriptSrc: ["'self'"],
+          scriptSrcAttr: ["'none'"],
+          // Sem `https:` — apenas self e inline (necessário para alguns
+          // frameworks; nenhuma folha de estilo externa é carregada pela API).
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          upgradeInsecureRequests: [],
+        },
+      },
     }),
   );
 

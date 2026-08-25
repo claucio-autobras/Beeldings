@@ -1,5 +1,8 @@
 # EMQX — proteção, observabilidade e caminho para cluster
 
+> **Recuperação de desastre**: backup/restore do estado do broker e
+> re-provisionamento em massa das credenciais estão no [RUNBOOK](./RUNBOOK.md).
+
 ## Limites configurados (`emqx_extra.conf`)
 
 Todos os limites são **folgados** (≈100x a operação normal): o objetivo não é

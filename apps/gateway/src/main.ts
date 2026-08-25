@@ -3,6 +3,28 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { Logger } from '@nestjs/common';
 
+// ── Última linha de defesa contra quedas em campo ────────────────────────────
+// Cada loop de polling já captura e loga suas próprias exceções; estes handlers
+// garantem que uma rejeição/exceção que escape por qualquer outro caminho seja
+// LOGADA sem derrubar o processo do gateway (rede instável, driver com bug,
+// callback de lib nativa que lança fora do ciclo). O gateway é um serviço de
+// campo: ficar vivo e seguir coletando vale mais do que morrer "limpo".
+const crashGuardLogger = new Logger('CrashGuard');
+
+process.on('unhandledRejection', (reason) => {
+  const detail =
+    reason instanceof Error ? (reason.stack ?? reason.message) : String(reason);
+  crashGuardLogger.error(
+    `Unhandled rejection capturada — gateway mantido vivo: ${detail}`,
+  );
+});
+
+process.on('uncaughtException', (err: Error) => {
+  crashGuardLogger.error(
+    `Uncaught exception capturada — gateway mantido vivo: ${err.stack ?? err.message}`,
+  );
+});
+
 async function bootstrap(): Promise<void> {
   const logger = new Logger('Gateway');
 

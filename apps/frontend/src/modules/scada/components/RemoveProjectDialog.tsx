@@ -15,7 +15,7 @@ interface RemoveProjectDialogProps {
 export function RemoveProjectDialog({ projectName, isPending, error, onCancel, onConfirm }: RemoveProjectDialogProps) {
   return (
     <PasswordConfirmDialog
-      title="Excluir as telas deste projeto?"
+      title="Excluir as telas deste gateway?"
       confirmLabel="Remover"
       description={
         <>
@@ -24,7 +24,7 @@ export function RemoveProjectDialog({ projectName, isPending, error, onCancel, o
             excluídas permanentemente. Esta ação não pode ser desfeita.
           </span>
           <span className="mt-2 block rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-400">
-            O projeto, o gateway e os dispositivos do cliente <span className="font-medium">não</span> são afetados.
+            O gateway e os dispositivos do cliente <span className="font-medium">não</span> são afetados.
           </span>
         </>
       }

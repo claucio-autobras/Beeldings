@@ -17,6 +17,34 @@ export class EmqxProvisioningService {
     this.authHeader = `Basic ${Buffer.from(`${key}:${secret}`).toString('base64')}`;
   }
 
+  /** EMQX gerenciado configurado (EMQX_API_URL presente)? */
+  isConfigured(): boolean {
+    return !!this.apiUrl;
+  }
+
+  /**
+   * Verifica se um usuário MQTT existe no banco de autenticação do EMQX.
+   * Retorna `true`/`false` quando a API respondeu, ou `null` quando a checagem
+   * foi inconclusiva (EMQX não configurado, API fora do ar) — o chamador NUNCA
+   * deve tratar `null` como "ausente".
+   */
+  async mqttUserExists(username: string): Promise<boolean | null> {
+    if (!this.apiUrl) return null;
+    try {
+      const res = await fetch(
+        `${this.apiUrl}/authentication/password_based:built_in_database/users/${encodeURIComponent(username)}`,
+        { headers: { Authorization: this.authHeader }, signal: AbortSignal.timeout(8_000) },
+      );
+      if (res.ok) return true;
+      if (res.status === 404) return false;
+      this.logger.warn(`EMQX: checagem do usuário ${username} retornou HTTP ${res.status}`);
+      return null;
+    } catch (err) {
+      this.logger.warn(`EMQX: falha ao checar usuário ${username}: ${(err as Error).message}`);
+      return null;
+    }
+  }
+
   /**
    * Cria o usuário MQTT e as regras ACL no EMQX para o gateway provisionado.
    * Se EMQX_API_URL não estiver configurado, emite um aviso e retorna sem erro

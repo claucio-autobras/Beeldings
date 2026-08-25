@@ -8,6 +8,12 @@ import { withBasePath } from '@/lib/routes';
 import type { CriticalAsset } from '../services/dashboard.service';
 import { useCameras } from '@/modules/cftv/hooks/useCameras';
 import { FirstActionModal } from './FirstActionModal';
+import { CriticalAssetInfoModal } from './CriticalAssetInfoModal';
+import {
+  resolveAssetClick,
+  resolveAssetNavigateHref,
+  resolveInfoShortcut,
+} from './criticalAssetClick';
 
 interface CriticalAssetsCardProps {
   assets: CriticalAsset[] | undefined;
@@ -49,40 +55,45 @@ export function CriticalAssetsCard({ assets, isAdmin, isLoading }: CriticalAsset
   const router = useRouter();
   // Ativo em falha selecionado → painel "Primeira ação sugerida" (IA).
   const [firstActionAsset, setFirstActionAsset] = useState<CriticalAsset | null>(null);
+  // Cliente: painel informativo do ativo (nunca navegação técnica direta).
+  const [infoAsset, setInfoAsset] = useState<CriticalAsset | null>(null);
 
   // Câmeras do escopo (cache compartilhado com o card CFTV): identifica pontos
   // críticos de câmera para o deep-link ir ao contexto CFTV, não a Dispositivos.
   const { data: cameras = [] } = useCameras();
   const isCameraDevice = (deviceId: string) => cameras.some((c) => c.id === deviceId);
+  const isCameraAsset = (a: CriticalAsset) =>
+    a.kind === 'camera' || (a.kind === 'point' && isCameraDevice(a.deviceId));
 
-  // Navegação contextual (Alarmes/CFTV/SCADA/Dispositivos) — também usada pelo
-  // botão do painel de primeira ação.
+  const clickCtx = (a: CriticalAsset) => ({ isAdmin, isCamera: isCameraAsset(a) });
+
+  // Navegação contextual — também usada pelo botão do painel de primeira ação.
+  // Técnico vai direto ao ponto: detalhe do dispositivo com o ponto em
+  // destaque (câmera continua indo ao CFTV). Cliente só navega pelos atalhos
+  // do painel informativo (nunca ao SCADA num item sem resposta).
   const navigate = (a: CriticalAsset) => {
-    if (a.state === 'fault' && a.faultAlarmEventId) {
-      router.push(withBasePath(`/alarms?state=open&highlight=${a.faultAlarmEventId}`));
-      return;
-    }
-    if (a.kind === 'camera' || (a.kind === 'point' && isCameraDevice(a.deviceId))) {
-      router.push(withBasePath('/cftv'));
-      return;
-    }
-    // Cliente nunca é levado ao detalhe técnico: prefere a tela SCADA do
-    // equipamento quando existe; senão a lista de Dispositivos (nível do perfil).
-    if (!isAdmin && a.scadaScreenId) {
-      router.push(withBasePath(`/scada/view/${a.scadaScreenId}`));
-      return;
-    }
-    router.push(withBasePath('/devices'));
+    router.push(withBasePath(resolveAssetNavigateHref(a, clickCtx(a))));
   };
 
-  // Clique num item em falha abre o painel de primeira ação (a navegação
-  // contextual segue disponível dentro dele); demais estados navegam direto.
+  // Clique: falha abre o painel de primeira ação (navegação contextual segue
+  // disponível dentro dele); técnico navega direto; cliente vê o painel
+  // informativo do ativo — nunca cai no SCADA com o ponto mudo.
   const go = (a: CriticalAsset) => {
-    if (a.state === 'fault') {
-      setFirstActionAsset(a);
-      return;
-    }
-    navigate(a);
+    const action = resolveAssetClick(a, clickCtx(a));
+    if (action.kind === 'firstAction') setFirstActionAsset(a);
+    else if (action.kind === 'navigate') router.push(withBasePath(action.href));
+    else setInfoAsset(a);
+  };
+
+  // Atalho contextual do painel informativo do cliente: CFTV para câmeras;
+  // SCADA só quando o equipamento está numa tela ativa E responde.
+  const infoAction = (a: CriticalAsset): { label: string; go: () => void } | null => {
+    const shortcut = resolveInfoShortcut(a, clickCtx(a));
+    if (!shortcut) return null;
+    return {
+      label: shortcut.label === 'cftv' ? t('Ver no CFTV') : t('Ver no SCADA'),
+      go: () => router.push(withBasePath(shortcut.href)),
+    };
   };
 
   return (
@@ -196,7 +207,9 @@ export function CriticalAssetsCard({ assets, isAdmin, isLoading }: CriticalAsset
                           {t('Desligado')}
                         </span>
                         <span className="block text-[11px] text-muted-foreground">
-                          {a.stoppedMs !== null ? `${t('há')} ${humanizeMs(a.stoppedMs, t)}` : ''}
+                          {a.stoppedMs !== null
+                            ? `${t('há')} ${humanizeMs(a.stoppedMs, t)}`
+                            : t('Sem dados')}
                         </span>
                       </>
                     ) : (
@@ -215,6 +228,23 @@ export function CriticalAssetsCard({ assets, isAdmin, isLoading }: CriticalAsset
             );
           })}
         </ul>
+      )}
+
+      {infoAsset && (
+        <CriticalAssetInfoModal
+          asset={infoAsset}
+          actionLabel={infoAction(infoAsset)?.label}
+          onAction={
+            infoAction(infoAsset)
+              ? () => {
+                  const action = infoAction(infoAsset);
+                  setInfoAsset(null);
+                  action?.go();
+                }
+              : undefined
+          }
+          onClose={() => setInfoAsset(null)}
+        />
       )}
 
       {firstActionAsset && (

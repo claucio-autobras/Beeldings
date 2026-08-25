@@ -45,3 +45,8 @@ description: Como o deploy de produção está montado e as armadilhas de config
   DEBUG por mensagem).
 - Pendências conscientes pré-go-live: usuários legados sem passwordHash (era
   Supabase) não logam; TLS/mTLS fino, HA líder-único e backpressure adiados.
+
+## Falha no promote (publish) sem logs
+- Build ok + "Waiting for deployment to be ready" que expira = falha de promote; a versão anterior CONTINUA no ar (VM não é derrubada).
+- Logs de runtime do promote que falhou NÃO ficam retidos (fetchDeploymentLogs retorna vazio). Diagnóstico: bootar o dist localmente (`NODE_ENV=production node dist/src/main.js` + seed) e ver se sobe limpo.
+- Probe de prontidão agora tem path explícito `/login` em artifact.toml ([services.production.health.startup]) — `/` redireciona p/ /login (307), path explícito evita depender do comportamento do probe com redirects.

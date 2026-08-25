@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { StorageMonitorService } from './storage-monitor.service.js';
 import { EmqxMonitorService } from './emqx-monitor.service.js';
+import { EmqxReprovisionService } from './emqx-reprovision.service.js';
+import { EmqxProvisioningService } from '../sites/application/emqx-provisioning.service.js';
 import { HealthController } from './health.controller.js';
 import { CommsHealthController } from './comms-health.controller.js';
 import { TrendsModule } from '../trends/trends.module.js';
@@ -8,7 +10,7 @@ import { TrendsModule } from '../trends/trends.module.js';
 @Module({
   imports: [TrendsModule],
   controllers: [HealthController, CommsHealthController],
-  providers: [StorageMonitorService, EmqxMonitorService],
-  exports: [StorageMonitorService, EmqxMonitorService],
+  providers: [StorageMonitorService, EmqxMonitorService, EmqxProvisioningService, EmqxReprovisionService],
+  exports: [StorageMonitorService, EmqxMonitorService, EmqxReprovisionService],
 })
 export class HealthModule {}

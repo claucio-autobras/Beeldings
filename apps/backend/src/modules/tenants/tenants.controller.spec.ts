@@ -83,6 +83,144 @@ describe('TenantsController.getTenants', () => {
 });
 
 /**
+ * Testes do PATCH /tenants/:id — edição de nome/slug do cliente pela tela de
+ * Ajustes. Garante restrição a ADMIN, normalização/validação de slug, erro
+ * amigável em colisão de slug (em vez de estourar a constraint única) e 404
+ * para cliente inexistente. Resposta no formato TenantItem.
+ */
+describe('TenantsController.updateTenant', () => {
+  const TENANT_ID = 'tenant-1';
+  const admin = { id: 'u-admin', role: 'ADMIN' } as AuthenticatedUser;
+
+  const tenantRow = {
+    id: TENANT_ID,
+    name: 'Cliente Antigo',
+    slug: 'cliente-antigo',
+    active: true,
+    logoUrl: null,
+    accentColor: null,
+    createdAt: new Date('2026-06-30T14:07:20.914Z'),
+  };
+
+  const findUnique = jest.fn();
+  const update = jest.fn();
+
+  const prismaMock = {
+    tenant: { findUnique, update },
+  } as unknown as PrismaService;
+
+  const controller = new TenantsController(
+    prismaMock,
+    {} as ClusterService,
+    {} as ScadaObjectStorageService,
+    {} as never,
+  );
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    findUnique.mockImplementation(async ({ where }: { where: { id?: string; slug?: string } }) => {
+      if (where.id === TENANT_ID) return tenantRow;
+      return null; // busca por slug: sem colisão por padrão
+    });
+    update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+      ...tenantRow,
+      ...data,
+      _count: { sites: 2, devices: 6 },
+    }));
+  });
+
+  it('atualiza nome e slug e responde no formato TenantItem', async () => {
+    const result = await controller.updateTenant(admin, TENANT_ID, {
+      name: '  Novo Nome  ',
+      slug: 'Novo Slug!',
+    });
+
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: TENANT_ID },
+        data: { name: 'Novo Nome', slug: 'novo-slug' },
+      }),
+    );
+    expect(result).toMatchObject({
+      id: TENANT_ID,
+      name: 'Novo Nome',
+      slug: 'novo-slug',
+      active: true,
+      siteCount: 2,
+      deviceCount: 6,
+      createdAt: '2026-06-30T14:07:20.914Z',
+    });
+  });
+
+  it('recusa quem não é ADMIN', async () => {
+    const cco = { id: 'u-cco', role: 'CCO' } as AuthenticatedUser;
+    await expect(
+      controller.updateTenant(cco, TENANT_ID, { name: 'X' }),
+    ).rejects.toThrow(BadRequestException);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('retorna 404 se o cliente não existe', async () => {
+    findUnique.mockResolvedValueOnce(null);
+    await expect(
+      controller.updateTenant(admin, 'inexistente', { name: 'X' }),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('recusa slug que vira vazio após normalização', async () => {
+    await expect(
+      controller.updateTenant(admin, TENANT_ID, { slug: '  --- ' }),
+    ).rejects.toThrow(BadRequestException);
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('recusa nome vazio', async () => {
+    await expect(
+      controller.updateTenant(admin, TENANT_ID, { name: '   ' }),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('recusa corpo sem name nem slug', async () => {
+    await expect(controller.updateTenant(admin, TENANT_ID, {})).rejects.toThrow(
+      BadRequestException,
+    );
+  });
+
+  it('recusa slug já usado por outro cliente com erro amigável', async () => {
+    findUnique.mockImplementation(async ({ where }: { where: { id?: string; slug?: string } }) => {
+      if (where.id === TENANT_ID) return tenantRow;
+      if (where.slug === 'ocupado') return { id: 'tenant-2', slug: 'ocupado' };
+      return null;
+    });
+    await expect(
+      controller.updateTenant(admin, TENANT_ID, { slug: 'ocupado' }),
+    ).rejects.toThrow('Já existe um cliente com este slug');
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('permite salvar mantendo o próprio slug (sem falso positivo de colisão)', async () => {
+    const result = await controller.updateTenant(admin, TENANT_ID, {
+      name: 'Renomeado',
+      slug: 'cliente-antigo',
+    });
+    expect(result).toMatchObject({ name: 'Renomeado', slug: 'cliente-antigo' });
+    // Não deve consultar colisão quando o slug não mudou.
+    expect(findUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it('converte P2002 (corrida na constraint única) em erro amigável', async () => {
+    update.mockImplementationOnce(async () => {
+      const err = new Error('Unique constraint failed') as Error & { code: string };
+      err.code = 'P2002';
+      throw err;
+    });
+    await expect(
+      controller.updateTenant(admin, TENANT_ID, { slug: 'corrida' }),
+    ).rejects.toThrow('Já existe um cliente com este slug');
+  });
+});
+
+/**
  * Testes da exclusão de cliente (DELETE /tenants/:id) — garante que a
  * transação remove TODOS os vínculos diretos com o tenant (incluindo telas
  * SCADA e grupos de alarme, causa do erro P2003 em produção) e que falhas de

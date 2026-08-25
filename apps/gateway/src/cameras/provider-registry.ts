@@ -62,11 +62,19 @@ export const LAYER1_OIDS = {
   ifInErrors: '1.3.6.1.2.1.2.2.1.14.1',
 } as const;
 
-/** Árvore enterprise Dahua/Intelbras (indistinguíveis só por SNMP). */
+/**
+ * Árvore enterprise Dahua/Intelbras (indistinguíveis só por SNMP).
+ *
+ * OIDs OFICIAIS da doc "Dahua Product Management Information Library"
+ * (root 1.3.6.1.4.1.1004849.2): cpuUsage 2.1.3.0 (escalar 0–100),
+ * memoryInfo.memoryUsage 2.1.9.2.0 (0–100 %).
+ * A doc oficial NÃO define objeto de temperatura — campo removido (os OIDs
+ * antigos 2.1.3.X.1.1 vinham de dumps comunitários e contradizem a doc:
+ * 2.1.3 é um escalar, não uma tabela).
+ */
 const DAHUA_TREE_FIELDS: ProviderField[] = [
-  { metric: 'cpu', oid: '1.3.6.1.4.1.1004849.2.1.3.1.1.1' },
-  { metric: 'memory', oid: '1.3.6.1.4.1.1004849.2.1.3.2.1.1' },
-  { metric: 'temperature', oid: '1.3.6.1.4.1.1004849.2.1.3.3.1.1' },
+  { metric: 'cpu', oid: '1.3.6.1.4.1.1004849.2.1.3.0' },
+  { metric: 'memory', oid: '1.3.6.1.4.1.1004849.2.1.9.2.0' },
 ];
 
 export const CAMERA_PROVIDERS: CameraProvider[] = [
@@ -102,7 +110,7 @@ export const CAMERA_PROVIDERS: CameraProvider[] = [
     // "dado não confiável" em vez de exibir um zero falso.
     bestEffort: true,
     fields: DAHUA_TREE_FIELDS.map((f) =>
-      f.metric === 'cpu' || f.metric === 'memory' || f.metric === 'temperature'
+      f.metric === 'cpu' || f.metric === 'memory'
         ? { ...f, sentinels: [0] }
         : f,
     ),

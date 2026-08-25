@@ -15,6 +15,7 @@
 export type AcHealthMetric =
   | 'cpu'
   | 'memory'
+  | 'memory_available'
   | 'ram_total'
   | 'temperature'
   | 'packet_loss';
@@ -40,9 +41,12 @@ export interface AcOidProfile {
 const GENERIC_AC_OIDS: Partial<Record<AcHealthMetric, AcHealthOidEntry>> = {
   // hrProcessorLoad da 1ª CPU (HOST-RESOURCES-MIB)
   cpu: { oid: '1.3.6.1.2.1.25.3.3.1.2.1', scale: 1, unit: '%' },
-  // UCD memAvailReal (kB)
-  memory: { oid: '1.3.6.1.4.1.2021.4.6.0', scale: 1, unit: 'kB' },
-  // UCD lm-sensors (mili-°C → °C)
+  // UCD memória recuperável (memAvailReal + buffers + cache), em bytes.
+  memory_available: { oid: '1.3.6.1.4.1.2021.4.6.0', scale: 1024, unit: 'bytes' },
+  // HOST-RESOURCES-MIB hrMemorySize is KBytes; bindings publish bytes.
+  ram_total: { oid: '1.3.6.1.2.1.25.2.2.0', scale: 1024, unit: 'bytes' },
+  // UCD lm-sensors (mili-°C → °C), available on compatible non-Control iD
+  // firmwares. The Control iD profile explicitly removes this fallback.
   temperature: { oid: '1.3.6.1.4.1.2021.13.16.2.1.3.1', scale: 0.001, unit: '°C' },
   // ifInDiscards da interface 1
   packet_loss: { oid: '1.3.6.1.2.1.2.2.1.13.1', scale: 1, unit: 'pkts' },
@@ -64,11 +68,16 @@ export const ACCESS_CONTROLLER_OID_PROFILES: AcOidProfile[] = [
   {
     id: 'control-id',
     label: 'Control iD',
-    match: ['control id', 'controlid', 'control-id'],
+    match: ['control id', 'controlid', 'control-id', 'idflex'],
     oids: {
-      // TODO(field): levantar OIDs proprietários da CONTROL-ID-MIB (enterprise 34475).
-      // Enquanto isso o perfil genérico MIB-II é o fallback.
       ...GENERIC_AC_OIDS,
+      // O iDFlex validado em campo não expõe sensor de temperatura. A
+      // propriedade explícita remove o fallback genérico desse fabricante.
+      temperature: undefined,
+      // A CPU canônica é hrProcessorLoad (todos os núcleos), não o OID
+      // proprietário cidCpuUsage, que diverge da leitura agregada esperada.
+      // OIDs proprietários restantes são classificados na descoberta.
+      cpu: GENERIC_AC_OIDS.cpu,
     },
   },
   {
@@ -105,6 +114,7 @@ export const AC_HEALTH_METRIC_META: Record<
 > = {
   cpu: { tag: 'CPU', objectName: 'Uso de CPU' },
   memory: { tag: 'MEMORIA', objectName: 'Memória disponível' },
+  memory_available: { tag: 'MEMORIA', objectName: 'Memória disponível' },
   ram_total: { tag: 'RAM_TOTAL', objectName: 'Memória RAM total' },
   temperature: { tag: 'TEMPERATURA', objectName: 'Temperatura' },
   packet_loss: { tag: 'PACOTES_PERDIDOS', objectName: 'Pacotes perdidos (descartes if1)' },

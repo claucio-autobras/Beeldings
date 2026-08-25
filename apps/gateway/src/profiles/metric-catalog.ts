@@ -191,7 +191,11 @@ const NVR_METRICS: MetricDefinition[] = [
 
   // ── Discos (tabela indexada por slot) ──────────────────────────────────────
   // disk_status: 0=sem disco, 1=normal, 2=erro, 3=não formatado, 4=inicializando.
-  // disk_capacity / disk_used em GB (Hikvision) ou MB (Dahua — scale no ponto).
+  // disk_capacity: GB na saída — Hikvision (hikDiskTable oficial) reporta MB
+  // (scale 0.001 no perfil); Dahua (physicalVolumeTotal oficial) já é GB nativo.
+  // disk_used: Hikvision = GB derivado (capacidade − livre, no driver);
+  // Dahua/Intelbras = USO EM % (physicalVolumeUsage) — unidade real fica no
+  // ponto criado pelo backend ('%'), a unit abaixo é só default de exibição.
   { key: 'disk_status',   name: 'Estado do disco',         unit: '',   dataType: 'enum',  driver: 'snmp', collectionType: 'table' },
   { key: 'disk_capacity', name: 'Capacidade do disco',     unit: 'GB', dataType: 'gauge', driver: 'snmp', collectionType: 'table' },
   { key: 'disk_used',     name: 'Espaço usado/livre disco',unit: 'GB', dataType: 'gauge', driver: 'snmp', collectionType: 'table' },

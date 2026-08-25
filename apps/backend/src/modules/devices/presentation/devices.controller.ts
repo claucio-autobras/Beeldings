@@ -50,6 +50,8 @@ import { RolesGuard } from '../../auth/presentation/guards/roles.guard.js';
 import { Roles } from '../../auth/presentation/decorators/roles.decorator.js';
 import { CurrentUser } from '../../auth/presentation/decorators/current-user.decorator.js';
 import { UserRole } from '../../auth/domain/interfaces/auth.interface.js';
+import { SnmpMibService } from '../application/snmp-mib.service.js';
+import { assertCanEditCriticality } from './criticality-role.util.js';
 import { repairMojibake } from '../../../common/mojibake-repair.util.js';
 import type { AuthenticatedUser } from '../../auth/domain/interfaces/auth.interface.js';
 import type { Prisma } from '@prisma/client';
@@ -135,6 +137,7 @@ export class DevicesController {
     private readonly deviceStatus: DeviceStatusService,
     private readonly deviceHeartbeat: DeviceHeartbeatService,
     private readonly defaultTrends: DefaultTrendsService,
+    private readonly snmpMib: SnmpMibService,
   ) {}
 
   /**
@@ -1433,6 +1436,10 @@ export class DevicesController {
       throw new BadRequestException('Sem permissão para editar este dispositivo');
     }
 
+    // Criticidade (estrela do card Ativos Críticos) é exclusiva do perfil
+    // técnico — perfis cliente não podem marcar/desmarcar.
+    if (body.critical !== undefined) assertCanEditCriticality(user);
+
     if (body.siteId) {
       const site = await this.prisma.site.findFirst({
         where: { id: body.siteId, tenantId: device.tenantId },
@@ -1630,7 +1637,7 @@ export class DevicesController {
     const device = await this.prisma.device.findUnique({ where: { id } });
     if (!device) throw new NotFoundException('Dispositivo não encontrado');
 
-    const isGlobal = user.role === 'ADMIN' || user.role === 'CCO';
+    const isGlobal = user.role === 'ADMIN' || user.role === 'CCO' || user.role === 'SUPERVISOR';
     if (!isGlobal && device.tenantId !== user.tenantId) {
       throw new BadRequestException('Sem permissão para editar este dispositivo');
     }
@@ -1638,6 +1645,12 @@ export class DevicesController {
     const point = await this.prisma.devicePoint.findUnique({ where: { id: pointId } });
     if (!point || point.deviceId !== id) {
       throw new NotFoundException('Ponto não encontrado neste dispositivo');
+    }
+
+    // Criticidade e papel operacional (estrela do card Ativos Críticos) são
+    // exclusivos do perfil técnico — perfis cliente não podem alterar.
+    if (body.critical !== undefined || body.opRole !== undefined) {
+      assertCanEditCriticality(user);
     }
 
     const data: Prisma.DevicePointUpdateInput = {};
@@ -2151,5 +2164,70 @@ export class DevicesController {
 
     const { isDigital: _isDigital, ...request } = target;
     return this.modbusWrite.writeModbus({ ...request, value: numericValue });
+  }
+
+  // ─── SNMP MIB management ────────────────────────────────────────────────────
+
+  /**
+   * GET /devices/snmp-mibs — Lista MIBs importadas (todos os usuários autenticados).
+   */
+  @Get('snmp-mibs')
+  @UseGuards(JwtAuthGuard)
+  async listSnmpMibs() {
+    return this.snmpMib.findAll();
+  }
+
+  /**
+   * POST /devices/snmp-mibs — Importa e parseia um arquivo MIB ASN.1.
+   * Requer perfil ADMIN, CCO ou SUPERVISOR.
+   *
+   * Body: { label: string, content: string, filename?: string, manufacturer?: string }
+   *   label    — nome do fabricante/perfil (ex.: "Control iD")
+   *   content  — texto completo do arquivo MIB (ASN.1)
+   *   filename — nome do arquivo (opcional, informativo)
+   */
+  @Post('snmp-mibs')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.CCO, UserRole.SUPERVISOR)
+  async createSnmpMib(
+    @Body()
+    body: {
+      label?: string;
+      content?: string;
+      filename?: string;
+      manufacturer?: string;
+    },
+  ) {
+    if (!body?.label?.trim()) throw new BadRequestException('label é obrigatório');
+    if (!body?.content?.trim()) throw new BadRequestException('content é obrigatório');
+    let mib;
+    try {
+      mib = await this.snmpMib.create(body.label, body.content, body.filename, body.manufacturer);
+    } catch (error) {
+      throw new BadRequestException(error instanceof Error ? error.message : 'MIB inválida');
+    }
+    return {
+      id: mib.id,
+      label: mib.label,
+      sourceFilename: mib.sourceFilename,
+      manufacturer: mib.manufacturer,
+      isOffline: mib.isOffline,
+      conflictCount: 0,
+      entryCount: (mib.entries as unknown[]).length,
+      createdAt: mib.createdAt,
+    };
+  }
+
+  /**
+   * DELETE /devices/snmp-mibs/:mibId — Remove uma MIB cadastrada.
+   * Requer perfil ADMIN, CCO ou SUPERVISOR.
+   */
+  @Delete('snmp-mibs/:mibId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.CCO, UserRole.SUPERVISOR)
+  async deleteSnmpMib(@Param('mibId') mibId: string) {
+    const removed = await this.snmpMib.remove(mibId);
+    if (!removed) throw new NotFoundException('MIB não encontrada');
   }
 }

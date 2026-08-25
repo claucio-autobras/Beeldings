@@ -4,11 +4,18 @@ import { OnEvent } from '@nestjs/event-emitter';
 import { GatewayMqttService } from '../mqtt/gateway-mqtt.service';
 import { PollingMetricsService } from '../observability/polling-metrics.service';
 import { computeStartJitterMs } from '../observability/poll-jitter.util';
-import { readSnmpOids, readSnmpStrings, readSnmpTable } from './snmp-read.util';
+import {
+  readSnmpOids,
+  readSnmpStrings,
+  readSnmpTable,
+  type SnmpV3Credentials,
+} from './snmp-read.util';
+import { walkSnmpSubtree } from './snmp-walk.util';
 import { pingPacketLoss } from '../cameras/ping.util';
 import { fetchIsapiUptime } from '../cameras/isapi.util';
 import { SnmpDriver } from '../drivers/snmp.driver';
 import type { DriverTelemetryPoint } from '../drivers/collection-driver.interface';
+import { ReachabilityTracker } from './reachability-tracker';
 
 /** Ponto SNMP de um device (vem do binding cadastrado no backend). */
 interface SnmpPointConfig {
@@ -26,11 +33,14 @@ interface SnmpPointConfig {
    * Ex.: ifIndex=3 → coleta o row .3 da coluna configurada no perfil.
    */
   ifIndex?: number;
-  /**
-   * 'table' → ponto coletado via subtree walk (readTable).
-   * Ausente ou 'scalar' → GET escalar em lote (comportamento histórico).
-   */
+  /** 'table' identifica coluna+índice persistidos; a coleta continua sendo GET. */
   collectionType?: 'scalar' | 'table';
+  /**
+   * OIDs membros de uma métrica agregada (cpu média / memória percentual)
+   * persistidos em device_metric_binding.memberOids. Repassados ao driver,
+   * que os inclui no GET em lote (NUNCA walk) para re-derivar o valor.
+   */
+  memberOids?: string[];
 }
 
 /** Bloco de config de um device SNMP monitorado dentro do payload de config do gateway. */
@@ -40,8 +50,15 @@ interface SnmpDeviceBlock {
   protocol?: string;
   ip: string;
   port: number;
-  snmpVersion: '1' | '2c';
+  snmpVersion: '1' | '2c' | '3';
   community: string;
+  /** Credenciais USM (SNMPv3) — texto claro no payload de config (MQTT TLS). */
+  v3?: SnmpV3Credentials | null;
+  /**
+   * Compatibilidade de payload. Na fase 3 o driver sempre coleta apenas
+   * bindings persistidos por GET, independentemente deste valor.
+   */
+  restrictToBindings?: boolean;
   pollingIntervalMs: number;
   /** Tipo do dispositivo monitorado: 'CAMERA' | 'SWITCH' | 'NVR' | … */
   monitoredDeviceType?: string | null;
@@ -68,7 +85,19 @@ interface ActiveSnmpPoll {
   startTimeout: ReturnType<typeof setTimeout> | null;
   polling: boolean;
   driver: SnmpDriver;
+  /** Chave estável do bloco de config — config idêntica não reinicia o poll. */
+  configKey: string;
+  /** Rastreador de alcançabilidade para pontos metric='reachability'. */
+  reachabilityTracker: ReachabilityTracker;
 }
+
+/**
+ * Janela máxima de jitter da PRIMEIRA leitura de um device novo/alterado
+ * (config recebida após a config inicial do boot). Mantém a partida
+ * determinística (mesmo hash por deviceId) mas encurta a espera para
+ * segundos — o card do cadastro não fica minutos em "Sem dados".
+ */
+const PROMPT_START_WINDOW_MS = 5_000;
 
 /**
  * SnmpPollingService
@@ -96,6 +125,14 @@ export class SnmpPollingService implements OnModuleDestroy {
   /** Polls ativos keyed por deviceId. */
   private readonly activePolls = new Map<string, ActiveSnmpPoll>();
   private dynamicKeys = new Set<string>();
+
+  /**
+   * Primeira config após o boot já foi aplicada? A config inicial (tópico
+   * retido) usa o jitter cheio — restart do gateway com muitos devices não
+   * pode virar rajada. Configs seguintes só reiniciam devices novos/alterados,
+   * e esses partem com jitter encurtado (primeira leitura pronta).
+   */
+  private initialConfigApplied = false;
 
   constructor(
     private readonly mqttService: GatewayMqttService,
@@ -126,10 +163,25 @@ export class SnmpPollingService implements OnModuleDestroy {
   }
 
   private applyConfig(devices: SnmpDeviceBlock[]): void {
+    const isInitialConfig = !this.initialConfigApplied;
+    this.initialConfigApplied = true;
+
     const newKeys = new Set<string>();
+    let started = 0;
     for (const d of devices) {
       newKeys.add(d.deviceId);
-      this.startPoll(d);
+      // Config inalterada NÃO reinicia o poll: preserva o cache de
+      // identificação do driver, amostras de counter e a fase do jitter —
+      // editar um device não pode regredir leituras dos demais.
+      const configKey = this.configKeyFor(d);
+      const existing = this.activePolls.get(d.deviceId);
+      if (existing && existing.configKey === configKey) {
+        continue;
+      }
+      // Device novo/alterado após a config inicial: primeira leitura pronta
+      // (jitter encurtado). Na config inicial do boot, jitter cheio.
+      this.startPoll(d, configKey, !isInitialConfig);
+      started++;
     }
     for (const key of this.dynamicKeys) {
       if (!newKeys.has(key)) {
@@ -138,16 +190,34 @@ export class SnmpPollingService implements OnModuleDestroy {
       }
     }
     this.dynamicKeys = newKeys;
-    this.logger.log(`Config dinâmica SNMP aplicada — ${devices.length} device(s)`);
+    this.logger.log(
+      `Config dinâmica SNMP aplicada — ${devices.length} device(s), ${started} (re)iniciado(s)`,
+    );
   }
 
-  private startPoll(device: SnmpDeviceBlock): void {
+  /**
+   * Chave estável do bloco de config: pontos ordenados por tag antes do
+   * stringify para evitar reinicialização por diferença de ordem.
+   */
+  private configKeyFor(device: SnmpDeviceBlock): string {
+    return JSON.stringify({
+      ...device,
+      points: [...(device.points ?? [])].sort((a, b) => a.tag.localeCompare(b.tag)),
+    });
+  }
+
+  private startPoll(device: SnmpDeviceBlock, configKey?: string, promptStart = false): void {
     this.stopPoll(device.deviceId);
 
     const intervalMs = device.pollingIntervalMs || 30_000;
     // Jitter determinístico de partida: espalha os ciclos dos devices do
     // gateway dentro do intervalo, evitando rajadas sincronizadas no broker.
-    const jitterMs = computeStartJitterMs(device.deviceId, intervalMs);
+    // Device novo/alterado (config pós-boot) parte numa janela curta — a
+    // primeira leitura chega em segundos sem perder o determinismo por device.
+    const jitterMs = computeStartJitterMs(
+      device.deviceId,
+      promptStart ? Math.min(intervalMs, PROMPT_START_WINDOW_MS) : intervalMs,
+    );
     this.logger.log(
       `SNMP ${device.deviceId} (${device.ip}:${device.port}, v${device.snmpVersion}): ` +
         `polling a cada ${intervalMs}ms — ${device.points.length} ponto(s)` +
@@ -171,7 +241,16 @@ export class SnmpPollingService implements OnModuleDestroy {
         ...(device.monitoredDeviceType === 'SWITCH' || device.monitoredDeviceType === 'NVR'
           ? { readTable: readSnmpTable }
           : {}),
+        readWalk: (target, root) => walkSnmpSubtree({
+          ip: target.ip,
+          port: target.port,
+          version: target.snmpVersion,
+          community: target.community,
+          v3: target.v3,
+        }, root, { budgetMs: 8_000, requestTimeoutMs: 2_000 }),
       }),
+      configKey: configKey ?? this.configKeyFor(device),
+      reachabilityTracker: new ReachabilityTracker(),
     };
     state.startTimeout = setTimeout(() => {
       state.startTimeout = null;
@@ -195,7 +274,77 @@ export class SnmpPollingService implements OnModuleDestroy {
       clearInterval(state.handle);
     }
     state.driver.dispose();
+    state.reachabilityTracker.dispose();
     this.activePolls.delete(deviceId);
+  }
+
+  /**
+   * Constrói pontos sintéticos de alcançabilidade para os 3 métricas sintéticas:
+   *   - metric='reachability'         → sucesso % na janela de 5 min (0–100)
+   *   - metric='reachability_latency' → latência do último ciclo bem-sucedido (ms)
+   *                                     null quando o dispositivo está offline
+   *   - metric='reachability_failure_rate' → falha % na janela de 5 min (0–100)
+   *
+   * Cada métrica é publicada apenas se houver um ponto EXPLICITAMENTE configurado
+   * com aquela métrica. O valor é atribuído à tag configurada — sem suposição
+   * de nomenclatura. Nunca publica tags não configuradas.
+   *
+   * Compatibilidade retroativa: devices sem esses pontos não são afetados.
+   */
+  private buildReachabilityPoints(
+    tracker: ReachabilityTracker,
+    latencyMs: number | null,
+    device: SnmpDeviceBlock,
+  ): DriverTelemetryPoint[] {
+    const REACHABILITY_METRICS = new Set([
+      'reachability',
+      'reachability_latency',
+      'reachability_failure_rate',
+    ]);
+
+    const syntheticPoints = device.points.filter((p) => REACHABILITY_METRICS.has(p.metric));
+    if (syntheticPoints.length === 0) return [];
+
+    const successPct = tracker.successPercent();
+    const failurePct = tracker.failurePercent();
+    // Latência: null quando offline (sem resposta bem-sucedida no ciclo atual).
+    const latencyValue = latencyMs;
+
+    const result: DriverTelemetryPoint[] = [];
+
+    for (const point of syntheticPoints) {
+      switch (point.metric) {
+        case 'reachability':
+          result.push({
+            tag: point.tag,
+            value: successPct,
+            unit: point.unit ?? '%',
+            source: 'reachability',
+          });
+          break;
+
+        case 'reachability_latency':
+          result.push({
+            tag: point.tag,
+            // null quando offline — não publicar duração de timeout como latência.
+            value: latencyValue,
+            unit: point.unit ?? 'ms',
+            source: 'reachability',
+          });
+          break;
+
+        case 'reachability_failure_rate':
+          result.push({
+            tag: point.tag,
+            value: failurePct,
+            unit: point.unit ?? '%',
+            source: 'reachability',
+          });
+          break;
+      }
+    }
+
+    return result;
   }
 
   /** Um ciclo de polling: driver coleta com motor de perfis e o resultado é publicado. */
@@ -225,13 +374,47 @@ export class SnmpPollingService implements OnModuleDestroy {
           port: device.port,
           snmpVersion: device.snmpVersion,
           community: device.community,
+          v3: device.v3 ?? undefined,
         },
+        restrictToBindings: device.restrictToBindings === true,
         http: device.http ?? null,
         points: device.points,
       });
 
       const points: DriverTelemetryPoint[] = result.points;
       const elapsedMs = Date.now() - startedAt;
+
+      // Registra resultado no rastreador de alcançabilidade e resolve pontos
+      // sintéticos (reachability, reachability_latency, reachability_failure_rate).
+      // Os pontos dessas métricas do driver retornam null (fora do catálogo do driver)
+      // — são removidos e substituídos pelos pontos sintéticos abaixo.
+      //
+      // latencyForSynthetic: null quando offline (timeout não é latência real).
+      const latencyForSynthetic: number | null = result.reachable ? elapsedMs : null;
+      state.reachabilityTracker.record(result.reachable, elapsedMs);
+
+      const SYNTHETIC_METRICS = new Set([
+        'reachability',
+        'reachability_latency',
+        'reachability_failure_rate',
+      ]);
+      const reachabilityTags = new Set(
+        device.points
+          .filter((p) => SYNTHETIC_METRICS.has(p.metric))
+          .map((p) => p.tag),
+      );
+      const reachabilityPoints = this.buildReachabilityPoints(
+        state.reachabilityTracker,
+        latencyForSynthetic,
+        device,
+      );
+      // Filtra os pontos do driver para remover os que serão substituídos por
+      // pontos sintéticos (reachability e reachability_latency).
+      const allPoints: DriverTelemetryPoint[] = [
+        ...points.filter((pt) => !reachabilityTags.has(pt.tag)),
+        ...reachabilityPoints,
+      ];
+
       this.pollingMetrics.record({
         protocol: 'snmp',
         deviceId: device.deviceId,
@@ -252,8 +435,15 @@ export class SnmpPollingService implements OnModuleDestroy {
       this.mqttService.publish(topic, {
         timestamp: new Date().toISOString(),
         deviceId: device.deviceId,
-        points,
+        points: allPoints,
       });
+    } catch (err) {
+      // Isolamento do ciclo: exceção inesperada não pode escapar como unhandled
+      // rejection (disparo é `void pollDevice(...)`) — loga e o próximo ciclo segue.
+      this.logger.error(
+        `[${device.deviceId}] Ciclo SNMP abortado por erro inesperado: ` +
+          `${(err as Error)?.stack ?? (err as Error)?.message ?? String(err)}`,
+      );
     } finally {
       state.polling = false;
     }

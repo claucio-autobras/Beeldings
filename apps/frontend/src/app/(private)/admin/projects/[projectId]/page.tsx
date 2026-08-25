@@ -1,6 +1,6 @@
 import ProjectDetailClient from './ProjectDetailClient';
 
-export const metadata = { title: 'Projeto — Beeldings' };
+export const metadata = { title: 'Gateway — Beeldings' };
 
 interface Props {
   params: Promise<{ projectId: string }>;

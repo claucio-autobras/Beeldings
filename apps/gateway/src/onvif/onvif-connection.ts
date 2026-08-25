@@ -156,20 +156,56 @@ export function connectOnvif(params: {
   });
 }
 
-/** Lê GetDeviceInformation (fabricante/modelo/firmware/série). */
-export function getDeviceInformation(cam: OnvifCam): Promise<OnvifDeviceInformation> {
+/**
+ * Lê GetDeviceInformation (fabricante/modelo/firmware/série).
+ *
+ * Timeout explícito: algumas câmeras em campo aceitam a conexão TCP mas nunca
+ * respondem ao SOAP — o callback da lib jamais dispara e a Promise ficaria
+ * pendurada para sempre (ciclo de polling preso em "busy" até reiniciar o
+ * gateway). O estouro rejeita como UNREACHABLE; o chamador trata como falha do
+ * ciclo e reconecta no próximo.
+ */
+export function getDeviceInformation(
+  cam: OnvifCam,
+  timeoutMs: number = ONVIF_TIMEOUT_MS,
+): Promise<OnvifDeviceInformation> {
   return new Promise((resolve, reject) => {
-    cam.getDeviceInformation((err, info) => {
-      if (err) {
-        reject(classifyOnvifError(err));
-        return;
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        reject(
+          new OnvifConnectionError(
+            'UNREACHABLE',
+            'A câmera não respondeu ao GetDeviceInformation no tempo esperado.',
+          ),
+        );
       }
-      resolve({
-        manufacturer: info?.manufacturer ?? null,
-        model: info?.model ?? null,
-        firmwareVersion: info?.firmwareVersion ?? null,
-        serialNumber: info?.serialNumber ?? null,
+    }, timeoutMs);
+    timer.unref?.();
+
+    try {
+      cam.getDeviceInformation((err, info) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (err) {
+          reject(classifyOnvifError(err));
+          return;
+        }
+        resolve({
+          manufacturer: info?.manufacturer ?? null,
+          model: info?.model ?? null,
+          firmwareVersion: info?.firmwareVersion ?? null,
+          serialNumber: info?.serialNumber ?? null,
+        });
       });
-    });
+    } catch (err) {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        reject(classifyOnvifError(err as Error));
+      }
+    }
   });
 }

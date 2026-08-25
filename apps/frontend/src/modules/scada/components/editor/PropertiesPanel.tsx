@@ -1088,7 +1088,7 @@ function PinToProjectRow({ w, upd, canPin, unpinSiblings }: {
   const dock = w.type === 'nav-toolbar' ? 'no topo' : 'à esquerda';
   return (
     <>
-      <Row label="Fixar em todas as telas do projeto">
+      <Row label="Fixar em todas as telas do gateway">
         <ToggleInput
           value={Boolean(w.pinnedToProject)}
           onChange={(v) => {
@@ -1099,8 +1099,8 @@ function PinToProjectRow({ w, upd, canPin, unpinSiblings }: {
       </Row>
       {w.pinnedToProject && (
         <p className="text-[10px] text-slate-500">
-          Esta barra vira o layout do projeto: no modo de visualização ela aparece encaixada {dock} em todas
-          as telas do projeto, sem piscar ao navegar. Só pode haver uma {kind} fixa por projeto — ao salvar,
+          Esta barra vira o layout do gateway: no modo de visualização ela aparece encaixada {dock} em todas
+          as telas do gateway, sem piscar ao navegar. Só pode haver uma {kind} fixa por gateway — ao salvar,
           outras fixas são desfixadas automaticamente.
         </p>
       )}
@@ -1346,7 +1346,7 @@ function AlarmGroupBadgeProps({
         </Row>
         {isLoading && <p className="px-1 text-[10px] text-slate-500">Carregando grupos…</p>}
         {!isLoading && groups.length === 0 && (
-          <p className="px-1 text-[10px] text-slate-500">Nenhuma soma de alarme neste projeto. Crie uma na página de Alarmes.</p>
+          <p className="px-1 text-[10px] text-slate-500">Nenhuma soma de alarme neste gateway. Crie uma na página de Alarmes.</p>
         )}
         <Row label="Formato"><SelectInput value={w.format} onChange={(v) => upd({ format: v as AlarmGroupBadgeFormat })} options={ALARM_GROUP_FORMAT_OPTS} /></Row>
       </Section>
@@ -1378,7 +1378,7 @@ const DEVICE_COUNTER_FILTER_OPTS: Opt[] = [
   { value: 'other', label: 'Equipamentos (não-câmeras)' },
 ];
 const DEVICE_COUNTER_SCOPE_OPTS: Opt[] = [
-  { value: 'site', label: 'Site inteiro (todos do projeto)' },
+  { value: 'site', label: 'Site inteiro (todos do gateway)' },
   { value: 'selected', label: 'Dispositivos selecionados' },
 ];
 const DEVICE_COUNTER_FORMAT_OPTS: Opt[] = [

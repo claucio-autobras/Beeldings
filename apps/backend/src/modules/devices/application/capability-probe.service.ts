@@ -338,6 +338,9 @@ const ENTERPRISE_TO_PROFILE: Record<number, string> = {
  */
 const AC_ENTERPRISE_TO_PROFILE: Record<number, string> = {
   39165: 'hikvision-ac',
+  // Control iD responde sob a enterprise 49617 (confirmado no iDFlex fw
+  // 5.13.9); 34475 fica como legado — equipamentos antigos podem usá-la.
+  49617: 'control-id',
   34475: 'control-id',
 };
 

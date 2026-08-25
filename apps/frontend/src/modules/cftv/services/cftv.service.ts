@@ -2,6 +2,38 @@ import { apiGet, apiPost, apiPatch, apiDelete, sensitiveActionHeaders } from '@/
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 
+/** Categorias de exibição do card dinâmico (semânticas + 'other'). */
+export type SnmpCardCategory =
+  | 'identification'
+  | 'performance'
+  | 'hardware'
+  | 'system'
+  | 'network'
+  | 'storage'
+  | 'security'
+  | 'application'
+  | 'other';
+
+/** Metadados de exibição de um ponto SNMP (derivados por dados no backend). */
+export interface SnmpPointDisplay {
+  category: SnmpCardCategory;
+  categoryLabel: string;
+  label: string;
+  importance: 'primary' | 'secondary' | 'info';
+  origin: 'canonical' | 'semantic' | 'custom';
+  valueKind: 'number' | 'text' | 'boolean';
+  unit: string | null;
+}
+
+/** Informação estática do equipamento capturada no diagnóstico SNMP. */
+export interface SnmpInfoEntry {
+  oid: string;
+  label: string;
+  value: string;
+  category: SnmpCardCategory;
+  capturedAt: string;
+}
+
 /** Ponto de saúde de uma câmera (SNMP). */
 export interface CameraPoint {
   id: string;
@@ -9,8 +41,12 @@ export interface CameraPoint {
   objectName: string;
   metric: string;
   oid: string | null;
+  /** Metadados de exibição do card dinâmico (backend ≥ task 915). */
+  display?: SnmpPointDisplay;
   /** OID comprovadamente inexistente na câmera (último diagnóstico SNMP). */
   unsupported?: boolean;
+  healthState?: 'active' | 'broken' | 'suggested' | 'pending';
+  healthReason?: 'missing' | 'type_changed' | 'awaiting_read' | 'not_exposed_by_firmware' | null;
   /** Ponto marcado como ativo crítico (independente da câmera crítica). */
   critical?: boolean;
   unit: string;
@@ -23,6 +59,11 @@ export interface CameraPoint {
    * 'estimated' — null = leitura real do hardware.
    */
   lastValueState: string | null;
+  /**
+   * Indica se o ponto pode ser removido individualmente pelo operador.
+   * false = essencial (STATUS ou evento ONVIF). undefined = backend legado.
+   */
+  removable?: boolean;
 }
 
 /** Métricas de saúde monitoradas via SNMP. */
@@ -144,8 +185,10 @@ export interface Camera {
   gatewayOnline: boolean | null;
   ip: string;
   port: number;
-  snmpVersion: '1' | '2c';
+  snmpVersion: '1' | '2c' | '3';
   community: string;
+  /** Vista pública da credencial SNMP — chaves NUNCA vêm da API. */
+  snmpCredential?: SnmpCredentialView | null;
   rtspUrl: string | null;
   /** Intervalo de polling em segundos. */
   pollingInterval: number;
@@ -174,10 +217,33 @@ export interface Camera {
   profileSource: 'detected' | 'manual' | 'generic';
   /** Overrides manuais de OID por métrica. null = nenhum override. */
   profileOverrides: Record<string, string> | null;
+  /** Informações estáticas (firmware, serial, NTP…) do último diagnóstico. */
+  snmpInfo?: SnmpInfoEntry[];
+}
+
+/** Vista pública da credencial SNMP (flags no lugar das chaves). */
+export interface SnmpCredentialView {
+  version: '1' | '2c' | '3';
+  securityName: string | null;
+  authProtocol: string | null;
+  privProtocol: string | null;
+  contextName: string | null;
+  hasAuthKey: boolean;
+  hasPrivKey: boolean;
+}
+
+/** Campos SNMPv3 de formulário (chave vazia na edição = manter a atual). */
+export interface SnmpV3Input {
+  securityName?: string;
+  authProtocol?: string;
+  authKey?: string;
+  privProtocol?: string;
+  privKey?: string;
+  contextName?: string;
 }
 
 /** Payload de criação/edição de câmera. */
-export interface CameraInput {
+export interface CameraInput extends SnmpV3Input {
   name?: string;
   siteId?: string;
   tenantId?: string;
@@ -193,7 +259,7 @@ export interface CameraInput {
   onvifPassword?: string;
   /** SNMP: porta do serviço ONVIF/vídeo (padrão 80). */
   onvifPort?: number;
-  snmpVersion?: '1' | '2c';
+  snmpVersion?: '1' | '2c' | '3';
   community?: string;
   rtspUrl?: string | null;
   pollingInterval?: number;
@@ -329,6 +395,17 @@ export async function deleteCamera(id: string, confirmationToken: string): Promi
 }
 
 /**
+ * Remove um ponto SNMP individual da câmera (para de coletar o OID e apaga
+ * alarmes/trends associados via cascade no banco).
+ */
+export async function removeCameraSnmpPoint(
+  cameraId: string,
+  pointId: string,
+): Promise<void> {
+  await apiDelete(`/cftv/cameras/${cameraId}/points/${pointId}`);
+}
+
+/**
  * Varre um range de IP via SNMP no gateway informado e retorna os
  * dispositivos que responderam (candidatos a câmera). Pode levar ~1 min
  * dependendo do tamanho do range.
@@ -398,12 +475,12 @@ export interface SnmpHealthTestOutcome {
  * Testa o canal SNMP de saúde de uma câmera via gateway e pré-visualiza os
  * valores dos OIDs. Câmera sem SNMP → reachable=false (não é um erro).
  */
-export async function testCameraSnmp(params: {
+export async function testCameraSnmp(params: SnmpV3Input & {
   tenantId: string;
   gatewayId: string;
   ip: string;
   port?: number;
-  snmpVersion?: '1' | '2c';
+  snmpVersion?: '1' | '2c' | '3';
   community?: string;
   manufacturer?: string | null;
   oids?: Partial<Record<HealthMetric, string>>;
@@ -427,8 +504,28 @@ export async function testCameraSnmp(params: {
 
 // ─── Diagnóstico SNMP da câmera ──────────────────────────────────────────────
 
-/** Métricas cobertas pelo diagnóstico (saúde + uptime). */
-export type DiagMetric = HealthMetric | 'uptime';
+/**
+ * Métricas cobertas pelo diagnóstico.
+ * Inclui as chaves canônicas da nova API (task 968) + aliases legados para
+ * compatibilidade com gateways antigos.
+ */
+export type DiagMetric =
+  | HealthMetric
+  | 'uptime'
+  // canonical keys (task 968 / new backend)
+  | 'reachability'
+  | 'cpu_usage'
+  | 'cpu_temperature'
+  | 'memory_used_percent'
+  | 'memory_total'
+  | 'storage_used_percent'
+  | 'net_in_rate'
+  | 'net_out_rate'
+  | 'net_error_rate'
+  | 'net_discard_rate'
+  | 'interface_status'
+  // allow unknown keys for forward-compat (index signature not needed: use string cast)
+  | (string & Record<never, never>);
 
 /** Candidato de OID testado no diagnóstico. */
 export interface DiagnoseCandidate {
@@ -456,12 +553,79 @@ export interface DiagnoseMetricResult {
   candidates: DiagnoseCandidate[];
 }
 
-/** Seção do walk resumido (MIB-II system/interfaces + enterprise). */
+/** Entrada do walk — campos novos opcionais (gateway ≥1.20 enriquece). */
+export interface DiagnoseWalkEntry {
+  oid: string;
+  value: string;
+  /** Nome do tipo ASN.1 ('OctetString', 'Gauge32', …). */
+  type?: string;
+  /** Valor normalizado numérico (null quando não numérico). */
+  numeric?: number | null;
+  /** Índice de instância (tabelas/não-.0) — null p/ escalares. */
+  index?: number | null;
+}
+
+/** Seção do walk de descoberta (raízes padrão + perfil + enterprise). */
 export interface DiagnoseWalkSection {
   root: string;
   label: string;
-  entries: Array<{ oid: string; value: string }>;
+  entries: DiagnoseWalkEntry[];
   truncated: boolean;
+  found?: number;
+  discarded?: Record<string, number>;
+  error?: string | null;
+  durationMs?: number;
+}
+
+/** Estatísticas agregadas do walk (diagnóstico enriquecido, gateway ≥1.20). */
+export interface DiagnoseWalkStats {
+  /** Alvo do walk — a community (credencial) nunca vem no resultado. */
+  target: { ip: string; port: number; snmpVersion: string };
+  roots: Array<{
+    root: string;
+    label: string;
+    found: number;
+    discarded: number;
+    truncated: boolean;
+    durationMs: number;
+    error: string | null;
+  }>;
+  totalFound: number;
+  totalDiscarded: number;
+  discardedReasons: Record<string, number>;
+  errors: Array<{ root: string; error: string }>;
+  walkDurationMs: number;
+}
+
+/** Objeto descoberto no walk, classificado (ou "OID desconhecido"). */
+export interface DiscoveredSnmpObject {
+  oid: string;
+  type: string;
+  raw: string;
+  value: number | null;
+  index: number | null;
+  sectionRoot: string;
+  known: {
+    name: string;
+    category: SnmpCardCategory;
+    metricKey: string | null;
+    unit: string | null;
+    /** Fator valor cru → unidade exibida (backend ≥ task 915). */
+    scale?: number;
+    valueKind?: 'number' | 'text' | 'boolean';
+    importance?: 'primary' | 'secondary' | 'info';
+    /**
+     * false = valor real incompatível com a expectativa (tipo/padrão/faixa) —
+     * rótulo vira sugestão "não confirmada", nunca pré-selecionada.
+     */
+    confirmed?: boolean;
+  } | null;
+  /**
+   * Nome resolvido via MIB importada pelo admin — presente SOMENTE quando
+   * `known` é null. A classificação semântica sempre tem precedência.
+   */
+  mibName?: string | null;
+  mibSource?: string | null;
 }
 
 /** Causa provável quando a câmera não respondeu ao SNMP. */
@@ -476,6 +640,117 @@ export interface SnmpDiagnoseOutcome {
   durationMs: number;
   metrics: DiagnoseMetricResult[];
   walk: DiagnoseWalkSection[];
+  /** null/ausente quando o gateway ainda é antigo. */
+  walkStats?: DiagnoseWalkStats | null;
+  /** Objetos descobertos (inclusive desconhecidos) — candidatos selecionáveis. */
+  discovered?: DiscoveredSnmpObject[];
+  /** Run de descoberta persistido (snapshot + diff + bindings quebrados). */
+  discovery?: DiscoveryRunSummary | null;
+  /**
+   * Lista de 8-12 propostas de métricas canônicas (task 968) — campo
+   * primário. Gerado pelo backend quando disponível; ausente em gateways
+   * antigos — nesse caso o frontend deriva a partir de `metrics`.
+   */
+  proposals?: MetricProposal[] | null;
+  /**
+   * Alias legado para `proposals` — algumas versões do backend podem enviar
+   * o array com este nome. O frontend normaliza para `proposals` ao receber.
+   * @deprecated use `proposals`
+   */
+  metricProposals?: MetricProposal[] | null;
+}
+
+/** Diff do run de descoberta contra o run anterior. */
+export interface DiscoveryDiffSummary {
+  appeared: string[];
+  disappeared: string[];
+  typeChanged: Array<{ oid: string; from: string | null; to: string | null }>;
+  counts: { appeared: number; disappeared: number; typeChanged: number };
+  previousRunId: string;
+}
+
+/** Métrica mapeada que parou de responder / mudou de tipo após o walk. */
+export interface BrokenBindingAlert {
+  metricKey: string;
+  oid: string;
+  reason: 'missing' | 'type_changed';
+}
+
+/** Resumo do run de descoberta persistido (retorno do diagnóstico). */
+export interface DiscoveryRunSummary {
+  runId: string;
+  totalOids: number;
+  diff: DiscoveryDiffSummary | null;
+  brokenBindings: BrokenBindingAlert[];
+}
+
+/** Nível de confiança do mapeamento métrica → OID. */
+export type MetricConfidence = 'exact' | 'inferred' | 'manual';
+
+/**
+ * Candidato de OID dentro de uma proposta de métrica canônica (task 968).
+ * O operador escolhe o candidato preferido; se divergir do default a confiança
+ * vira 'manual' e deve ser enviada ao backend para persistência.
+ */
+export interface MetricProposalCandidate {
+  oid: string;
+  /** Rótulo legível do candidato (nome do perfil ou descrição semântica). */
+  label: string;
+  /** Valor exemplo lido no walk (null = não disponível). */
+  exampleValue: string | null;
+  /** Unidade do valor. */
+  unit: string | null;
+  /** Fator de escala do valor bruto até a unidade apresentada. */
+  scale: number;
+  seedValue?: number | null;
+  /** true = candidato selecionado por padrão (melhor correspondência). */
+  isDefault: boolean;
+  isActive?: boolean;
+}
+
+export type MetricProposalState = 'active' | 'broken' | 'suggested' | 'unavailable';
+
+/**
+ * Proposta de métrica canônica gerada pelo diagnóstico (task 968).
+ * Lista de 8-12 métricas com nome amigável, valor exemplo, unidade e
+ * nível de confiança — o operador pode trocar o candidato sem re-descoberta.
+ */
+export interface MetricProposal {
+  /** Chave canônica da métrica (ex.: 'cpu', 'memory', 'uptime'). */
+  metricKey: string;
+  /** Nome amigável em português. */
+  friendlyName: string;
+  /** Unidade da métrica (pode diferir por candidato). */
+  unit: string | null;
+  /** Valor exemplo do candidato padrão. */
+  exampleValue: string | null;
+  /** Nível de confiança do mapeamento padrão. */
+  confidence: MetricConfidence;
+  /** Candidatos de OID disponíveis para esta métrica. */
+  candidates: MetricProposalCandidate[];
+  /** OID selecionado atualmente (candidato default ou escolha do operador). */
+  selectedOid: string | null;
+  state?: MetricProposalState;
+  activeOid?: string | null;
+  suggestedOid?: string | null;
+}
+
+/** OID livre selecionado na descoberta para virar ponto de monitoramento. */
+export interface CustomPointSelection {
+  oid: string;
+  name?: string;
+  unit?: string;
+  /** Enviado quando o operador escolheu manualmente o candidato. */
+  confidence?: MetricConfidence;
+}
+
+/** Fonte escolhida para uma métrica canônica pelo diagnóstico SNMP. */
+export interface AppliedOidSelection {
+  oid: string;
+  scale: number;
+  unit: string;
+  /** Amostra normalizada confirmada pelo diagnóstico, quando disponível. */
+  seedValue?: number | null;
 }
 
 /** Progresso parcial do diagnóstico (polling). */
@@ -502,7 +777,12 @@ export async function diagnoseCameraSnmp(
   if (!data.success) {
     throw new Error(data.error ?? 'Erro desconhecido no diagnóstico SNMP.');
   }
-  return data;
+  // Normalize legacy `metricProposals` → `proposals`
+  const outcome = data as SnmpDiagnoseOutcome;
+  if (!outcome.proposals && outcome.metricProposals) {
+    outcome.proposals = outcome.metricProposals;
+  }
+  return outcome;
 }
 
 /** Progresso parcial do diagnóstico (polling durante a execução). */
@@ -525,12 +805,61 @@ export async function getDiagnoseProgress(
  * Aplica OIDs sugeridos pelo diagnóstico: atualiza o binding dos pontos
  * (IDs preservados — trends/alarmes sobrevivem) e republica a config no
  * gateway.
+ *
+ * `metricConfidence` — map de metricKey → confidence enviado quando o
+ * operador escolheu candidatos manualmente (task 968); omitido em
+ * backends antigos que não conhecem o campo (ignorado se não suportado).
  */
 export async function applySnmpOids(
   cameraId: string,
-  oids: Partial<Record<DiagMetric, string>>,
+  oids: Partial<Record<DiagMetric, AppliedOidSelection>>,
+  customPoints?: CustomPointSelection[],
+  metricConfidence?: Partial<Record<string, MetricConfidence>>,
 ): Promise<Camera> {
-  return apiPost<Camera>(`/cftv/cameras/${cameraId}/apply-snmp-oids`, { oids });
+  return apiPost<Camera>(`/cftv/cameras/${cameraId}/apply-snmp-oids`, {
+    oids,
+    ...(customPoints?.length ? { customPoints } : {}),
+    ...(metricConfidence && Object.keys(metricConfidence).length
+      ? { metricConfidence }
+      : {}),
+  });
+}
+
+/** Resultado do teste ao vivo de um OID (leitura atual via gateway). */
+export interface LiveOidTestOutcome {
+  success: boolean;
+  reachable: boolean;
+  /** false = equipamento respondeu ao SNMP mas o OID não existe/não leu. */
+  responded: boolean;
+  oid: string;
+  /** Valor bruto como texto ('' quando não respondeu). */
+  raw: string | null;
+  /** Nome do tipo ASN.1 ('OctetString', 'Gauge32', …). */
+  type: string | null;
+  /** Valor numérico cru (null quando não numérico). */
+  value: number | null;
+  /** Valor com a escala semântica aplicada (ex.: mili-°C → °C). */
+  normalized: number | null;
+  /** Interpretação semântica conhecida do OID (null = desconhecido). */
+  semantic: {
+    label: string;
+    category: SnmpCardCategory;
+    unit: string | null;
+    scale: number;
+    confirmed: boolean;
+  } | null;
+  error?: string;
+}
+
+/**
+ * Lê o valor ATUAL de um OID na câmera via gateway (teste ao vivo na
+ * descoberta, antes de aplicar). Requer canal SNMP configurado.
+ */
+export async function testCameraOid(
+  cameraId: string,
+  oid: string,
+): Promise<LiveOidTestOutcome> {
+  return apiPost<LiveOidTestOutcome>(`/cftv/cameras/${cameraId}/test-oid`, { oid });
 }
 
 /** Progresso parcial do scan (polling durante o scan). */
@@ -556,6 +885,8 @@ export interface SwitchScalarPoint {
   objectName: string;
   metric: string;
   oid: string | null;
+  /** Metadados de exibição do card dinâmico (backend ≥ task 918). */
+  display?: SnmpPointDisplay;
   unsupported: boolean;
   unit: string;
   critical?: boolean;
@@ -611,6 +942,8 @@ export interface ManagedSwitch {
   points: SwitchScalarPoint[];
   /** Portas sincronizadas (vazio até o primeiro sync). */
   ports: SwitchPortEntry[];
+  /** Informações estáticas capturadas no último diagnóstico SNMP. */
+  snmpInfo?: SnmpInfoEntry[];
 }
 
 /** Payload de criação/edição de switch. */
@@ -713,6 +1046,8 @@ export interface NvrScalarPoint {
   objectName: string;
   metric: string;
   oid: string | null;
+  /** Metadados de exibição do card dinâmico (backend ≥ task 918). */
+  display?: SnmpPointDisplay;
   unsupported: boolean;
   unit: string;
   critical?: boolean;
@@ -729,11 +1064,13 @@ export interface NvrDiskStatusPoint {
   statusLabel: string | null;
 }
 
-/** Ponto de capacidade do disco. */
+/** Ponto de capacidade/uso do disco. */
 export interface NvrDiskCapPoint {
   id: string;
   tag: string;
   lastValue: number | null;
+  /** 'GB' (capacidade/usado) ou '%' (uso Dahua/Intelbras oficial). */
+  unit?: string;
 }
 
 /** Entrada de disco sincronizada (slot com status + capacidade + espaço usado). */
@@ -782,6 +1119,8 @@ export interface ManagedNvr {
   disks: NvrDiskEntry[];
   /** Canais de gravação sincronizados (vazio até o primeiro sync). */
   channels: NvrChannelEntry[];
+  /** Informações estáticas capturadas no último diagnóstico SNMP. */
+  snmpInfo?: SnmpInfoEntry[];
 }
 
 /** Payload de criação/edição de NVR. */
@@ -805,6 +1144,8 @@ export interface NvrSyncDisk {
   statusLabel: string | null;
   capacityGb: number | null;
   usedGb: number | null;
+  /** Unidade do campo usedGb: 'GB' ou '%' (Dahua/Intelbras physicalVolumeUsage). */
+  usedUnit?: 'GB' | '%';
 }
 
 /** Canal descoberto na resposta do sync. */

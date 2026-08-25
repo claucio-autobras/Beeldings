@@ -118,7 +118,7 @@ function NewProjectModal({ siteId, tenantId, existingGateways, onClose, onCreate
       <div className="w-full max-w-md bg-card rounded-xl border border-border shadow-xl max-h-[90vh] flex flex-col overflow-hidden">
         <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
           <h2 className="text-base font-semibold text-foreground">
-            {created ? 'Projeto criado' : 'Novo Projeto'}
+            {created ? 'Gateway criado' : 'Novo Gateway'}
           </h2>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
         </div>
@@ -126,7 +126,7 @@ function NewProjectModal({ siteId, tenantId, existingGateways, onClose, onCreate
         {!created ? (
           <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4 flex-1 overflow-y-auto">
             <div>
-              <label className="block text-sm font-medium text-foreground mb-1">Nome do projeto</label>
+              <label className="block text-sm font-medium text-foreground mb-1">Nome do gateway</label>
               <input
                 type="text" value={name} onChange={(e) => setName(e.target.value)}
                 placeholder="Ex: BMS Principal"
@@ -170,7 +170,7 @@ function NewProjectModal({ siteId, tenantId, existingGateways, onClose, onCreate
                     </select>
                   ) : (
                     <p className="text-[11px] text-muted-foreground mt-1.5">
-                      Um gateway com credenciais MQTT exclusivas será gerado para este projeto.
+                      Um gateway com credenciais MQTT exclusivas será gerado para este gateway.
                     </p>
                   )}
                   {gatewayMode === 'existing' && (
@@ -182,7 +182,7 @@ function NewProjectModal({ siteId, tenantId, existingGateways, onClose, onCreate
                 </>
               ) : (
                 <p className="text-[11px] text-muted-foreground">
-                  Um gateway com credenciais MQTT exclusivas será gerado automaticamente para este projeto.
+                  Um gateway com credenciais MQTT exclusivas será gerado automaticamente para este gateway.
                 </p>
               )}
             </div>
@@ -192,7 +192,7 @@ function NewProjectModal({ siteId, tenantId, existingGateways, onClose, onCreate
               <button type="button" onClick={onClose} className="flex-1 rounded-md border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/50 transition-colors">Cancelar</button>
               <button type="submit" disabled={mutation.isPending} className="flex-1 rounded-md bg-cyan-700 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-800 disabled:opacity-50 transition-colors flex items-center justify-center gap-2">
                 {mutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                Criar Projeto
+                Criar Gateway
               </button>
             </div>
           </form>
@@ -202,8 +202,8 @@ function NewProjectModal({ siteId, tenantId, existingGateways, onClose, onCreate
               <Check className="h-5 w-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
               <p className="text-sm text-emerald-800 dark:text-emerald-300 font-medium">
                 {gatewayMode === 'existing' && hasExisting
-                  ? 'Projeto criado e vinculado ao gateway existente!'
-                  : 'Projeto e gateway criados com sucesso!'}
+                  ? 'Gateway criado e vinculado ao gateway existente!'
+                  : 'Gateway criado com sucesso!'}
               </p>
             </div>
             <div className="border border-border rounded-lg overflow-hidden">
@@ -321,7 +321,7 @@ function ProjectsContent() {
           </div>
           <div>
             <h1 className="text-xl font-semibold tracking-tight text-foreground">
-              Projetos {site ? `— ${site.name}` : ''}
+              Gateways {site ? `— ${site.name}` : ''}
             </h1>
             <p className="mt-0.5 text-sm text-muted-foreground">
               Sistemas implantados no site (BMS, CFTV, Energia...)
@@ -334,7 +334,7 @@ function ProjectsContent() {
           className="inline-flex shrink-0 items-center gap-2 self-start rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-cyan-700 sm:self-auto"
         >
           <Plus className="h-4 w-4" />
-          Novo Projeto
+          Novo Gateway
         </button>
       </header>
 
@@ -348,7 +348,7 @@ function ProjectsContent() {
       {/* Error */}
       {error && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
-          Erro ao carregar projetos: {(error as Error).message}
+          Erro ao carregar gateways: {(error as Error).message}
         </div>
       )}
 
@@ -359,9 +359,9 @@ function ProjectsContent() {
             <FolderKanban className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
           </div>
           <div className="space-y-1">
-            <h3 className="text-sm font-medium text-foreground">Nenhum projeto cadastrado</h3>
+            <h3 className="text-sm font-medium text-foreground">Nenhum gateway cadastrado</h3>
             <p className="mx-auto max-w-sm text-xs text-muted-foreground">
-              Crie o primeiro projeto deste site. Um gateway será gerado automaticamente.
+              Crie o primeiro gateway deste site. As credenciais MQTT serão geradas automaticamente.
             </p>
           </div>
           <button
@@ -369,7 +369,7 @@ function ProjectsContent() {
             className="inline-flex items-center gap-2 rounded-lg border border-dashed border-cyan-400 px-4 py-2 text-sm font-medium text-cyan-600 transition-colors hover:bg-cyan-50 dark:text-cyan-400 dark:hover:bg-cyan-950/40"
           >
             <Plus className="h-4 w-4" />
-            Criar Primeiro Projeto
+            Criar Primeiro Gateway
           </button>
         </div>
       )}
@@ -381,8 +381,8 @@ function ProjectsContent() {
           <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="bg-muted/30 border-b border-border">
-                <th className="text-left px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Projeto</th>
-                <th className="text-left px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hidden sm:table-cell">Gateway</th>
+                <th className="text-left px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Gateway</th>
+                <th className="text-left px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hidden sm:table-cell">ID MQTT</th>
                 <th className="text-center px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Dispositivos</th>
                 <th className="text-center px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Status</th>
                 <th className="text-right px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Ações</th>
@@ -443,7 +443,7 @@ function ProjectsContent() {
                         </button>
                         <button
                           onClick={() => setConfirmDeleteId(p.id)}
-                          title="Excluir projeto"
+                          title="Excluir gateway"
                           className="inline-flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-red-600 hover:bg-red-50 transition-colors"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
@@ -457,7 +457,7 @@ function ProjectsContent() {
           </table>
           </div>
           <div className="border-t border-border bg-muted/20 px-5 py-2.5 text-xs text-muted-foreground">
-            {projects.length} projeto{projects.length !== 1 ? 's' : ''} cadastrado{projects.length !== 1 ? 's' : ''}
+            {projects.length} gateway{projects.length !== 1 ? 's' : ''} cadastrado{projects.length !== 1 ? 's' : ''}
           </div>
         </div>
       )}
@@ -474,8 +474,8 @@ function ProjectsContent() {
 
       {confirmDeleteId && (
         <PasswordConfirmDialog
-          title="Excluir projeto?"
-          description="O gateway e todos os dispositivos deste projeto serão excluídos permanentemente."
+          title="Excluir gateway?"
+          description="O gateway e todos os dispositivos vinculados serão excluídos permanentemente."
           isPending={deleteMutation.isPending}
           error={deleteMutation.error ? (deleteMutation.error as Error).message : null}
           onCancel={() => {

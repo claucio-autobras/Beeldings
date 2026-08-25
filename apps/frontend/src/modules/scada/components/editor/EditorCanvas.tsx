@@ -92,10 +92,10 @@ function PinnedRefBadge({ sourceScreenId, sourceScreenName, style }: {
       onMouseDown={(e) => e.stopPropagation()}
       className="absolute flex items-center gap-1 rounded bg-slate-900/90 border border-cyan-500/50 px-1.5 py-0.5 text-[10px] text-cyan-300 hover:bg-slate-800 transition-colors"
       style={{ pointerEvents: 'auto', zIndex: 99999, ...style }}
-      title={`Barra fixa do projeto — editável apenas na tela "${sourceScreenName}"`}
+      title={`Barra fixa do gateway — editável apenas na tela "${sourceScreenName}"`}
     >
       <Pin className="h-3 w-3" strokeWidth={1.5} />
-      Layout do projeto — editar em “{sourceScreenName}”
+      Layout do gateway — editar em "{sourceScreenName}"
     </Link>
   );
 }

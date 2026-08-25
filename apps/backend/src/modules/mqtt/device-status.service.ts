@@ -45,6 +45,15 @@ export class DeviceStatusService {
    */
   private readonly deviceHeartbeat = new Map<string, { at: number; windowMs: number }>();
 
+  /**
+   * Instante do EVENTO (timestamp do payload) da última telemetria, por
+   * dispositivo. Difere do `lastSeen` (instante de RECEBIMENTO): a fila
+   * store-and-forward do gateway pode entregar telemetria antiga minutos
+   * depois — o recebimento é "agora", mas o evento é do passado. É este mapa
+   * que decide se a telemetria é nova o bastante para vencer um LWT offline.
+   */
+  private readonly lastEventAt = new Map<string, number>();
+
   constructor(@Optional() private readonly prisma?: PrismaService) {}
 
   /** Janela para considerar o dispositivo online (3× o polling padrão de 15s). */
@@ -53,10 +62,33 @@ export class DeviceStatusService {
   /** Janela do heartbeat do gateway (3× o intervalo de 15s). */
   private readonly HEARTBEAT_THRESHOLD_MS = 45_000;
 
-  /** Registra que o dispositivo enviou telemetria agora. */
-  markSeen(deviceId: string): void {
-    if (deviceId) {
-      this.lastSeen.set(deviceId, Date.now());
+  /**
+   * Teto da janela de heartbeat de dispositivo (24 h). O valor vem de payload
+   * MQTT (`timeoutSeconds`) — um valor absurdo (dias/anos) manteria o device
+   * "online" para sempre após uma única mensagem. O cadastro valida 15–3600 s;
+   * aqui o teto é folgado de propósito, só contra valores claramente inválidos.
+   */
+  private readonly MAX_HEARTBEAT_WINDOW_MS = 24 * 60 * 60_000;
+
+  /**
+   * Registra que o dispositivo enviou telemetria agora.
+   *
+   * @param eventAtMs instante do EVENTO (timestamp do payload, epoch ms).
+   *   Quando ausente/ inválido, assume o instante de recebimento. Valores no
+   *   futuro são truncados para "agora" (relógio do gateway adiantado não pode
+   *   fabricar prova de vida futura).
+   */
+  markSeen(deviceId: string, eventAtMs?: number): void {
+    if (!deviceId) return;
+    const now = Date.now();
+    this.lastSeen.set(deviceId, now);
+    const eventAt =
+      typeof eventAtMs === 'number' && Number.isFinite(eventAtMs)
+        ? Math.min(eventAtMs, now)
+        : now;
+    const prev = this.lastEventAt.get(deviceId);
+    if (prev === undefined || eventAt > prev) {
+      this.lastEventAt.set(deviceId, eventAt);
     }
   }
 
@@ -69,7 +101,7 @@ export class DeviceStatusService {
     if (!gatewayId) return;
     this.gatewayStatus.set(gatewayId, { status, at: Date.now() });
     if (status === 'online') {
-      this.lastSeen.set(gatewayId, Date.now());
+      this.markSeen(gatewayId);
     }
   }
 
@@ -79,16 +111,24 @@ export class DeviceStatusService {
    */
   markDeviceHeartbeat(deviceId: string, windowMs?: number): void {
     if (!deviceId) return;
-    const win = windowMs && windowMs > 0 ? windowMs : this.ONLINE_THRESHOLD_MS;
+    // Janela vem de payload MQTT: rejeita não-positivos e trunca no teto de
+    // 24 h — sem isso, um timeout absurdo deixaria o device online p/ sempre.
+    const win =
+      windowMs && Number.isFinite(windowMs) && windowMs > 0
+        ? Math.min(windowMs, this.MAX_HEARTBEAT_WINDOW_MS)
+        : this.ONLINE_THRESHOLD_MS;
     this.deviceHeartbeat.set(deviceId, { at: Date.now(), windowMs: win });
-    this.lastSeen.set(deviceId, Date.now());
+    this.markSeen(deviceId);
   }
 
   /**
    * Status atual. Para gateways com sinal explícito (LWT/heartbeat) esse sinal
    * tem prioridade sobre a recência de telemetria:
-   *   - offline explícito vence, exceto se chegou telemetria DEPOIS do offline
-   *     (o gateway voltou e já publica dados antes do próximo heartbeat);
+   *   - offline explícito vence, exceto se chegou telemetria COMPROVADAMENTE
+   *     nova depois do offline (o gateway voltou e já publica dados antes do
+   *     próximo heartbeat). "Nova" = timestamp do EVENTO (payload) posterior à
+   *     queda — telemetria antiga reentregue pela fila store-and-forward chega
+   *     "agora" mas carrega evento do passado, e NÃO reanima o gateway;
    *   - online explícito vale enquanto o heartbeat estiver recente.
    * Sem sinal explícito, cai no comportamento derivado da telemetria.
    */
@@ -98,9 +138,12 @@ export class DeviceStatusService {
 
     if (explicit) {
       if (explicit.status === 'offline') {
+        const eventAt = this.lastEventAt.get(deviceId);
         const recoveredByTelemetry =
           ts !== undefined &&
           ts > explicit.at &&
+          eventAt !== undefined &&
+          eventAt > explicit.at &&
           Date.now() - ts <= this.ONLINE_THRESHOLD_MS;
         return recoveredByTelemetry ? 'online' : 'offline';
       }

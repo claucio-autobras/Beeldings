@@ -13,9 +13,15 @@ import { OnvifPendingValidationService } from './application/onvif-pending-valid
 import { OnvifNetworkScanService } from './application/onvif-network-scan.service.js';
 import { SnmpHealthTestService } from './application/snmp-health-test.service.js';
 import { SnmpDiagnoseService } from './application/snmp-diagnose.service.js';
+import { SnmpMibService } from './application/snmp-mib.service.js';
+import { SnmpMibSeedService } from './application/snmp-mib-seed.service.js';
+import { SnmpMetricService } from './application/snmp-metric.service.js';
+import { SnmpDiscoveryPersistenceService } from './application/snmp-discovery-persistence.service.js';
 import { SwitchPortSyncService } from './application/switch-port-sync.service.js';
 import { NvrTableSyncService } from './application/nvr-table-sync.service.js';
 import { CameraHealthBackfillService } from './application/camera-health-backfill.service.js';
+import { ControlIdOidMigrationService } from './application/control-id-oid-migration.service.js';
+import { OfficialMibOidMigrationService } from './application/official-mib-oid-migration.service.js';
 import { CameraLiveViewService } from './application/camera-live-view.service.js';
 import { CapabilityProbeService } from './application/capability-probe.service.js';
 import { EmqxProvisioningService } from '../sites/application/emqx-provisioning.service.js';
@@ -43,9 +49,15 @@ import { TrendsModule } from '../trends/trends.module.js';
     OnvifNetworkScanService,
     SnmpHealthTestService,
     SnmpDiagnoseService,
+    SnmpMibService,
+    SnmpMibSeedService,
+    SnmpMetricService,
+    SnmpDiscoveryPersistenceService,
     SwitchPortSyncService,
     NvrTableSyncService,
     CameraHealthBackfillService,
+    ControlIdOidMigrationService,
+    OfficialMibOidMigrationService,
     CameraLiveViewService,
     CapabilityProbeService,
     EmqxProvisioningService,

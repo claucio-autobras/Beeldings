@@ -1,7 +1,7 @@
-// Dicionário pt-BR → en do módulo Ajustes (settings) — cliente, site, projeto e destinatários.
+// Dicionário pt-BR → en do módulo Ajustes (settings) — cliente, site, gateway e destinatários.
 export const DICT_SETTINGS: Record<string, string> = {
   // ── Página / cabeçalho ──
-  'Configure clientes, sites, projetos e destinatários de notificação': 'Configure clients, sites, projects and notification recipients',
+  'Configure clientes, sites, gateways e destinatários de notificação': 'Configure clients, sites, gateways and notification recipients',
 
   // ── Card Site ──
   'Site': 'Site',
@@ -12,11 +12,16 @@ export const DICT_SETTINGS: Record<string, string> = {
   'Site atualizado com sucesso.': 'Site updated successfully.',
   'Não foi possível atualizar o site.': 'Could not update the site.',
 
-  // ── Card Projeto ──
+  // ── Card Gateway ──
+  'Gateway': 'Gateway',
   'Sistemas implantados no site selecionado': 'Systems deployed at the selected site',
-  'Nenhum projeto disponível para este site.': 'No projects available for this site.',
-  'Nenhum projeto disponível para este cliente.': 'No projects available for this client.',
-  'Selecionar projeto': 'Select project',
+  'Nenhum gateway disponível para este site.': 'No gateways available for this site.',
+  'Nenhum gateway disponível para este cliente.': 'No gateways available for this client.',
+  'Selecionar gateway': 'Select gateway',
+  'Nome do gateway': 'Gateway name',
+  'Salvar gateway': 'Save gateway',
+  'Gateway atualizado com sucesso.': 'Gateway updated successfully.',
+  'Não foi possível atualizar o gateway.': 'Could not update the gateway.',
   // ── Seção destinatários ──
   'Destinatários de Notificação': 'Notification Recipients',
   'Quem deve receber alarmes e insights por e-mail ou WhatsApp': 'Who should receive alarms and insights by email or WhatsApp',
@@ -70,6 +75,20 @@ export const DICT_SETTINGS: Record<string, string> = {
   'Tem certeza que deseja excluir': 'Are you sure you want to delete',
   'Esta ação não pode ser desfeita.': 'This action cannot be undone.',
   'Excluindo…': 'Deleting…',
+
+  // ── Teste de canal ──
+  'Enviar teste': 'Send test',
+  'Testando…': 'Testing…',
+  'Teste enviado com sucesso!': 'Test sent successfully!',
+  'Falha ao enviar teste:': 'Failed to send test:',
+  'Canal E-mail': 'Email channel',
+  'Canal WhatsApp': 'WhatsApp channel',
+  '⚠️ Nenhum provedor configurado': '⚠️ No provider configured',
+  'RESEND_API_KEY e/ou credenciais Z-API não configuradas. Notificações externas desabilitadas.': 'RESEND_API_KEY and/or Z-API credentials not configured. External notifications disabled.',
+  'E-mail (Resend) não configurado': 'Email (Resend) not configured',
+  'WhatsApp (Z-API) não configurado': 'WhatsApp (Z-API) not configured',
+  'Testar e-mail': 'Test email',
+  'Testar WhatsApp': 'Test WhatsApp',
 
   // ── Mensagens de feedback ──
   'Destinatário criado com sucesso.': 'Recipient created successfully.',

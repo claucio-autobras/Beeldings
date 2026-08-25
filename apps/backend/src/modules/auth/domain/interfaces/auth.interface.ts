@@ -13,6 +13,7 @@ export interface JwtPayload {
   email: string;
   role: UserRole;
   tenantId: string | null;
+  sessionVersion?: number;
   iat: number;
   exp: number;
 }
@@ -33,3 +34,12 @@ export interface LoginResult {
   accessToken: string;
   user: AuthenticatedUser;
 }
+
+export interface TwoFactorRequiredResult {
+  requiresTwoFactor: true;
+  challengeId: string;
+  expiresInSeconds: number;
+  emailMasked: string;
+}
+
+export type LoginOutcome = LoginResult | TwoFactorRequiredResult;

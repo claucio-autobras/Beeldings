@@ -321,6 +321,14 @@ export class BacnetPollingService implements OnModuleInit {
     state.busy = true;
     try {
       await this.runPollCycle(device, objects, label, key);
+    } catch (err) {
+      // Isolamento do ciclo: uma exceção inesperada no driver NUNCA pode escapar
+      // como unhandled rejection (o disparo é `void pollDevice(...)`) — loga e o
+      // próximo ciclo segue normalmente.
+      this.logger.error(
+        `[${label}] Ciclo de polling abortado por erro inesperado: ` +
+          `${(err as Error)?.stack ?? (err as Error)?.message ?? String(err)}`,
+      );
     } finally {
       state.busy = false;
     }

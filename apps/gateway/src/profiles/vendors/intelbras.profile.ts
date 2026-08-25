@@ -31,14 +31,20 @@ export const INTELBRAS_PROFILE: DeviceProfile = {
     // → gateway escolhe Intelbras (bestEffort conservador).
     enterpriseNumbers: [1004849],
   },
+  discovery: {
+    // Árvore oficial Dahua (OEM) — systemInfo/networkInfo/storageInfo/products.
+    walkRoots: ['1.3.6.1.4.1.1004849.2'],
+  },
   mappings: [
+    // OIDs oficiais Dahua (doc "Product Management Information Library"):
+    // cpuUsage 2.1.3.0 (escalar 0..100), memoryUsage 2.1.9.2.0 (0..100 %).
     // ── CPU ────────────────────────────────────────────────────────────────────
-    { metricKey: 'cpu', oid: '1.3.6.1.4.1.1004849.2.1.3.1.1.1', scale: 1, sentinels: [0] },
+    { metricKey: 'cpu', oid: '1.3.6.1.4.1.1004849.2.1.3.0', scale: 1, sentinels: [0] },
 
     // ── Memória ────────────────────────────────────────────────────────────────
-    { metricKey: 'memory', oid: '1.3.6.1.4.1.1004849.2.1.3.2.1.1', scale: 1, sentinels: [0] },
+    { metricKey: 'memory', oid: '1.3.6.1.4.1.1004849.2.1.9.2.0', scale: 1, sentinels: [0] },
 
-    // ── Temperatura ───────────────────────────────────────────────────────────
-    { metricKey: 'temperature', oid: '1.3.6.1.4.1.1004849.2.1.3.3.1.1', scale: 1, sentinels: [0] },
+    // Temperatura: SEM objeto na doc oficial Dahua — fallback UCD do perfil
+    // base permanece ativo por herança.
   ],
 };

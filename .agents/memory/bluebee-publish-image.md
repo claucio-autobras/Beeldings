@@ -12,3 +12,5 @@ description: Deploy build sem rede p/ Google Fonts; .replitignore controla taman
 ## Lição crítica (11/08/2026)
 - `.replitignore` também remove ARQUIVOS GERADOS NO BUILD da imagem final: excluir `apps/frontend/.next` fez o publish "dar certo" (build ok) mas o runtime caiu em crash loop com "Could not find a production build in the '.next' directory" → Internal Server Error no domínio.
 - Regra: excluir só `apps/frontend/.next/cache`, nunca o `.next` inteiro.
+
+- (ago/2026) Publish travado em "Bundle": `.next/dev` (Turbopack, ~1,7 GB de artefatos do dev server) NÃO estava no .replitignore e dobrou a imagem. Excluir `apps/frontend/.next/dev` (o build de prod recria .next); manter a regra de nunca excluir .next inteiro.

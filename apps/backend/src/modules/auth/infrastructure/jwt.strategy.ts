@@ -37,6 +37,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('Token inválido — usuário não encontrado');
     }
 
+    // Uma redefinição de senha incrementa a versão e derruba sessões emitidas
+    // antes dela, inclusive JWTs que ainda não expiraram.
+    if ((payload.sessionVersion ?? 0) !== user.sessionVersion) {
+      throw new UnauthorizedException('Sessão encerrada por uma alteração de senha');
+    }
+
     // Cliente inativado: rejeita sessões ativas de usuários do tenant (o token
     // continua criptograficamente válido, então o corte é feito aqui). O código
     // TENANT_INACTIVE permite ao frontend encerrar a sessão com mensagem clara.

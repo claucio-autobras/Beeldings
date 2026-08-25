@@ -55,6 +55,24 @@ import {
   type SnmpDiagnoseProgress,
 } from '../application/snmp-diagnose.service.js';
 import {
+  buildSnmpCredentialData,
+  resolveSnmpRuntimeCredentials,
+  sanitizeSnmpV3Body,
+  snmpCredentialPublicView,
+  type SnmpCredentialBody,
+  type SnmpVersion,
+} from '../application/snmp-credential.util.js';
+import { SnmpDiscoveryPersistenceService } from '../application/snmp-discovery-persistence.service.js';
+import {
+  SnmpMetricService,
+  normalizeMetricKey,
+  CANONICAL_METRIC_KEYS,
+  METRICS_WITHOUT_OID,
+  extractFirmwareFamily,
+  normalizeSnmpOidSelection,
+  type SnmpOidSelection,
+} from '../application/snmp-metric.service.js';
+import {
   CapabilityProbeService,
   resolveProfileLabel,
 } from '../application/capability-probe.service.js';
@@ -72,6 +90,23 @@ import {
   type NvrChannelTableOids,
   type NvrTableOids,
 } from '../application/nvr-oid-profiles.js';
+import {
+  buildDiscoveredObjects,
+  buildInterfaceWalkInfo,
+  isMonitorableWalkInterface,
+} from '../application/snmp-oid-semantics.js';
+import { partitionDiscoveredPorts } from '../application/switch-port-filter.util.js';
+import {
+  buildSnmpCardDisplay,
+  extractSnmpInfoEntries,
+  type SnmpInfoEntry,
+} from '../application/snmp-card-metrics.util.js';
+import { runLiveOidTest } from '../application/snmp-live-oid-test.util.js';
+import { SnmpMibService } from '../application/snmp-mib.service.js';
+import {
+  applyCustomDiscoveredPoints,
+  sanitizeCustomPoints,
+} from '../application/snmp-custom-points.util.js';
 import { DeviceStatusService } from '../../mqtt/device-status.service.js';
 import { CameraLiveViewService } from '../application/camera-live-view.service.js';
 import { JwtAuthGuard } from '../../auth/presentation/guards/jwt-auth.guard.js';
@@ -89,6 +124,25 @@ const DEFAULT_ONVIF_PORT = 80;
 /** Intervalo de polling SNMP padrão (s). */
 const DEFAULT_POLLING_S = 30;
 
+const REACHABILITY_DETAIL_POINTS = [
+  {
+    tag: 'REACHABILITY_LATENCY',
+    objectName: 'Latência SNMP',
+    metric: 'reachability_latency',
+    oid: null as string | null,
+    scale: 1,
+    unit: 'ms',
+  },
+  {
+    tag: 'REACHABILITY_FAILURE_RATE',
+    objectName: 'Taxa de falha SNMP (5 min)',
+    metric: 'reachability_failure_rate',
+    oid: null as string | null,
+    scale: 1,
+    unit: '%',
+  },
+] as const;
+
 /**
  * Pontos padrão de saúde de uma câmera CFTV (SNMP MIB-II / UCD).
  * O ponto 'status' NÃO tem OID — o gateway o deriva da alcançabilidade
@@ -104,6 +158,16 @@ const DEFAULT_CAMERA_POINTS = [
     scale: 1,
     unit: '',
   },
+  {
+    tag: 'REACHABILITY',
+    objectName: 'Alcançabilidade SNMP',
+    metric: 'reachability',
+    // Sem OID: derivado pela alcançabilidade (respondeu ao GET = 1, sem resposta = 0).
+    oid: null as string | null,
+    scale: 1,
+    unit: '%',
+  },
+  ...REACHABILITY_DETAIL_POINTS,
   {
     tag: 'UPTIME',
     objectName: 'Tempo ligada',
@@ -176,6 +240,15 @@ const DEFAULT_SWITCH_POINTS = [
     unit: '',
   },
   {
+    tag: 'REACHABILITY',
+    objectName: 'Alcançabilidade SNMP',
+    metric: 'reachability',
+    oid: null as string | null,
+    scale: 1,
+    unit: '%',
+  },
+  ...REACHABILITY_DETAIL_POINTS,
+  {
     tag: 'UPTIME',
     objectName: 'Tempo ligado',
     metric: 'uptime',
@@ -215,6 +288,15 @@ const DEFAULT_NVR_POINTS = [
     scale: 1,
     unit: '',
   },
+  {
+    tag: 'REACHABILITY',
+    objectName: 'Alcançabilidade SNMP',
+    metric: 'reachability',
+    oid: null as string | null,
+    scale: 1,
+    unit: '%',
+  },
+  ...REACHABILITY_DETAIL_POINTS,
   {
     tag: 'UPTIME',
     objectName: 'Tempo ligado',
@@ -395,17 +477,23 @@ export function buildDynamicPacketLossCandidates(
   const dynamic: DiagnoseCandidate[] = [];
   const ifSection = walk.find((s) => s.root === '1.3.6.1.2.1.2');
   if (!ifSection) return dynamic;
+  // Contexto por ifIndex (ifType/ifOperStatus/ifDescr) extraído do próprio
+  // walk: loopback (ifType 24) e interfaces down NUNCA viram candidato — era
+  // a origem do "PACOTES PERDIDOS — LO". Rótulo pelo ifDescr, não pelo índice.
+  const ifInfo = buildInterfaceWalkInfo(walk);
   for (const entry of ifSection.entries) {
     for (const col of IF_LOSS_COLUMNS) {
       if (!entry.oid.startsWith(col.prefix)) continue;
       const ifIndex = entry.oid.slice(col.prefix.length);
       if (!/^\d+$/.test(ifIndex)) continue;
+      const iface = ifInfo.get(Number(ifIndex));
+      if (!isMonitorableWalkInterface(iface)) continue;
       if (knownOids.has(entry.oid)) continue;
       knownOids.add(entry.oid);
       dynamic.push({
         metric: 'packet_loss',
         oid: entry.oid,
-        profileLabel: `MIB-II ${col.label} (interface ${ifIndex})`,
+        profileLabel: `MIB-II ${col.label} (${iface?.descr ?? `interface ${ifIndex}`})`,
         scale: 1,
         unit: 'pkts',
       });
@@ -469,8 +557,15 @@ interface CameraBody {
   gatewayId?: string;
   ip?: string;
   port?: number;
-  snmpVersion?: '1' | '2c';
+  snmpVersion?: '1' | '2c' | '3';
   community?: string;
+  /** Campos SNMPv3 (USM) — obrigatórios conforme o nível quando snmpVersion='3'. */
+  securityName?: string;
+  authProtocol?: string;
+  authKey?: string;
+  privProtocol?: string;
+  privKey?: string;
+  contextName?: string;
   rtspUrl?: string | null;
   pollingInterval?: number;
   /** ONVIF: canal SNMP opcional de saúde. */
@@ -503,7 +598,9 @@ interface CameraBody {
 
 type CameraWithRelations = Prisma.DeviceGetPayload<{
   include: { points: true; site: true };
-}>;
+}> & {
+  snmpCredential?: Prisma.SnmpCredentialGetPayload<object> | null;
+};
 
 /**
  * CftvController — área de CFTV (câmeras monitoradas via SNMP).
@@ -530,6 +627,9 @@ export class CftvController {
     private readonly liveView: CameraLiveViewService,
     private readonly switchPortSync: SwitchPortSyncService,
     private readonly nvrTableSync: NvrTableSyncService,
+    private readonly snmpMib: SnmpMibService,
+    private readonly snmpDiscovery: SnmpDiscoveryPersistenceService,
+    private readonly snmpMetric: SnmpMetricService,
   ) {}
 
   /**
@@ -691,8 +791,15 @@ export class CftvController {
       gatewayId?: string;
       ip?: string;
       port?: number;
-      snmpVersion?: '1' | '2c';
+      snmpVersion?: '1' | '2c' | '3';
       community?: string;
+      /** Campos SNMPv3 (teste pré-cadastro — nada é persistido aqui). */
+      securityName?: string;
+      authProtocol?: string;
+      authKey?: string;
+      privProtocol?: string;
+      privKey?: string;
+      contextName?: string;
       manufacturer?: string | null;
       oids?: Partial<Record<HealthMetric, string>>;
     },
@@ -712,13 +819,31 @@ export class CftvController {
       if (entry?.oid) oids[metric] = entry.oid;
     }
 
+    // v3 no teste pré-cadastro: chaves em texto puro só trafegam backend →
+    // gateway (nunca persistidas nem devolvidas).
+    const isV3 = body.snmpVersion === '3';
+    const v3 = isV3 ? sanitizeSnmpV3Body(body) : null;
+
     const result = await this.snmpHealthTest.test({
       tenantId,
       gatewayId: body.gatewayId,
       ip: (body.ip as string).trim(),
       port: body.port || DEFAULT_SNMP_PORT,
-      snmpVersion: body.snmpVersion === '1' ? '1' : '2c',
+      snmpVersion: isV3 ? '3' : body.snmpVersion === '1' ? '1' : '2c',
       community: body.community?.trim() || 'public',
+      ...(v3
+        ? {
+            v3: {
+              securityName: v3.securityName,
+              securityLevel: v3.securityLevel,
+              authProtocol: v3.authProtocol ?? undefined,
+              authKey: body.authKey || undefined,
+              privProtocol: v3.privProtocol ?? undefined,
+              privKey: body.privKey || undefined,
+              contextName: v3.contextName ?? undefined,
+            },
+          }
+        : {}),
       oids,
     });
 
@@ -741,7 +866,7 @@ export class CftvController {
         ...ONLY_CFTV_DEVICES,
       },
       orderBy: { name: 'asc' },
-      include: { points: true, site: true },
+      include: { points: true, site: true, snmpCredential: true },
     });
 
     // "Visto por último" com fallback durável (status_events/lastValueAt) —
@@ -777,6 +902,12 @@ export class CftvController {
       return this.createOnvifCamera(user, body, { name, ip, tenantId });
     }
 
+    const snmpVersion: SnmpVersion = body.snmpVersion === '1' || body.snmpVersion === '3'
+      ? body.snmpVersion
+      : '2c';
+    // Valida ANTES de criar o device: credenciais v3 incompletas = 400.
+    const credentialData = buildSnmpCredentialData(snmpVersion, body);
+
     const camera = await this.prisma.device.create({
       data: {
         name,
@@ -788,9 +919,15 @@ export class CftvController {
         tenantId,
         siteId: body.siteId || null,
         gatewayId: body.gatewayId,
+        snmpCredential: { create: { tenantId, ...credentialData } },
         config: {
-          snmpVersion: body.snmpVersion ?? '2c',
-          community: body.community?.trim() || 'public',
+          // Retrocompat: versão/community continuam em Device.config enquanto
+          // as duas fontes coexistirem; a tabela snmp_credential é a fonte da
+          // verdade (chaves v3 SÓ lá, cifradas).
+          snmpVersion,
+          ...(snmpVersion !== '3'
+            ? { community: body.community?.trim() || 'public' }
+            : {}),
           rtspUrl: body.rtspUrl?.trim() || null,
           pollingIntervalMs: (body.pollingInterval ?? DEFAULT_POLLING_S) * 1000,
           // Fabricante manual — identifica o provider de telemetria no gateway.
@@ -816,11 +953,20 @@ export class CftvController {
           })),
         },
       },
-      include: { points: true, site: true },
+      include: { points: true, site: true, snmpCredential: true },
     });
 
     await this.configPublisher.publishForDevice(camera.id);
     this.logger.log(`Câmera CFTV cadastrada: ${camera.id} (${ip}) por ${user.email}`);
+
+    // Descoberta de cadastro fire-and-forget: walk completo persistido como
+    // discovery_run (snapshot + diff). Automática = no máx. 1×/dia por device.
+    void this.runAutoDiscovery(camera.id, 'registration').catch((err: Error) => {
+      this.logger.warn(
+        `Descoberta pós-cadastro da câmera ${camera.id} falhou (não bloqueante): ${err.message}`,
+      );
+    });
+
     // Câmera recém-cadastrada: nenhuma comunicação real ainda.
     return this.mapCamera(camera, null);
   }
@@ -915,7 +1061,7 @@ export class CftvController {
           })),
         },
       },
-      include: { points: true, site: true },
+      include: { points: true, site: true, snmpCredential: true },
     });
 
     if (healthEnabled && healthOids) {
@@ -933,7 +1079,7 @@ export class CftvController {
     );
     const created = await this.prisma.device.findUniqueOrThrow({
       where: { id: camera.id },
-      include: { points: true, site: true },
+      include: { points: true, site: true, snmpCredential: true },
     });
     return this.mapCamera(created, await this.deviceStatus.resolveLastSeen(created.id));
   }
@@ -972,6 +1118,51 @@ export class CftvController {
     };
 
     if (!isOnvif) {
+      // Credencial SNMP: upsert na tabela snmp_credential (fonte da verdade).
+      // Na edição, chave v3 vazia = manter a atual (cifrada).
+      if (
+        body.snmpVersion !== undefined ||
+        body.community !== undefined ||
+        body.securityName !== undefined ||
+        body.authProtocol !== undefined ||
+        body.authKey !== undefined ||
+        body.privProtocol !== undefined ||
+        body.privKey !== undefined ||
+        body.contextName !== undefined
+      ) {
+        const existing = await this.prisma.snmpCredential.findUnique({
+          where: { deviceId: id },
+        });
+        const currentVersion: SnmpVersion =
+          existing?.version === '1' || existing?.version === '3'
+            ? (existing.version as SnmpVersion)
+            : cfg.snmpVersion === '1'
+              ? '1'
+              : '2c';
+        const nextVersion: SnmpVersion =
+          body.snmpVersion === '1' || body.snmpVersion === '2c' || body.snmpVersion === '3'
+            ? body.snmpVersion
+            : currentVersion;
+        const mergedBody: SnmpCredentialBody = {
+          ...body,
+          community:
+            body.community?.trim() ||
+            existing?.community ||
+            (cfg.community as string | undefined) ||
+            'public',
+          securityName: body.securityName?.trim() || existing?.securityName || undefined,
+          authProtocol: body.authProtocol ?? existing?.authProtocol ?? undefined,
+          privProtocol: body.privProtocol ?? existing?.privProtocol ?? undefined,
+          contextName: body.contextName ?? existing?.contextName ?? undefined,
+        };
+        const credentialData = buildSnmpCredentialData(nextVersion, mergedBody, existing);
+        await this.prisma.snmpCredential.upsert({
+          where: { deviceId: id },
+          create: { tenantId: camera.tenantId, deviceId: id, ...credentialData },
+          update: credentialData,
+        });
+      }
+
       newConfig = {
         ...newConfig,
         ...(body.snmpVersion ? { snmpVersion: body.snmpVersion } : {}),
@@ -1184,7 +1375,7 @@ export class CftvController {
 
     const updated = await this.prisma.device.findUniqueOrThrow({
       where: { id },
-      include: { points: true, site: true },
+      include: { points: true, site: true, snmpCredential: true },
     });
     return this.mapCamera(updated, await this.deviceStatus.resolveLastSeen(updated.id));
   }
@@ -1211,6 +1402,52 @@ export class CftvController {
     if (camera.gatewayId) {
       await this.configPublisher.publishForGateway(camera.tenantId, camera.gatewayId);
     }
+  }
+
+  /**
+   * DELETE /cftv/cameras/:id/points/:pointId — remove um ponto SNMP individual
+   * da câmera (para de coletar o OID e apaga alarmes/trends via cascade).
+   *
+   * Pontos essenciais (STATUS e eventos ONVIF) são protegidos.
+   * Não requer confirmação de senha (análogo à remoção de porta de switch).
+   */
+  @Delete('cameras/:id/points/:pointId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @UseGuards(JwtAuthGuard)
+  async deleteCameraPoint(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Param('pointId') pointId: string,
+  ): Promise<void> {
+    if (user.role !== 'ADMIN' && user.role !== 'CCO') {
+      throw new BadRequestException('Apenas ADMIN ou CCO podem remover pontos de câmeras');
+    }
+    const camera = await this.findCameraOrThrow(id);
+    this.assertCanEdit(user, camera.tenantId);
+
+    const point = await this.prisma.devicePoint.findFirst({
+      where: { id: pointId, deviceId: id },
+    });
+    if (!point) throw new NotFoundException('Ponto não encontrado nesta câmera');
+
+    const b = (point.binding ?? {}) as { metric?: string };
+    if (point.tag === 'STATUS' || b.metric === 'status') {
+      throw new BadRequestException(
+        'O ponto STATUS é essencial e não pode ser removido individualmente.',
+      );
+    }
+    if (point.objectType === 'onvif') {
+      throw new BadRequestException(
+        'Pontos de eventos ONVIF não podem ser removidos individualmente.',
+      );
+    }
+
+    await this.prisma.devicePoint.delete({ where: { id: pointId } });
+    this.logger.log(
+      `Ponto SNMP "${point.tag}" (${pointId}) da câmera ${id} removido por ${user.email}`,
+    );
+
+    await this.configPublisher.publishForDevice(id);
   }
 
   /** POST /cftv/scan — varre um range de IP via SNMP no gateway (MQTT). */
@@ -1349,6 +1586,7 @@ export class CftvController {
     const cfg = (camera.config ?? {}) as {
       snmpVersion?: '1' | '2c';
       community?: string;
+      manufacturer?: string;
       snmpHealth?: {
         enabled?: boolean;
         port?: number;
@@ -1358,11 +1596,13 @@ export class CftvController {
     };
     const isOnvif = camera.protocol === ONVIF_PROTOCOL;
 
-    // Parâmetros de conexão SNMP: câmera SNMP usa os campos principais;
-    // câmera ONVIF usa o canal opcional de saúde (precisa estar habilitado).
+    // Parâmetros de conexão SNMP: câmera SNMP usa os campos principais
+    // (credencial da tabela snmp_credential > Device.config); câmera ONVIF
+    // usa o canal opcional de saúde (sempre v1/2c — precisa estar habilitado).
     let port: number;
-    let snmpVersion: '1' | '2c';
+    let snmpVersion: '1' | '2c' | '3';
     let community: string;
+    let v3: ReturnType<typeof resolveSnmpRuntimeCredentials>['v3'];
     if (isOnvif) {
       if (!cfg.snmpHealth?.enabled) {
         throw new BadRequestException(
@@ -1372,10 +1612,16 @@ export class CftvController {
       port = cfg.snmpHealth.port || DEFAULT_SNMP_PORT;
       snmpVersion = cfg.snmpHealth.snmpVersion === '1' ? '1' : '2c';
       community = cfg.snmpHealth.community?.trim() || 'public';
+      v3 = null;
     } else {
       port = camera.port ?? DEFAULT_SNMP_PORT;
-      snmpVersion = cfg.snmpVersion === '1' ? '1' : '2c';
-      community = cfg.community?.trim() || 'public';
+      const credential = await this.prisma.snmpCredential.findUnique({
+        where: { deviceId: id },
+      });
+      const creds = resolveSnmpRuntimeCredentials(credential, cfg);
+      snmpVersion = creds.snmpVersion;
+      community = creds.community;
+      v3 = creds.v3;
     }
 
     // OIDs atualmente cadastrados nos pontos (por métrica do binding).
@@ -1383,12 +1629,21 @@ export class CftvController {
       where: { deviceId: id },
     });
     const current: DiagnoseOidProbe[] = [];
-    const currentByMetric: Record<string, { oid: string; pointId: string }> = {};
+    const currentByMetric: Record<string, { oid: string; pointId: string; scale: number }> = {};
     for (const p of points) {
-      const b = (p.binding ?? {}) as { metric?: string; oid?: string | null };
-      if (b.metric && b.oid && DIAG_METRICS.includes(b.metric as DiagMetric)) {
-        current.push({ metric: b.metric, oid: b.oid });
-        currentByMetric[b.metric] = { oid: b.oid, pointId: p.id };
+      const b = (p.binding ?? {}) as { metric?: string; oid?: string | null; scale?: number };
+      const metricKey = b.metric ? normalizeMetricKey(b.metric) : '';
+      if (
+        metricKey &&
+        b.oid &&
+        DIAG_METRICS.some((metric) => normalizeMetricKey(metric) === metricKey)
+      ) {
+        current.push({ metric: metricKey as DiagMetric, oid: b.oid });
+        currentByMetric[metricKey] = {
+          oid: b.oid,
+          pointId: p.id,
+          scale: typeof b.scale === 'number' ? b.scale : 1,
+        };
       }
     }
 
@@ -1405,9 +1660,14 @@ export class CftvController {
       port,
       snmpVersion,
       community,
+      v3,
       current,
       candidates,
       diagnoseId: body?.diagnoseId,
+      // Dicas de identificação: perfis do gateway aportam raízes de walk
+      // proprietárias (conhecimento aditivo — nenhum ramo por fabricante).
+      deviceType: camera.monitoredDeviceType ?? 'CAMERA',
+      manufacturer: cfg.manufacturer?.trim() || undefined,
     });
 
     if (!result.success) {
@@ -1423,9 +1683,49 @@ export class CftvController {
       ...buildDynamicPacketLossCandidates(result.walk, knownOids, result.oidResults),
     ];
 
+    // Descoberta separada da interpretação: TODOS os objetos do walk viram
+    // candidatos — classificados quando a semântica é conhecida, "OID
+    // desconhecido" (selecionável) quando não. Nada é descartado.
+    const discovered = buildDiscoveredObjects(result.walk);
+
+    // Enriquece OIDs "desconhecidos" com nomes das MIBs importadas pelo admin.
+    // A classificação semântica (snmp-oid-semantics) sempre tem precedência —
+    // o enriquecimento só preenche `mibName` quando `known` é null.
+    // A MIB selected on the device is only a naming aid for this diagnosis.
+    // Keep it scoped to the explicit choice; it never changes collection.
+    await this.snmpMib.enrichDiscovered(
+      discovered,
+      camera.snmpMibId,
+      cfg.manufacturer,
+    );
+
+    // Informações estáticas (firmware, serial, data/hora, NTP…) capturadas do
+    // walk — telemetria numérica não transporta strings; ficam no config e
+    // alimentam a seção de informações do card.
+    if (result.reachable) {
+      const infoEntries = extractSnmpInfoEntries(discovered, new Date());
+      // Veredito de plausibilidade por OID persiste junto: o apply consulta
+      // esta lista para NUNCA aplicar semântica/canônico a um OID reprovado
+      // (proteção contra deslocamento de árvore entre firmwares).
+      const unconfirmedOids = discovered
+        .filter((d) => d.known?.confirmed === false)
+        .map((d) => d.oid);
+      const currentCfg = (camera.config ?? {}) as Record<string, unknown>;
+      await this.prisma.device.update({
+        where: { id },
+        data: {
+          config: {
+            ...currentCfg,
+            snmpInfo: infoEntries,
+            snmpUnconfirmedOids: unconfirmedOids,
+          } as unknown as Prisma.InputJsonValue,
+        },
+      });
+    }
+
     // Monta a visão por métrica: OID atual + candidatos testados.
     const metrics = DIAG_METRICS.map((metric) => {
-      const cur = currentByMetric[metric] ?? null;
+      const cur = currentByMetric[normalizeMetricKey(metric)] ?? null;
       const curRead = cur ? (result.oidResults[cur.oid] ?? null) : null;
       const metricCandidates = fullCatalog
         .filter((c) => c.metric === metric)
@@ -1437,7 +1737,9 @@ export class CftvController {
             scale: c.scale,
             unit: c.unit,
             responded: Boolean(read?.responded),
-            value: read?.value ?? null,
+            // Valor já na unidade declarada (scale aplicada UMA vez aqui —
+            // Bug 1: sysUpTime em ticks era exibido como segundos).
+            value: read?.value != null ? read.value * c.scale : null,
             raw: read?.raw ?? null,
             isCurrent: cur?.oid === c.oid,
           };
@@ -1450,7 +1752,8 @@ export class CftvController {
         pointId: cur?.pointId ?? null,
         currentOid: cur?.oid ?? null,
         currentResponded: Boolean(curRead?.responded),
-        currentValue: curRead?.value ?? null,
+        // Idem: scale do binding do ponto atual aplicada uma única vez.
+        currentValue: curRead?.value != null ? curRead.value * (cur?.scale ?? 1) : null,
         currentRaw: curRead?.raw ?? null,
         supported,
         candidates: metricCandidates,
@@ -1463,19 +1766,156 @@ export class CftvController {
     // genérico "sem dados". Aplicar/editar um OID limpa a marca.
     if (result.reachable) {
       for (const metric of DIAG_METRICS) {
-        const cur = currentByMetric[metric];
+        const cur = currentByMetric[normalizeMetricKey(metric)];
         if (!cur) continue;
         const read = result.oidResults[cur.oid] ?? null;
         const unsupported = !read?.responded;
         const point = points.find((p) => p.id === cur.pointId);
         if (!point) continue;
         const b = (point.binding ?? {}) as Record<string, unknown>;
-        if (Boolean(b.unsupported) !== unsupported) {
+        const healthState = unsupported ? 'broken' : 'active';
+        if (Boolean(b.unsupported) !== unsupported || b.healthState !== healthState) {
           await this.prisma.devicePoint.update({
             where: { id: point.id },
-            data: { binding: { ...b, unsupported } },
+            data: {
+              binding: {
+                ...b,
+                unsupported,
+                healthState,
+                healthReason: unsupported ? 'missing' : null,
+              },
+            },
           });
         }
+      }
+    }
+
+    // Persiste o run de descoberta (snapshot + diff vs anterior + detecção de
+    // bindings quebrados). Falha aqui nunca derruba o diagnóstico em si.
+    let discovery: Awaited<ReturnType<SnmpDiscoveryPersistenceService['recordRun']>> | null = null;
+    try {
+      discovery = await this.snmpDiscovery.recordRun({
+        tenantId: camera.tenantId,
+        deviceId: id,
+        trigger: 'manual',
+        result,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Persistência da descoberta da câmera ${id} falhou: ${(err as Error).message}`,
+      );
+    }
+
+    // Persiste bindings auto-resolvidos e gera propostas metric-first.
+    let proposals: import('../application/snmp-metric.service.js').MetricProposal[] = [];
+    if (result.reachable) {
+      try {
+        const firmwareFamily = extractFirmwareFamily({
+          walk: result.walk,
+          sysDescr: result.sysDescr,
+        });
+
+        // Fontes de binding:
+        // 1. canonicalMetrics do gateway (verificadas pelo gateway)
+        // 2. metrics legacy (OIDs respondidos no catálogo estático)
+        const resolvedFromCanonical = Object.values(result.canonicalMetrics ?? {})
+          .filter((cm) => cm.value !== null)
+          .map((cm) => {
+            const oid = cm.selectedOid ?? cm.memberOids?.[0] ?? cm.dependencyOids?.[0] ?? '';
+            const memberLabels = Object.fromEntries(
+              (cm.detail ?? [])
+                .map((detail) => {
+                  const detailIndex = typeof detail.index === 'number' ? String(detail.index) : null;
+                  const detailOid =
+                    typeof detail.oid === 'string'
+                      ? detail.oid
+                      : detailIndex
+                        ? (cm.dependencyOids ?? []).find(
+                            (candidate) =>
+                              candidate.startsWith('1.3.6.1.2.1.25.2.3.1.6.') &&
+                              candidate.endsWith(`.${detailIndex}`),
+                          ) ?? null
+                        : null;
+                  const label =
+                    typeof detail.descr === 'string'
+                      ? detail.descr
+                      : typeof detail.index === 'number'
+                        ? `Índice ${detail.index}`
+                        : null;
+                  return detailOid && label ? [detailOid, label] : null;
+                })
+                .filter((entry): entry is [string, string] => entry !== null),
+            );
+            return {
+              metricKey: cm.canonicalKey,
+              oid,
+              scale: 1,
+              unit: cm.unit,
+              memberOids: [...new Set([...(cm.memberOids ?? []), ...(cm.dependencyOids ?? [])])],
+              memberLabels,
+              confidence: cm.confidence,
+            };
+          })
+          .filter((cm) => cm.oid)
+        const resolvedFromLegacy = metrics
+          .filter((m) => m.currentOid && m.currentResponded)
+          .map((m) => ({
+            metricKey: m.metric as string,
+            oid: m.currentOid as string,
+            scale: currentByMetric[normalizeMetricKey(m.metric)]?.scale ?? 1,
+            unit: fullCatalog.find((c) => c.oid === m.currentOid)?.unit ?? '',
+            memberOids: [] as string[],
+            memberLabels: {} as Record<string, string>,
+            confidence: 'exact' as const,
+          }));
+
+        // Merge: canonical tem precedência (deduplicado por metricKey normalizado).
+        const allResolved = [...resolvedFromCanonical];
+        const canonicalKeys = new Set(resolvedFromCanonical.map((r) => normalizeMetricKey(r.metricKey)));
+        for (const r of resolvedFromLegacy) {
+          if (!canonicalKeys.has(normalizeMetricKey(r.metricKey))) {
+            allResolved.push(r);
+          }
+        }
+
+        await this.snmpMetric.persistAutoResolvedBindings({
+          tenantId: camera.tenantId,
+          deviceId: id,
+          sysObjectId: result.sysObjectId,
+          firmwareFamily,
+          resolved: allResolved,
+        });
+
+        if (result.sysObjectId) {
+          await this.snmpMetric.inheritBindingsFromSameModel({
+            tenantId: camera.tenantId,
+            deviceId: id,
+            sysObjectId: result.sysObjectId,
+            firmwareFamily,
+          });
+        }
+
+        // Carrega bindings existentes (incluindo herdados) para as propostas.
+        const existingBindings = await this.snmpMetric.getBindingsForProposals(id);
+        const currentOidsByMetric: Record<string, string> = {};
+        for (const m of metrics) {
+          if (m.currentOid) currentOidsByMetric[normalizeMetricKey(m.metric)] = m.currentOid;
+        }
+
+        proposals = this.snmpMetric.buildProposals({
+          tenantId: camera.tenantId,
+          deviceId: id,
+          sysObjectId: result.sysObjectId,
+          diagnoseResult: { ...result, canonicalMetrics: result.canonicalMetrics },
+          catalogCandidates: fullCatalog,
+          discovered,
+          existingBindings,
+          currentOidsByMetric,
+        });
+      } catch (err) {
+        this.logger.warn(
+          `Persistência de bindings/propostas da câmera ${id} falhou (não bloqueante): ${(err as Error).message}`,
+        );
       }
     }
 
@@ -1487,8 +1927,121 @@ export class CftvController {
       sysObjectId: result.sysObjectId,
       durationMs: result.durationMs,
       metrics,
+      /** Campo para frontend — shape: MetricProposal[] */
+      proposals,
+      /** @deprecated use proposals */
+      metricProposals: proposals,
       walk: result.walk,
+      walkStats: result.walkStats,
+      discovered,
+      discovery,
     };
+  }
+
+  /**
+   * GET /cftv/cameras/:id/discovery-runs — histórico de runs de descoberta
+   * (snapshot walk + diff + bindings quebrados). Últimos 10 runs.
+   */
+  @Get('cameras/:id/discovery-runs')
+  @UseGuards(JwtAuthGuard)
+  async listDiscoveryRuns(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    const camera = await this.findCameraOrThrow(id);
+    this.assertCanEdit(user, camera.tenantId);
+    return this.snmpDiscovery.listRuns(camera.tenantId, id);
+  }
+
+  /**
+   * Descoberta automática (pós-cadastro): walk completo persistido como run.
+   * Gated por canRunAutoDiscovery (máx. 1×/dia por device) e gateway online.
+   * Nunca bloqueia o fluxo de cadastro — chamada fire-and-forget.
+   */
+  private async runAutoDiscovery(
+    deviceId: string,
+    trigger: 'registration' | 'scheduled',
+  ): Promise<void> {
+    const device = await this.prisma.device.findUnique({ where: { id: deviceId } });
+    if (!device?.gatewayId) return;
+    if (this.deviceStatus.getStatus(device.gatewayId) === 'offline') return;
+    if (!(await this.snmpDiscovery.canRunAutoDiscovery(deviceId))) return;
+
+    const cfg = (device.config ?? {}) as { snmpVersion?: string; community?: string };
+    const credential = await this.prisma.snmpCredential.findUnique({
+      where: { deviceId },
+    });
+    const creds = resolveSnmpRuntimeCredentials(credential, cfg);
+
+    const result = await this.snmpDiagnose.diagnose({
+      tenantId: device.tenantId,
+      gatewayId: device.gatewayId,
+      ip: device.ip as string,
+      port: device.port ?? DEFAULT_SNMP_PORT,
+      snmpVersion: creds.snmpVersion,
+      community: creds.community,
+      v3: creds.v3,
+      current: [],
+      candidates: [],
+      deviceType: device.monitoredDeviceType ?? 'CAMERA',
+    });
+    if (!result.success) return;
+
+    await this.snmpDiscovery.recordRun({
+      tenantId: device.tenantId,
+      deviceId,
+      trigger,
+      result,
+    });
+    this.logger.log(
+      `Descoberta ${trigger} persistida para o device ${deviceId} ` +
+        `(${(result.walk ?? []).reduce((n, s) => n + s.entries.length, 0)} OIDs)`,
+    );
+  }
+
+  /**
+   * POST /cftv/cameras/:id/test-oid — lê o valor ATUAL de um OID via gateway
+   * (teste ao vivo na descoberta, antes de aplicar). Retorna tipo ASN.1,
+   * valor bruto e normalizado (com a escala da semântica, quando conhecida).
+   */
+  @Post('cameras/:id/test-oid')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  async testOid(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() body: { oid?: string },
+  ) {
+    const camera = await this.findCameraOrThrow(id);
+    this.assertCanEdit(user, camera.tenantId);
+
+    // Câmera ONVIF usa o canal SNMP opcional de saúde; câmera SNMP usa os
+    // parâmetros principais. Normaliza o config para o util compartilhado.
+    let device = camera;
+    if (camera.protocol === ONVIF_PROTOCOL) {
+      const cfg = (camera.config ?? {}) as {
+        snmpHealth?: {
+          enabled?: boolean;
+          port?: number;
+          snmpVersion?: '1' | '2c';
+          community?: string;
+        } | null;
+      };
+      if (!cfg.snmpHealth?.enabled) {
+        throw new BadRequestException(
+          'Esta câmera ONVIF não tem o monitoramento de saúde via SNMP habilitado',
+        );
+      }
+      device = {
+        ...camera,
+        port: cfg.snmpHealth.port || DEFAULT_SNMP_PORT,
+        config: {
+          snmpVersion: cfg.snmpHealth.snmpVersion === '1' ? '1' : '2c',
+          community: cfg.snmpHealth.community?.trim() || 'public',
+        },
+      };
+    }
+    return runLiveOidTest(this.snmpHealthTest, this.deviceStatus, device, body?.oid);
   }
 
   /** GET /cftv/diagnose/:diagnoseId/progress — progresso parcial (polling). */
@@ -1518,18 +2071,32 @@ export class CftvController {
   async applySnmpOids(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
-    @Body() body: { oids?: Partial<Record<string, string>> },
+    @Body()
+    body: {
+      oids?: Partial<Record<string, string | SnmpOidSelection>>;
+      /** Objetos descobertos no walk selecionados como pontos (OIDs livres). */
+      customPoints?: Array<{ oid?: string; name?: string; unit?: string }>;
+      /**
+       * Confiança marcada pelo cliente para os OIDs aplicados.
+       * 'manual' = operador explicitamente escolheu este OID.
+       * 'exact' = confirmação automática de proposta sugerida.
+       * Padrão: 'manual' (aplica via UI = operador).
+       */
+      metricConfidence?: Partial<Record<string, 'exact' | 'inferred' | 'manual'>>;
+    },
   ) {
     const camera = await this.findCameraOrThrow(id);
     this.assertCanEdit(user, camera.tenantId);
 
-    const entries = Object.entries(body?.oids ?? {}).filter(
-      ([metric, oid]) =>
-        DIAG_METRICS.includes(metric as DiagMetric) &&
-        typeof oid === 'string' &&
-        oid.trim(),
-    ) as Array<[DiagMetric, string]>;
-    if (entries.length === 0) {
+    // Aceita tanto métricas legacy (DIAG_METRICS) quanto canônicas.
+    const entries = Object.entries(body?.oids ?? {}).flatMap(([metric, raw]) => {
+        const isLegacy = DIAG_METRICS.includes(metric as DiagMetric);
+        const isCanonical = CANONICAL_METRIC_KEYS.has(metric) && !METRICS_WITHOUT_OID.has(metric);
+        const selection = normalizeSnmpOidSelection(raw);
+        return isLegacy || isCanonical ? (selection ? [[metric, selection] as const] : []) : [];
+      });
+    const customPoints = sanitizeCustomPoints(body?.customPoints);
+    if (entries.length === 0 && customPoints.length === 0) {
       throw new BadRequestException('Nenhum OID para aplicar');
     }
 
@@ -1537,20 +2104,99 @@ export class CftvController {
     const points = await this.prisma.devicePoint.findMany({
       where: { deviceId: id },
     });
+    const storageVolumes =
+      (await this.snmpMetric?.getStorageVolumeBindings(id)) ?? [];
 
-    for (const [metric, rawOid] of entries) {
-      const oid = rawOid.trim();
+    // OIDs reprovados na validação de plausibilidade do último diagnóstico
+    // NUNCA podem virar métrica canônica — nem via payload direto/forjado.
+    const unconfirmedOids = new Set(
+      Array.isArray((camera.config as Record<string, unknown> | null)?.snmpUnconfirmedOids)
+        ? ((camera.config as Record<string, unknown>).snmpUnconfirmedOids as string[]).filter(
+            (o): o is string => typeof o === 'string',
+          )
+        : [],
+    );
+
+    let cpuBindingTouched = false;
+    for (const [metric, selection] of entries) {
+      const oid = selection.oid;
+      if (unconfirmedOids.has(oid)) {
+        this.logger.warn(
+          `OID ${oid} reprovado na plausibilidade — recusado como métrica '${metric}' na câmera ${id}`,
+        );
+        continue;
+      }
+      // Normaliza alias canônicos para o metricKey armazenado no ponto
+      const normalizedMetric = normalizeMetricKey(metric);
+      if (normalizedMetric === 'storage_used_percent' && storageVolumes.length > 0) {
+        for (const volume of storageVolumes) {
+          const tag = `STORAGE_${volume.index.replace(/[^A-Za-z0-9]/g, '_')}`;
+          const existingVolume = points.find((candidate) => candidate.tag === tag);
+          const volumeBinding = {
+            metric: normalizedMetric,
+            oid: volume.oid,
+            scale: 1,
+            memberOids: volume.memberOids,
+            unsupported: false,
+            healthState: 'pending',
+            healthReason: 'awaiting_read',
+          };
+          if (existingVolume) {
+            await this.prisma.devicePoint.update({
+              where: { id: existingVolume.id },
+              data: {
+                objectName: volume.label,
+                unit: '%',
+                binding: volumeBinding,
+                lastValue: null,
+                lastValueAt: null,
+                lastValueState: 'waiting_event',
+              },
+            });
+            (existingVolume as { binding: unknown }).binding = volumeBinding;
+          } else {
+            const nextInstance = points.reduce((max, candidate) => Math.max(max, candidate.instance), -1) + 1;
+            const created = await this.prisma.devicePoint.create({
+              data: {
+                deviceId: id,
+                tag,
+                objectName: volume.label,
+                objectType: 'snmp',
+                instance: nextInstance,
+                unit: '%',
+            binding: volumeBinding,
+            lastValueState: 'waiting_event',
+              },
+            });
+            points.push(created);
+          }
+        }
+        continue;
+      }
+      // Procura ponto pelo metric original E pelo normalizado
       const point = points.find((p) => {
         const b = (p.binding ?? {}) as { metric?: string };
-        return b.metric === metric;
+        return (
+          b.metric === metric ||
+          b.metric === normalizedMetric ||
+          (typeof b.metric === 'string' && normalizeMetricKey(b.metric) === normalizedMetric)
+        );
       });
       // Scale/unit vêm do catálogo quando o OID é conhecido; senão valor cru.
-      const known = catalog.find((c) => c.metric === metric && c.oid === oid);
+      const known = catalog.find((c) => (c.metric === metric || c.metric === normalizedMetric) && c.oid === oid);
+      const scale = selection.scale ?? known?.scale ?? 1;
+      const unit = selection.unit ?? known?.unit ?? '';
+      const seedValue =
+        typeof selection.seedValue === 'number' && Number.isFinite(selection.seedValue)
+          ? selection.seedValue
+          : null;
       if (!point) {
-        // Métrica de saúde sem ponto (ex.: RAM total/armazenamento em câmera
-        // antiga, ou canal híbrido ONVIF) — cria o ponto na hora.
+        // Métrica de saúde sem ponto — cria o ponto na hora.
         if (metric === 'uptime') continue; // uptime sempre existe em SNMP puro
-        const meta = HEALTH_METRIC_META[metric];
+        // Tenta meta legada primeiro, depois fallback genérico para canônicas.
+        const meta = (HEALTH_METRIC_META as Record<string, { tag: string; objectName: string }>)[metric]
+          ?? (HEALTH_METRIC_META as Record<string, { tag: string; objectName: string }>)[normalizedMetric]
+          ?? { tag: metric.toUpperCase().replace(/_/g, ''), objectName: metric };
         const nextInstance = points.reduce((m, p) => Math.max(m, p.instance), -1) + 1;
         const created = await this.prisma.devicePoint.create({
           data: {
@@ -1559,33 +2205,100 @@ export class CftvController {
             objectName: meta.objectName,
             objectType: 'snmp',
             instance: nextInstance,
-            unit: known?.unit ?? '',
-            binding: { metric, oid, scale: known?.scale ?? 1, unsupported: false },
+            unit,
+            binding: {
+              metric: normalizedMetric,
+              oid,
+              scale,
+              unsupported: false,
+              healthState: 'pending',
+              healthReason: 'awaiting_read',
+            },
+            ...(seedValue !== null
+              ? { lastValue: seedValue, lastValueAt: new Date(), lastValueState: null }
+              : { lastValue: null, lastValueAt: null, lastValueState: 'waiting_event' }),
           },
         });
         points.push(created);
         continue;
       }
       const b = (point.binding ?? {}) as Record<string, unknown>;
+      // OID recém-aplicado comprovadamente responde — limpa a marca.
+      const nextBinding = {
+        ...b,
+        metric: normalizedMetric,
+        oid,
+        scale,
+        unsupported: false,
+        healthState: 'pending',
+        healthReason: 'awaiting_read',
+      };
       await this.prisma.devicePoint.update({
         where: { id: point.id },
         data: {
-          // OID recém-aplicado comprovadamente responde — limpa a marca.
-          binding: { ...b, metric, oid, scale: known?.scale ?? 1, unsupported: false },
-          ...(known?.unit !== undefined ? { unit: known.unit } : {}),
+          binding: nextBinding,
+          unit,
+          ...(seedValue !== null
+            ? { lastValue: seedValue, lastValueAt: new Date(), lastValueState: null }
+            : { lastValue: null, lastValueAt: null, lastValueState: 'waiting_event' }),
         },
       });
+      // Mantém o snapshot em memória coerente: applyCustomDiscoveredPoints
+      // faz match por binding.oid — sem isto, o mesmo OID selecionado também
+      // como custom criaria um segundo ponto (polling/card duplicados).
+      (point as { binding: unknown }).binding = nextBinding;
+    }
+
+    // Objetos descobertos no walk selecionados como pontos de monitoramento:
+    // match/create por binding.oid (métricas 'custom' colidem entre si).
+    // OIDs reprovados na plausibilidade entram sem ponte canônica/rótulo
+    // semântico (nunca rótulo errado).
+    await applyCustomDiscoveredPoints(this.prisma, id, points, customPoints, unconfirmedOids);
+
+    // Persiste bindings com confidência correta:
+    // - metricConfidence='manual' → confidence='manual' (operador escolheu)
+    // - metricConfidence='exact' → confidence='exact' (confirmação automática)
+    for (const [metric, selection] of entries) {
+      const oid = selection.oid;
+      if (unconfirmedOids.has(oid)) continue;
+      const normalizedMetric = normalizeMetricKey(metric);
+      const known = catalog.find((c) => (c.metric === metric || c.metric === normalizedMetric) && c.oid === oid);
+      const scale = selection.scale ?? known?.scale ?? 1;
+      const unit = selection.unit ?? known?.unit ?? '';
+      try {
+        await this.snmpMetric.persistBinding({
+          tenantId: camera.tenantId,
+          deviceId: id,
+          metricKey: normalizedMetric,
+          oid,
+          scale,
+          unit,
+          confidence: body?.metricConfidence?.[metric] ?? body?.metricConfidence?.[normalizedMetric],
+        });
+        if (normalizedMetric === 'cpu_usage') cpuBindingTouched = true;
+      } catch (err) {
+        this.logger.warn(
+          `Falha ao persistir binding metric=${metric} oid=${oid} na câmera ${id}: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    if (cpuBindingTouched) {
+      await this.snmpMetric.syncCpuPeakPoint(id);
     }
 
     await this.configPublisher.publishForDevice(id);
     this.logger.log(
       `OIDs SNMP aplicados via diagnóstico na câmera ${id} por ${user.email}: ` +
-        entries.map(([m, o]) => `${m}=${o}`).join(', '),
+        [
+          ...entries.map(([m, o]) => `${m}=${o.oid}`),
+          ...customPoints.map((c) => `custom=${c.oid}`),
+        ].join(', '),
     );
 
     const updated = await this.prisma.device.findUniqueOrThrow({
       where: { id },
-      include: { points: true, site: true },
+      include: { points: true, site: true, snmpCredential: true },
     });
     return this.mapCamera(updated, await this.deviceStatus.resolveLastSeen(updated.id));
   }
@@ -1885,7 +2598,10 @@ export class CftvController {
       });
     }
 
-    const { ports, sysDescr } = discoverResult;
+    // Bug 3: loopback (ifType 24) some da lista; portas down ficam visíveis
+    // mas NÃO ganham pontos automaticamente.
+    const { visible: ports, creatable } = partitionDiscoveredPorts(discoverResult.ports);
+    const { sysDescr } = discoverResult;
 
     // Carrega pontos de porta existentes (sw-state, sw-in, sw-out).
     const existingPortPoints = await this.prisma.devicePoint.findMany({
@@ -1908,7 +2624,7 @@ export class CftvController {
     const discoveredIndexes = new Set(ports.map((p) => p.ifIndex));
     const existingIndexes = new Set(existingByIndex.keys());
 
-    const toAdd = ports.filter((p) => !existingIndexes.has(p.ifIndex));
+    const toAdd = creatable.filter((p) => !existingIndexes.has(p.ifIndex));
     const toCheck = ports.filter((p) => existingIndexes.has(p.ifIndex));
     const removed = [...existingIndexes].filter((idx) => !discoveredIndexes.has(idx));
 
@@ -2403,8 +3119,12 @@ export class CftvController {
     const { disks: discoveredDisks, channels: discoveredChannels, sysDescr } = discoverResult;
 
     // diskScale resolvido aqui para que a resposta imediata use os mesmos valores GB
-    // que foram persistidos — Dahua/Intelbras enviam MB (scale 0.001 → GB).
+    // que foram persistidos — Hikvision (hikDiskTable oficial) envia MB (scale 0.001 → GB).
     const diskScaleForResponse: number = tableOids.disk.diskScale ?? 1;
+
+    // Dahua/Intelbras oficial: physicalVolumeUsage é USO EM % (0–100), não GB.
+    // O ponto disk_used é criado com unit '%' e o valor NÃO recebe diskScale.
+    const usedIsPercent: boolean = tableOids.disk.usedIsPercent === true;
 
     // Carrega pontos de disco/canal existentes.
     const existingDiskPoints = await this.prisma.devicePoint.findMany({
@@ -2446,9 +3166,11 @@ export class CftvController {
 
       // Aplica scale nos valores brutos ANTES de persistir.
       // O gateway receberá o `scale` no binding e também o aplicará na telemetria.
+      // usedIsPercent (Dahua/Intelbras oficial): usedValue já é % — sem scale.
       const scaledCapacity: number | null = capacityValue !== null ? capacityValue * diskScale : null;
       const scaledFree: number | null     = freeValue    !== null ? freeValue    * diskScale : null;
-      const scaledUsed: number | null     = usedValue    !== null ? usedValue    * diskScale : null;
+      const scaledUsed: number | null     =
+        usedValue !== null ? (usedIsPercent ? usedValue : usedValue * diskScale) : null;
 
       // Normaliza espaço usado: Hikvision usa freeValue, outros usedValue.
       // disk_used = capacity - free (Hikvision); disk_used = used (outros).
@@ -2502,10 +3224,13 @@ export class CftvController {
                 },
                 {
                   tag: `DISCO_${slotIndex}_USADO`,
-                  objectName: `Disco ${slotIndex} — Espaço usado`,
+                  objectName: usedIsPercent
+                    ? `Disco ${slotIndex} — Uso (%)`
+                    : `Disco ${slotIndex} — Espaço usado`,
                   objectType: 'nvr-disk-used',
                   instance: slotIndex,
-                  unit: 'GB',
+                  // Dahua/Intelbras oficial reporta USO em % (physicalVolumeUsage).
+                  unit: usedIsPercent ? '%' : 'GB',
                   binding: {
                     metric: 'disk_used',
                     collectionType: 'table',
@@ -2513,7 +3238,8 @@ export class CftvController {
                     // disk_used não tem OID próprio na Hikvision (derivado no driver):
                     // tableOidPrefix só presente para Dahua/Intelbras.
                     tableOidPrefix: tableOids.disk.usedGb ?? null,
-                    ...(diskScale !== 1 ? { scale: diskScale } : {}),
+                    // Percentual não recebe scale (valor 0–100 já é final).
+                    ...(!usedIsPercent && diskScale !== 1 ? { scale: diskScale } : {}),
                   },
                   ...(normalizedUsed !== null ? { lastValue: normalizedUsed, lastValueAt: now } : {}),
                 },
@@ -2642,15 +3368,19 @@ export class CftvController {
             ? d.capacityValue - d.freeValue
             : d.usedValue;
         // Aplica diskScale para alinhar unidade da resposta com os pontos persistidos:
-        // Dahua/Intelbras reportam MB (diskScale=0.001), Hikvision reporta GB (=1).
+        // Hikvision (hikDiskTable) reporta MB (diskScale=0.001), Dahua reporta GB (=1).
+        // usedIsPercent (Dahua/Intelbras): rawUsed já é % — sem scale.
         const capacityGb = d.capacityValue !== null ? d.capacityValue * diskScaleForResponse : null;
-        const usedGb     = rawUsed          !== null ? rawUsed          * diskScaleForResponse : null;
+        const usedGb =
+          rawUsed !== null ? (usedIsPercent ? rawUsed : rawUsed * diskScaleForResponse) : null;
         return {
           slotIndex: d.slotIndex,
           status: d.status,
           statusLabel: d.status !== null ? (diskStatusLabels[d.status] ?? String(d.status)) : null,
           capacityGb,
           usedGb,
+          // Unidade do campo `usedGb` (% para Dahua/Intelbras oficial, GB demais).
+          usedUnit: usedIsPercent ? ('%' as const) : ('GB' as const),
         };
       }),
       channels: discoveredChannels.map((c) => ({
@@ -2780,11 +3510,12 @@ export class CftvController {
       // Pontos escalares (STATUS, UPTIME, CPU, MEMORIA, TEMPERATURA).
       points: scalarPoints.map((p) => {
         const b = (p.binding ?? {}) as { metric?: string; oid?: string | null; unsupported?: boolean };
+        const metric = b.metric ?? 'custom';
         return {
           id: p.id,
           tag: p.tag,
           objectName: p.objectName,
-          metric: b.metric ?? 'custom',
+          metric,
           oid: b.oid ?? null,
           unsupported: Boolean(b.unsupported),
           unit: p.unit ?? '',
@@ -2792,8 +3523,16 @@ export class CftvController {
           lastValue: p.lastValue ?? null,
           lastValueAt: p.lastValueAt ? p.lastValueAt.toISOString() : null,
           lastValueState: p.lastValueState ?? null,
+          display: buildSnmpCardDisplay({
+            tag: p.tag,
+            objectName: p.objectName,
+            metric,
+            oid: b.oid ?? null,
+            unit: p.unit ?? null,
+          }),
         };
       }),
+      snmpInfo: ((nvr.config ?? {}) as { snmpInfo?: unknown }).snmpInfo as SnmpInfoEntry[] | undefined,
       // Discos sincronizados (agrupados por slotIndex).
       disks: [...diskBySlot.values()]
         .sort((a, b) => a.slotIndex - b.slotIndex)
@@ -2811,11 +3550,14 @@ export class CftvController {
             id: entry.capPoint.id,
             tag: entry.capPoint.tag,
             lastValue: entry.capPoint.lastValue ?? null,
+            unit: entry.capPoint.unit ?? 'GB',
           } : null,
           usedPoint: entry.usedPoint ? {
             id: entry.usedPoint.id,
             tag: entry.usedPoint.tag,
             lastValue: entry.usedPoint.lastValue ?? null,
+            // '%' para Dahua/Intelbras (physicalVolumeUsage), 'GB' demais.
+            unit: entry.usedPoint.unit ?? 'GB',
           } : null,
         })),
       // Canais de gravação sincronizados.
@@ -2907,11 +3649,12 @@ export class CftvController {
       // Pontos escalares (STATUS, UPTIME, CPU).
       points: scalarPoints.map((p) => {
         const b = (p.binding ?? {}) as { metric?: string; oid?: string | null; unsupported?: boolean };
+        const metric = b.metric ?? 'custom';
         return {
           id: p.id,
           tag: p.tag,
           objectName: p.objectName,
-          metric: b.metric ?? 'custom',
+          metric,
           oid: b.oid ?? null,
           unsupported: Boolean(b.unsupported),
           unit: p.unit ?? '',
@@ -2919,8 +3662,16 @@ export class CftvController {
           lastValue: p.lastValue ?? null,
           lastValueAt: p.lastValueAt ? p.lastValueAt.toISOString() : null,
           lastValueState: p.lastValueState ?? null,
+          display: buildSnmpCardDisplay({
+            tag: p.tag,
+            objectName: p.objectName,
+            metric,
+            oid: b.oid ?? null,
+            unit: p.unit ?? null,
+          }),
         };
       }),
+      snmpInfo: ((sw.config ?? {}) as { snmpInfo?: unknown }).snmpInfo as SnmpInfoEntry[] | undefined,
       // Portas sincronizadas.
       ports: [...portsByIndex.values()]
         .sort((a, b) => a.ifIndex - b.ifIndex)
@@ -3090,6 +3841,7 @@ export class CftvController {
       profileId?: string | null;
       profileSource?: 'detected' | 'manual' | 'generic';
       profileOverrides?: Record<string, string> | null;
+      snmpInfo?: SnmpInfoEntry[];
       snmpHealth?: {
         enabled?: boolean;
         port?: number;
@@ -3137,11 +3889,17 @@ export class CftvController {
       hasOnvifPassword: Boolean(cfg.onvifPasswordEnc),
       // SNMP: porta do serviço ONVIF/vídeo (a porta principal é a do SNMP).
       onvifPort: isOnvif ? null : (cfg.onvifPort ?? DEFAULT_ONVIF_PORT),
-      // "Ver ao vivo" disponível: ONVIF sempre; SNMP quando houver credenciais
-      // de vídeo ONVIF ou URL RTSP no cadastro.
-      liveViewAvailable:
-        isOnvif ||
-        Boolean((cfg.onvifUsername && cfg.onvifPasswordEnc) || cfg.rtspUrl),
+    // "Ver ao vivo" depende da fonte de vídeo configurada, não do protocolo
+    // de monitoramento. Uma câmera SNMP pode ter um canal ONVIF/RTSP opcional;
+    // uma câmera ONVIF salva sem credenciais/fonte também não pode iniciar uma
+    // sessão. A senha nunca é devolvida — a presença do valor cifrado apenas
+    // informa que há uma credencial configurada.
+    liveViewAvailable:
+        Boolean(
+          (typeof cfg.onvifUsername === 'string' && cfg.onvifUsername.trim() &&
+            typeof cfg.onvifPasswordEnc === 'string' && cfg.onvifPasswordEnc) ||
+            (typeof cfg.rtspUrl === 'string' && cfg.rtspUrl.trim()),
+        ),
       deviceInfo: isOnvif ? (cfg.deviceInfo ?? null) : null,
       // ONVIF: cadastro salvo sem probe bem-sucedido (re-validado em background).
       pendingValidation: isOnvif ? cfg.pendingValidation === true : false,
@@ -3166,18 +3924,24 @@ export class CftvController {
       gatewayOnline,
       ip: camera.ip,
       port: camera.port,
-      snmpVersion: cfg.snmpVersion ?? '2c',
-      community: cfg.community ?? 'public',
+      snmpVersion: camera.snmpCredential?.version ?? cfg.snmpVersion ?? '2c',
+      community: camera.snmpCredential?.community ?? cfg.community ?? 'public',
+      // Vista pública da credencial: NUNCA expõe chaves (só flags has*Key).
+      snmpCredential: snmpCredentialPublicView(camera.snmpCredential ?? null),
       rtspUrl: cfg.rtspUrl ?? null,
       pollingInterval: cfg.pollingIntervalMs ? cfg.pollingIntervalMs / 1000 : DEFAULT_POLLING_S,
       status: this.deviceStatus.getStatus(camera.id),
       critical: camera.critical,
       lastCommunication,
+      // Informações estáticas do equipamento capturadas no diagnóstico SNMP.
+      snmpInfo: Array.isArray(cfg.snmpInfo) ? cfg.snmpInfo : [],
       points: camera.points.map((p) => {
         const b = (p.binding ?? {}) as {
           metric?: string;
           oid?: string | null;
           unsupported?: boolean;
+          healthState?: 'active' | 'broken' | 'suggested' | 'pending';
+          healthReason?: 'missing' | 'type_changed' | 'awaiting_read' | null;
         };
         return {
           id: p.id,
@@ -3187,6 +3951,11 @@ export class CftvController {
           oid: b.oid ?? null,
           // OID comprovadamente inexistente na câmera (último diagnóstico).
           unsupported: Boolean(b.unsupported),
+          healthState:
+            b.healthState === 'pending' && p.lastValueAt && p.lastValueState === null
+              ? 'active'
+              : b.healthState,
+          healthReason: b.healthReason ?? null,
           unit: p.unit ?? '',
           // Ponto crítico (card Ativos Críticos) — independente da câmera crítica.
           critical: p.critical,
@@ -3195,6 +3964,17 @@ export class CftvController {
           lastValueAt: p.lastValueAt ? p.lastValueAt.toISOString() : null,
           // Estado da última leitura (waiting_event/unsupported/error/estimated).
           lastValueState: p.lastValueState ?? null,
+          // Metadados de exibição do card dinâmico (derivados só de dados).
+          display: buildSnmpCardDisplay({
+            tag: p.tag,
+            objectName: p.objectName,
+            metric: b.metric ?? 'custom',
+            oid: b.oid ?? null,
+            unit: p.unit ?? null,
+          }),
+          // Indica se o ponto pode ser removido individualmente pelo operador.
+          // STATUS e eventos ONVIF são essenciais e não podem ser removidos.
+          removable: p.tag !== 'STATUS' && b.metric !== 'status' && p.objectType !== 'onvif',
         };
       }),
     };

@@ -21,6 +21,12 @@ export const HIKVISION_PROFILE: DeviceProfile = {
     sysDescrContains: ['hikvision'],
     enterpriseNumbers: [39165],
   },
+  discovery: {
+    // 39165 = árvore confirmada em campo (escalares de saúde);
+    // 50001 = HIKVISION-MIB oficial (hikEntity: tipo de produto, hikOnline,
+    // memória %, status do dispositivo, hikDiskTable).
+    walkRoots: ['1.3.6.1.4.1.39165.1', '1.3.6.1.4.1.50001.1'],
+  },
   mappings: [
     // ── CPU ──────────────────────────────────────────────────────────────────
     // hikDeviceCPUUsageRate — responde percentual direto (0..100).

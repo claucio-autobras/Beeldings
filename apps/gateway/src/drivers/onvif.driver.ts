@@ -19,6 +19,7 @@
 import {
   connectOnvif,
   getDeviceInformation,
+  ONVIF_TIMEOUT_MS,
   type OnvifCam,
 } from '../onvif/onvif-connection';
 import { readSnmpOids } from '../snmp/snmp-read.util';
@@ -266,14 +267,39 @@ export class OnvifDriver implements CollectionDriver {
     return metric === 'motion' || metric === 'tamper' || metric === 'video_loss';
   }
 
-  private checkStream(cam: OnvifCam): Promise<number> {
-    return new Promise((resolve) => {
+  /**
+   * Checa se a câmera expõe stream RTSP.
+   *
+   * Timeout explícito: se o callback da lib nunca disparar (câmera pendurada),
+   * REJEITA — o catch do runCycle trata como falha do ciclo (detachCam +
+   * reconexão no próximo), em vez de deixar a Promise presa para sempre.
+   */
+  private checkStream(
+    cam: OnvifCam,
+    timeoutMs: number = ONVIF_TIMEOUT_MS,
+  ): Promise<number> {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          reject(new Error('GetStreamUri não respondeu no tempo esperado'));
+        }
+      }, timeoutMs);
+      timer.unref?.();
       try {
         cam.getStreamUri({ protocol: 'RTSP' }, (err, stream) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
           resolve(!err && stream?.uri ? 1 : 0);
         });
       } catch {
-        resolve(0);
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          resolve(0);
+        }
       }
     });
   }

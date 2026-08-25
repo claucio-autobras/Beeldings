@@ -238,7 +238,7 @@ export function NvrPanel({ nvr, live, isAdmin, onClose, onRefresh }: Props) {
                       <th className="py-1 pr-3 text-left font-medium text-muted-foreground">Slot</th>
                       <th className="py-1 pr-3 text-left font-medium text-muted-foreground">Status</th>
                       <th className="py-1 pr-3 text-right font-medium text-muted-foreground">Cap. (GB)</th>
-                      <th className="py-1 text-right font-medium text-muted-foreground">Usado (GB)</th>
+                      <th className="py-1 text-right font-medium text-muted-foreground">Usado</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -260,7 +260,7 @@ export function NvrPanel({ nvr, live, isAdmin, onClose, onRefresh }: Props) {
                           </td>
                           <td className="py-1.5 text-right font-mono">
                             {disk.usedPoint?.lastValue !== null && disk.usedPoint?.lastValue !== undefined
-                              ? disk.usedPoint.lastValue.toFixed(0)
+                              ? `${disk.usedPoint.lastValue.toFixed(0)} ${disk.usedPoint.unit ?? 'GB'}`
                               : '—'}
                           </td>
                         </tr>

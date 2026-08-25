@@ -29,6 +29,9 @@ import { StoreAndForwardService } from './store-and-forward.service';
 /** Intervalo do heartbeat de liveness do gateway (prova de vida periódica). */
 const HEARTBEAT_INTERVAL_MS = 15_000;
 
+/** Tamanho do lote confirmado no reenvio da fila store-and-forward. */
+const DRAIN_BATCH_SIZE = 100;
+
 /** Snapshot da saúde da conexão MQTT do gateway (read-only, sem segredos). */
 export interface GatewayMqttStatus {
   /** Conectado ao broker neste instante. */
@@ -53,6 +56,8 @@ export class GatewayMqttService implements OnModuleInit, OnModuleDestroy {
   private client: mqtt.MqttClient;
   private statusTopic!: string;
   private heartbeatTimer: NodeJS.Timeout | null = null;
+  /** Guarda de reentrância do drain (reconexões em sequência não sobrepõem reenvios). */
+  private draining = false;
 
   // ── Métricas de conexão (observabilidade) ──────────────────────────────────
   private connectCount = 0;
@@ -127,8 +132,9 @@ export class GatewayMqttService implements OnModuleInit, OnModuleDestroy {
         }
       });
 
-      // Store-and-forward: drena mensagens pendentes acumuladas enquanto offline
-      this.drainPendingMessages();
+      // Store-and-forward: drena mensagens pendentes acumuladas enquanto offline.
+      // Nunca rejeita (erros são tratados internamente).
+      void this.drainPendingMessages();
     });
 
     this.client.on('message', (topic: string, payload: Buffer) => {
@@ -316,18 +322,68 @@ export class GatewayMqttService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Drena a fila do store-and-forward e republica cada mensagem pendente.
-   * Chamado ao (re)conectar ao broker.
+   * Drena a fila do store-and-forward de forma crash-safe: cada mensagem só é
+   * REMOVIDA da fila persistida após a confirmação de publicação (callback sem
+   * erro). Se o gateway cair no meio do reenvio, as mensagens ainda não
+   * publicadas continuam no disco e são reenviadas no próximo boot/reconexão.
+   *
+   * O reenvio é feito em pequenos lotes confirmados para não segurar a fila
+   * inteira em voo (10.000 mensagens) nem serializar um ack por vez.
    */
-  private drainPendingMessages(): void {
-    const pending = this.storeAndForward.drain();
-    if (pending.length === 0) return;
+  private async drainPendingMessages(): Promise<void> {
+    if (this.draining) return;
+    this.draining = true;
+    try {
+      const pending = this.storeAndForward.peekAll();
+      if (pending.length === 0) return;
 
-    this.logger.log(`Republicando ${pending.length} mensagem(ns) pendente(s)`);
-    for (const msg of pending) {
-      // Em caso de erro durante o drain, reenfileira para não perder a mensagem.
-      this.publishRaw(msg.topic, msg.payload, msg.qos, true);
+      this.logger.log(`Republicando ${pending.length} mensagem(ns) pendente(s)`);
+
+      for (let i = 0; i < pending.length; i += DRAIN_BATCH_SIZE) {
+        if (!this.client?.connected) {
+          this.logger.warn(
+            'Conexão caiu durante o reenvio — mensagens restantes permanecem na fila',
+          );
+          return;
+        }
+        const batch = pending.slice(i, i + DRAIN_BATCH_SIZE);
+        const results = await Promise.all(
+          batch.map((msg) => this.publishConfirmed(msg.topic, msg.payload, msg.qos)),
+        );
+        batch.forEach((msg, j) => {
+          if (results[j]) {
+            // Confirmado pelo broker — só agora sai da fila persistida.
+            this.storeAndForward.remove(msg);
+          }
+        });
+        if (results.some((ok) => !ok)) {
+          // Falha de publicação: a mensagem permanece na fila (nada a reenfileirar);
+          // interrompe o drain — a próxima reconexão tenta de novo.
+          this.logger.warn(
+            'Falha ao republicar mensagem pendente — reenvio interrompido; ' +
+              'mensagens não confirmadas permanecem na fila',
+          );
+          return;
+        }
+      }
+    } catch (err) {
+      this.logger.error(
+        `Erro inesperado no reenvio da fila: ${(err as Error)?.message ?? String(err)}`,
+      );
+    } finally {
+      this.draining = false;
     }
+  }
+
+  /** Publica e resolve true somente quando o broker confirma (callback sem erro). */
+  private publishConfirmed(topic: string, message: string, qos: 0 | 1): Promise<boolean> {
+    return new Promise((resolve) => {
+      try {
+        this.client.publish(topic, message, { qos }, (err) => resolve(!err));
+      } catch {
+        resolve(false);
+      }
+    });
   }
 
   /**

@@ -233,3 +233,31 @@ id = "NivzNjpe1ZVUWA9c-CnG_"
 uri = "file://exports/bluebee-comercial-vertical.mp4"
 type = "video"
 title = "Vídeo comercial 9:16 (Reels/Stories)"
+
+[[outputs]]
+id = "Dca2pw1H1yFa2dQMWR7_e"
+uri = "file://.local/exports/Plano-Integracao-WhatsApp-Email-TI.pdf"
+type = "pdf"
+title = "Plano de Integração — WhatsApp e E-mail (T.I.)"
+description = "Passo a passo completo para o T.I.: Meta Cloud API + Resend, conectores do Replit, custos, prazos e checklist de entregáveis."
+
+[[outputs]]
+id = "Kbhdbm-jdjyPvCRsrLFjd"
+uri = "file://exports/Relatorio-Seguranca-Beeldings.pdf"
+type = "pdf"
+title = "Relatório de Segurança — Beeldings"
+description = "Relatório detalhado em PDF (4 páginas), pronto para enviar ao cliente: resumo executivo, metodologia, vulnerabilidades corrigidas, controles implementados e conclusão."
+
+[[outputs]]
+id = "CEFfuwG_0rXgvX-E7kURA"
+uri = "file://exports/Relatorio-Seguranca-Beeldings-v2.pdf"
+type = "pdf"
+title = "Relatório de Segurança — Beeldings v2 (com varredura externa ZAP)"
+description = "Versão 2 do relatório (5 páginas): varreduras internas + varredura externa OWASP ZAP contra a produção, com todas as correções aplicadas — pronto para enviar ao cliente."
+
+[[outputs]]
+id = "AIkbfKEtJbzwLdL5B9k3O"
+uri = "file://backups/beeldings-source-2026-08-20.tar.gz"
+type = "unspecified"
+title = "Backup da main — 20/08/2026"
+description = "Snapshot da main local no commit 46877c71fd8d63cb26ec09a63f7c9eb9fa2dfcae. Arquivo também está visível em backups/beeldings-source-2026-08-20.tar.gz. Não inclui .git, node_modules, .next nem arquivos .env. SHA-256: c71293751210a0fad2554ea8d29b8e447d6ac7a995ac8296fdcdbf0935b33af3"

@@ -36,7 +36,7 @@ export const BASE_NVR_PROFILE: DeviceProfile = {
     // ── HOST-RESOURCES-MIB hrProcessorLoad (primeira CPU) ───────────────────
     // Fallback genérico: usado quando nenhum perfil vendor cobre cpu.
     // Perfis vendor (Hikvision: .1.7.0 / Dahua: 2.1.3.1.1.1) sobrescrevem.
-    { metricKey: 'cpu', oid: '1.3.6.1.2.1.25.3.3.1.2.1', scale: 1 },
+    { metricKey: 'cpu', tableOidPrefix: '1.3.6.1.2.1.25.3.3.1.2', scale: 1 },
 
     // ── UCD-SNMP memAvailReal (kB disponível) ────────────────────────────────
     // Métrica canônica de RAM para NVR: todos os perfis vendor expõem 'memory'

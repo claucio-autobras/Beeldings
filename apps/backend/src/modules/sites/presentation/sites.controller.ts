@@ -71,7 +71,8 @@ export class SitesController {
       throw new BadRequestException('Sem permissão para editar sites');
     }
     const tenantId = resolveTenantScope(user);
-    return this.sitesService.update(id, tenantId, body);
+    const actor = { id: user.id, name: user.name ?? null, email: user.email, role: user.role };
+    return this.sitesService.update(id, tenantId, body, actor);
   }
 
   @Delete('/:id')

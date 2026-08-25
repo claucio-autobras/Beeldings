@@ -1,6 +1,9 @@
 'use client';
 
 import { CriticalStarButton } from '@/components/CriticalStarButton';
+import { DeviceCardActionBar } from '@/components/DeviceCardActionBar';
+import { HealthMetricsGrid } from '@/components/HealthMetricsGrid';
+import { buildHealthTiles } from '@/components/health-metrics';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -13,6 +16,7 @@ import {
   CircleAlert,
   CircleCheck,
   CircleOff,
+  Clock,
   HardDrive,
   Info,
   LineChart,
@@ -44,6 +48,13 @@ import PasswordConfirmDialog from '@/components/PasswordConfirmDialog';
 import { useT } from '@/lib/i18n';
 import { CameraLiveViewModal } from '../components/CameraLiveViewModal';
 import { SnmpDiagnoseModal } from '../components/SnmpDiagnoseModal';
+import { SnmpHealthMetrics } from '../components/SnmpHealthMetrics';
+import {
+  displayForHealth,
+  formatHealthValue,
+  normalizeHealthReading,
+  selectOperationalPoints,
+} from '../utils/snmp-health';
 import { useBacnetTelemetry, deviceTagKey, type TelemetryMap } from '@/hooks/useBacnetTelemetry';
 import { useCurrentUser } from '@/hooks/useCurrentUser';
 import { useTenantFilter } from '@/hooks/useTenantFilter';
@@ -55,6 +66,7 @@ import {
   type Camera,
   type CameraCapabilities,
   type CameraInput,
+  type CameraPoint,
   type DiagMetric,
   type DiscoveredOnvifDevice,
   type MonitoringProfile,
@@ -65,11 +77,14 @@ import {
   applySnmpOids,
   createCamera,
   deleteCamera,
+  removeCameraSnmpPoint,
   diagnoseCameraSnmp,
   getCameraCapabilities,
   getDiagnoseProgress,
   getMonitoringProfiles,
+  getOidProfiles,
   getScanProgress,
+  testCameraOid,
   probeCameraCapabilities,
   scanOnvifNetwork,
   scanSnmpRange,
@@ -108,13 +123,6 @@ import {
 /** Métricas de saúde exibidas no card (ordem fixa). */
 const HEALTH_METRICS: HealthMetric[] = ['cpu', 'memory', 'temperature', 'packet_loss'];
 
-/** Métricas extras do card — só aparecem quando a câmera tem o ponto. */
-const EXTRA_HEALTH_METRICS: Array<HealthMetric | 'ping_loss'> = [
-  'ram_total',
-  'storage',
-  'ping_loss',
-];
-
 const HEALTH_LABELS: Record<HealthMetric | 'ping_loss', string> = {
   cpu: 'CPU',
   memory: 'Memória',
@@ -152,25 +160,21 @@ const alarmSeverityColor: Record<string, string> = {
   LOW: 'text-blue-500',
 };
 
-/** Formata o valor de uma métrica de saúde para o card. */
-function formatHealthValue(
-  metric: HealthMetric | 'ping_loss',
-  value: number,
-  unit: string,
-): string {
-  const v = metric === 'temperature' ? value.toFixed(1) : String(Math.round(value));
-  return unit ? `${v} ${unit}` : v;
-}
-
-
 /** Unidade padrão por métrica do diagnóstico (quando o backend não informa). */
-const DIAG_UNIT_DEFAULT: Record<DiagMetric, string> = {
+const DIAG_UNIT_DEFAULT: Partial<Record<DiagMetric, string>> = {
   cpu: '%',
+  cpu_usage: '%',
   memory: '%',
+  memory_used_percent: '%',
   ram_total: 'MB',
+  memory_total: 'MB',
   storage: '%',
+  storage_used_percent: '%',
   temperature: '°C',
+  cpu_temperature: '°C',
   packet_loss: '%',
+  net_error_rate: '%',
+  net_discard_rate: '%',
   uptime: '',
 };
 
@@ -316,6 +320,14 @@ export default function CftvPage({ embedded = false }: { embedded?: boolean } = 
     mutationFn: ({ id, token }: { id: string; token: string }) => deleteCamera(id, token),
     onSuccess: () => {
       setCameraToDelete(null);
+      void refetch();
+    },
+  });
+
+  const removeCameraPointMutation = useMutation({
+    mutationFn: ({ cameraId, pointId }: { cameraId: string; pointId: string }) =>
+      removeCameraSnmpPoint(cameraId, pointId),
+    onSuccess: () => {
       void refetch();
     },
   });
@@ -474,281 +486,197 @@ export default function CftvPage({ embedded = false }: { embedded?: boolean } = 
                 : health === 'unknown' && statusEntry
                   ? `Dados desatualizados${statusReadAt ? ` (lido às ${statusReadAt})` : ''}`
                   : undefined;
+            const hasSnmpHealth =
+              camera.monitoringProtocol === 'snmp' || camera.snmpHealth?.enabled === true;
+            const healthTiles = hasSnmpHealth
+              ? buildHealthTiles(
+                  health === 'offline'
+                    ? camera.points.map((point) => ({ ...point, unsupported: false }))
+                    : camera.points,
+                  (tag) => {
+                    if (health === 'offline') return null;
+                    const entry = liveOrSeed(camera, tag, byDevice);
+                    return entry ? { value: entry.value, unreliable: entry.unreliable } : null;
+                  },
+                )
+              : [];
+            const cameraAlarmRule = camera.points
+              .map((point) => alarmRuleByPoint.get(point.id))
+              .find(Boolean);
             return (
               <div
                 key={camera.id}
-                className="rounded-lg border border-border bg-card p-4 space-y-3"
+                className="rounded-xl border border-border bg-card p-3 space-y-2"
               >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div
-                      className={[
-                        'flex h-9 w-9 shrink-0 items-center justify-center rounded-md',
-                        health === 'online'
-                          ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400'
-                          : health === 'offline'
-                            ? 'bg-red-100 text-red-600 dark:bg-red-500/15 dark:text-red-400'
-                            : 'bg-muted text-muted-foreground',
-                      ].join(' ')}
-                    >
-                      <Video className="h-4.5 w-4.5" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <p className="truncate text-sm font-medium text-foreground">{camera.name}</p>
-                        <span className="shrink-0 rounded border border-border px-1 py-px text-[10px] font-medium uppercase text-muted-foreground">
-                          {camera.monitoringProtocol === 'onvif' ? 'ONVIF' : 'SNMP'}
-                        </span>
-                        {camera.pendingValidation && (
-                          <span
-                            title="A câmera foi salva sem conexão ONVIF confirmada. O sistema re-tenta a validação automaticamente em segundo plano."
-                            className="shrink-0 rounded border border-amber-300 bg-amber-50 px-1 py-px text-[10px] font-medium text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-400"
-                          >
-                            Validação pendente
-                          </span>
-                        )}
-                      </div>
-                      <p className="truncate text-xs text-muted-foreground">
-                        {[
-                          // IP:porta é informação de rede — só perfis administrativos veem.
-                          isAdmin ? `${camera.ip}:${camera.port}` : null,
-                          camera.site || null,
-                          camera.monitoringProtocol === 'onvif' && camera.deviceInfo?.model
-                            ? [camera.deviceInfo.manufacturer, camera.deviceInfo.model].filter(Boolean).join(' ')
-                            : null,
-                        ]
-                          .filter(Boolean)
-                          .join(' — ')}
-                      </p>
-                    </div>
+                {/* Header — thumbnail + nome/badge/sinal + uptime chip */}
+                <div className="flex items-start gap-3">
+                  {/* Thumbnail genérico da câmera */}
+                  <div
+                    className={[
+                      'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border',
+                      health === 'online'
+                        ? 'bg-emerald-100/60 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400'
+                        : health === 'offline'
+                          ? 'bg-red-100/60 text-red-600 dark:bg-red-500/15 dark:text-red-400'
+                          : 'bg-muted/40 text-muted-foreground',
+                    ].join(' ')}
+                  >
+                    <Video className="h-5 w-5" />
                   </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    {/* Ver ao vivo — câmera com vídeo disponível (ONVIF sempre;
-                        SNMP quando tem credenciais de vídeo/RTSP) e online. */}
-                    {camera.liveViewAvailable && (
-                      <button
-                        onClick={() => setCameraForLive(camera)}
-                        disabled={health !== 'online'}
+
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+                      <p className="truncate text-sm font-semibold text-foreground">{camera.name}</p>
+                      <span className="shrink-0 rounded border border-border px-1 py-px text-[10px] font-medium uppercase text-muted-foreground">
+                        {camera.monitoringProtocol === 'onvif' ? 'ONVIF' : 'SNMP'}
+                      </span>
+                      {camera.pendingValidation && (
+                        <span
+                          title="A câmera foi salva sem conexão ONVIF confirmada. O sistema re-tenta a validação automaticamente em segundo plano."
+                          className="shrink-0 rounded border border-amber-300 bg-amber-50 px-1 py-px text-[10px] font-medium text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-400"
+                        >
+                          Validação pendente
+                        </span>
+                      )}
+                      {/* Badge de status */}
+                      <span
+                        title={statusBadgeTooltip}
+                        className={[
+                          'inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold',
+                          statusBadgeTooltip ? 'cursor-help' : '',
+                          health === 'online'
+                            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400'
+                            : health === 'offline'
+                              ? 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-400'
+                              : 'bg-muted text-muted-foreground',
+                        ].join(' ')}
+                      >
+                        <span
+                          className={[
+                            'h-1.5 w-1.5 rounded-full',
+                            health === 'online'
+                              ? 'bg-emerald-500'
+                              : health === 'offline'
+                                ? 'bg-red-500'
+                                : 'bg-slate-400',
+                          ].join(' ')}
+                        />
+                        {health === 'online'
+                          ? 'Online'
+                          : health === 'offline'
+                            ? healthInfo.reason === 'gateway_offline'
+                              ? 'Sem comunicação'
+                              : 'Offline'
+                            : 'Sem dados'}
+                      </span>
+                      {/* Indicador de sinal */}
+                      <span
+                        className="flex shrink-0 items-end gap-[2px]"
                         title={
                           health === 'online'
+                            ? 'Comunicação saudável'
+                            : health === 'unknown'
+                              ? 'Sem dados de comunicação'
+                              : 'Sem comunicação'
+                        }
+                      >
+                        {[3, 5, 7, 9].map((bh, i) => (
+                          <span
+                            key={bh}
+                            style={{ height: bh }}
+                            className={[
+                              'w-[3px] rounded-sm',
+                              health === 'online'
+                                ? 'bg-emerald-500'
+                                : health === 'unknown'
+                                  ? 'bg-slate-300 dark:bg-slate-600'
+                                  : i === 0
+                                    ? 'bg-red-500'
+                                    : 'bg-red-200 dark:bg-red-500/20',
+                            ].join(' ')}
+                          />
+                        ))}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                      {[
+                        isAdmin ? `${camera.ip}:${camera.port}` : null,
+                        camera.site || null,
+                        camera.monitoringProtocol === 'onvif' && camera.deviceInfo?.model
+                          ? [camera.deviceInfo.manufacturer, camera.deviceInfo.model].filter(Boolean).join(' ')
+                          : null,
+                        statusReadAt ? `lido às ${statusReadAt}` : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' — ')}
+                    </p>
+                  </div>
+
+                  {/* Ações e chip de tempo ficam numa coluna própria para
+                      manter Ao vivo no canto superior direito sem disputar
+                      espaço com nome, status e sinal. */}
+                  <div className="flex shrink-0 flex-col items-end gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setCameraForLive(camera)}
+                      disabled={!camera.liveViewAvailable || health !== 'online'}
+                      title={
+                        !camera.liveViewAvailable
+                          ? t('Configure as credenciais de vídeo (ONVIF/RTSP) no cadastro para habilitar')
+                          : health === 'online'
                             ? t('Ver ao vivo')
                             : t('Disponível quando a câmera estiver online')
-                        }
-                        className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
-                      >
-                        <MonitorPlay className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                    {/* Detalhe de telemetria — visível para todos os perfis. */}
-                    <button
-                      onClick={() => setCameraForTelemetry(camera)}
-                      title="Ver telemetria"
-                      className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                      }
+                      className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
                     >
-                      <Activity className="h-3.5 w-3.5" />
+                      <MonitorPlay className="h-3.5 w-3.5 text-primary" />
+                      <span className="hidden sm:inline">{t('Ao vivo')}</span>
                     </button>
-                  {isAdmin && (
-                    <div className="flex items-center gap-1 shrink-0">
-                      {(camera.monitoringProtocol === 'snmp' || camera.snmpHealth?.enabled) && (
-                        <button
-                          onClick={() => setCameraToDiagnose(camera)}
-                          title="Diagnosticar SNMP"
-                          className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                        >
-                          <Stethoscope className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                      {(() => {
-                        const cameraAlarmRule = camera.points
-                          .map((p) => alarmRuleByPoint.get(p.id))
-                          .find(Boolean);
-                        return (
-                          <button
-                            onClick={() => setCameraForAlarm(camera)}
-                            title={cameraAlarmRule ? 'Alarmes e trends (há alarme configurado)' : 'Alarmes e trends'}
-                            className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                          >
-                            <Bell
-                              className={`h-3.5 w-3.5 ${
-                                cameraAlarmRule
-                                  ? `fill-current ${alarmSeverityColor[cameraAlarmRule.severity] ?? 'text-amber-500'}`
-                                  : ''
-                              }`}
-                            />
-                          </button>
-                        );
-                      })()}
+                    {isAdmin && (
                       <CriticalStarButton
                         critical={cameraCritical(camera)}
                         size={14}
                         onToggle={() => handleToggleCameraCritical(camera)}
                       />
-                      <button
-                        onClick={() => setCameraToEdit(camera)}
-                        title="Editar"
-                        className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                    )}
+
+                    {/* Chip de tempo ativo */}
+                    {(uptime !== null || estimatedUptimeOf(camera) !== null) && (
+                      <div
+                        className="shrink-0 rounded-lg border border-border bg-muted/40 px-2.5 py-1.5 text-center"
+                        title={
+                          uptime === null && estimatedUptimeOf(camera) !== null
+                            ? 'A câmera não expõe o uptime real — tempo estimado desde que voltou a responder ao monitoramento.'
+                            : undefined
+                        }
                       >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </button>
-                      {canDelete && (
-                        <button
-                          onClick={() => setCameraToDelete(camera)}
-                          title="Excluir"
-                          className="rounded-md p-1.5 text-muted-foreground hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                    </div>
-                  )}
+                        <p className="flex items-center justify-center gap-1 text-xs font-semibold text-foreground">
+                          <Clock className="h-3 w-3 text-muted-foreground" />
+                          {formatUptime((uptime ?? estimatedUptimeOf(camera)) as number)}
+                        </p>
+                        <p className="mt-0.5 text-[10px] text-muted-foreground">
+                          {uptime !== null ? 'Tempo ativo' : 'Estimado'}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between text-xs">
-                  <span
-                    title={statusBadgeTooltip}
-                    className={[
-                      'inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 font-medium',
-                      statusBadgeTooltip ? 'cursor-help' : '',
-                      health === 'online'
-                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400'
-                        : health === 'offline'
-                          ? 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-400'
-                          : 'bg-muted text-muted-foreground',
-                    ].join(' ')}
-                  >
-                    <span
-                      className={[
-                        'h-1.5 w-1.5 rounded-full',
-                        health === 'online'
-                          ? 'bg-emerald-500'
-                          : health === 'offline'
-                            ? 'bg-red-500'
-                            : 'bg-slate-400',
-                      ].join(' ')}
+                {/* Métricas / Eventos */}
+                {hasSnmpHealth ? (
+                  <div className="border-t border-border pt-2.5">
+                    <HealthMetricsGrid
+                      tiles={healthTiles}
+                      canRemove={canDelete}
+                      onRemovePoint={(pointId) =>
+                        removeCameraPointMutation.mutate({ cameraId: camera.id, pointId })
+                      }
                     />
-                    {health === 'online'
-                      ? 'Online'
-                      : health === 'offline'
-                        ? healthInfo.reason === 'gateway_offline'
-                          ? 'Sem comunicação'
-                          : 'Offline'
-                        : 'Sem dados'}
-                  </span>
-                  {/* "lido às" — preservado como info contextual; quando o tooltip
-                      do badge já contém a hora (gateway_offline / desatualizado),
-                      omitimos o texto duplicado para não poluir o card. */}
-                  {statusReadAt && !statusBadgeTooltip && (
-                    <span className="text-[11px] text-muted-foreground">
-                      lido às {statusReadAt}
-                    </span>
-                  )}
-                  {statusReadAt && statusBadgeTooltip && (
-                    <span className="text-[11px] text-muted-foreground" title={statusBadgeTooltip}>
-                      lido às {statusReadAt}
-                    </span>
-                  )}
-                  <span className="text-muted-foreground">
-                    {uptime !== null
-                      ? `Ligada há ${formatUptime(uptime)}`
-                      : estimatedUptimeOf(camera) !== null
-                        ? (
-                            <span title="A câmera não expõe o uptime real — tempo estimado desde que voltou a responder ao monitoramento.">
-                              {`Tempo online estimado: ${formatUptime(estimatedUptimeOf(camera) as number)}`}
-                            </span>
-                          )
-                        : camera.monitoringProtocol === 'onvif'
-                          ? 'ONVIF'
-                          : `SNMP v${camera.snmpVersion}`}
-                  </span>
-                </div>
-
-                {camera.monitoringProtocol === 'snmp' || camera.snmpHealth?.enabled ? (
-                  /* Métricas de saúde via SNMP — slots sempre visíveis; canal
-                     com OID sem resposta = "sem dados" (neutro). */
-                  <div className="grid grid-cols-2 gap-x-3 gap-y-1 border-t border-border pt-2 text-xs sm:grid-cols-4">
-                    {HEALTH_METRICS.map((m) => {
-                      const point = camera.points.find((p) => p.metric === m);
-                      const entry = point
-                        ? liveOrSeed(camera, point.tag, byDevice)
-                        : undefined;
-                      const v = entry?.value;
-                      const has = typeof v === 'number' && Number.isFinite(v);
-                      const unreliable = has && entry?.unreliable === true;
-                      return (
-                        <div key={m} className="min-w-0">
-                          <p className="truncate text-[10px] uppercase tracking-wide text-muted-foreground/70">
-                            {HEALTH_LABELS[m]}
-                          </p>
-                          <p
-                            className={
-                              unreliable
-                                ? 'font-medium text-amber-600 dark:text-amber-400'
-                                : has
-                                  ? 'font-medium text-foreground'
-                                  : 'text-muted-foreground'
-                            }
-                            title={
-                              unreliable
-                                ? 'Dado não confiável — o firmware responde um valor fixo neste OID.'
-                                : !has && point?.unsupported
-                                  ? 'OID não suportado pela câmera (último diagnóstico SNMP)'
-                                  : undefined
-                            }
-                          >
-                            {has && point
-                              ? `${formatHealthValue(m, v as number, point.unit)}${unreliable ? ' ⚠' : ''}`
-                              : point?.unsupported
-                                ? 'não suportado'
-                                : 'sem dados'}
-                          </p>
-                        </div>
-                      );
-                    })}
-                    {/* Métricas extras (RAM total / armazenamento) — só quando o ponto existe */}
-                    {EXTRA_HEALTH_METRICS.map((m) => {
-                      const point = camera.points.find((p) => p.metric === m);
-                      if (!point) return null;
-                      const entry = liveOrSeed(camera, point.tag, byDevice);
-                      const v = entry?.value;
-                      const has = typeof v === 'number' && Number.isFinite(v);
-                      const unreliable = has && entry?.unreliable === true;
-                      return (
-                        <div key={m} className="min-w-0">
-                          <p className="truncate text-[10px] uppercase tracking-wide text-muted-foreground/70">
-                            {HEALTH_LABELS[m]}
-                          </p>
-                          <p
-                            className={
-                              unreliable
-                                ? 'font-medium text-amber-600 dark:text-amber-400'
-                                : has
-                                  ? 'font-medium text-foreground'
-                                  : 'text-muted-foreground'
-                            }
-                            title={
-                              unreliable
-                                ? 'Dado não confiável — o firmware responde um valor fixo neste OID.'
-                                : !has && point.unsupported
-                                  ? 'OID não suportado pela câmera (último diagnóstico SNMP)'
-                                  : undefined
-                            }
-                          >
-                            {has
-                              ? `${formatHealthValue(m, v as number, point.unit)}${unreliable ? ' ⚠' : ''}`
-                              : point.unsupported
-                                ? 'não suportado'
-                                : 'sem dados'}
-                          </p>
-                        </div>
-                      );
-                    })}
                   </div>
                 ) : (
-                  /* ONVIF puro (sem canal SNMP de saúde): mostra o estado dos
-                     eventos da câmera no lugar das métricas SNMP vazias. */
-                  <div className="grid grid-cols-3 gap-x-3 gap-y-1 border-t border-border pt-2 text-xs">
-                    {ONVIF_EVENTS.map((ev) => {
+                  /* ONVIF puro (sem canal SNMP de saúde): eventos em tiles. */
+                  <div className="grid grid-cols-3 gap-2 border-t border-border pt-2">
+                    {ONVIF_EVENTS.map((ev, evIdx) => {
                       const point = camera.points.find((p) => p.tag === ev.tag);
                       const entry = point
                         ? liveOrSeed(camera, point.tag, byDevice)
@@ -757,19 +685,33 @@ export default function CftvPage({ embedded = false }: { embedded?: boolean } = 
                       const has = entry !== undefined && entry.value !== null && Number.isFinite(n);
                       const active = has && n >= 1;
                       const stateLabel = entry?.state ? POINT_STATE_LABELS[entry.state] : undefined;
+                      const evPalette = [
+                        'bg-sky-100 text-sky-600 dark:bg-sky-500/15 dark:text-sky-400',
+                        'bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400',
+                        'bg-rose-100 text-rose-600 dark:bg-rose-500/15 dark:text-rose-400',
+                      ][evIdx] ?? 'bg-muted text-muted-foreground';
                       return (
-                        <div key={ev.tag} className="min-w-0">
-                          <p className="truncate text-[10px] uppercase tracking-wide text-muted-foreground/70">
-                            {ev.label}
-                          </p>
+                        <div
+                          key={ev.tag}
+                          className="rounded-lg border border-border bg-muted/30 p-2.5 space-y-1"
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${evPalette}`}
+                            >
+                              <Video className="h-3.5 w-3.5" />
+                            </span>
+                            <p className="min-w-0 truncate text-[10px] font-medium uppercase tracking-wide text-muted-foreground/80">
+                              {ev.label}
+                            </p>
+                          </div>
                           <p
                             className={[
-                              'inline-flex items-center gap-1.5',
                               active
-                                ? 'font-medium text-amber-600 dark:text-amber-400'
+                                ? 'text-sm font-semibold text-amber-600 dark:text-amber-400'
                                 : has
-                                  ? 'font-medium text-foreground'
-                                  : 'text-muted-foreground',
+                                  ? 'text-sm font-semibold text-foreground'
+                                  : 'text-xs text-muted-foreground',
                             ].join(' ')}
                             title={
                               !active && has && entry?.state === 'waiting_event'
@@ -777,22 +719,9 @@ export default function CftvPage({ embedded = false }: { embedded?: boolean } = 
                                 : undefined
                             }
                           >
-                            <span
-                              className={[
-                                'h-1.5 w-1.5 shrink-0 rounded-full',
-                                active
-                                  ? 'bg-amber-500'
-                                  : has
-                                    ? 'bg-emerald-500'
-                                    : 'bg-slate-400',
-                              ].join(' ')}
-                            />
-                            {/* waiting_event é saudável: assinatura ativa, nenhum
-                                evento ainda — mesmo "Normal" do MOVIMENTO, com
-                                tooltip explicando o monitoramento ativo. */}
                             {active ? 'Ativo' : has ? 'Normal' : (stateLabel ?? 'sem dados')}
                             {!active && has && entry?.state === 'waiting_event' && (
-                              <Info className="h-3 w-3 shrink-0 text-muted-foreground/60" />
+                              <Info className="inline ml-1 h-3 w-3 text-muted-foreground/60" />
                             )}
                           </p>
                         </div>
@@ -800,6 +729,63 @@ export default function CftvPage({ embedded = false }: { embedded?: boolean } = 
                     })}
                   </div>
                 )}
+
+                <DeviceCardActionBar
+                  actions={[
+                    {
+                      key: 'telemetry',
+                      label: 'Telemetria',
+                      icon: Activity,
+                      title: 'Ver telemetria',
+                      onClick: () => setCameraForTelemetry(camera),
+                    },
+                    ...(isAdmin
+                      ? [
+                          {
+                            key: 'alarms',
+                            label: 'Alarmes',
+                            icon: Bell,
+                            title: cameraAlarmRule
+                              ? 'Alarmes e trends (há alarme configurado)'
+                              : 'Alarmes e trends',
+                            iconClassName: cameraAlarmRule
+                              ? `fill-current ${alarmSeverityColor[cameraAlarmRule.severity] ?? 'text-amber-500'}`
+                              : undefined,
+                            onClick: () => setCameraForAlarm(camera),
+                          },
+                          ...(hasSnmpHealth
+                            ? [
+                                {
+                                  key: 'diagnose',
+                                  label: 'Diagnóstico',
+                                  icon: Stethoscope,
+                                  title: 'Diagnosticar SNMP',
+                                  onClick: () => setCameraToDiagnose(camera),
+                                },
+                              ]
+                            : []),
+                          {
+                            key: 'edit',
+                            label: 'Editar',
+                            icon: Pencil,
+                            onClick: () => setCameraToEdit(camera),
+                          },
+                          ...(canDelete
+                            ? [
+                                {
+                                  key: 'delete',
+                                  label: 'Remover',
+                                  icon: Trash2,
+                                  tone: 'danger' as const,
+                                  title: 'Excluir',
+                                  onClick: () => setCameraToDelete(camera),
+                                },
+                              ]
+                            : []),
+                        ]
+                      : []),
+                  ]}
+                />
               </div>
             );
           })}
@@ -854,7 +840,12 @@ export default function CftvPage({ embedded = false }: { embedded?: boolean } = 
           diagnoseFn={diagnoseCameraSnmp}
           getProgressFn={getDiagnoseProgress}
           applyFn={applySnmpOids}
+          getProfilesFn={getOidProfiles}
+          testOidFn={testCameraOid}
           deviceLabel="câmera"
+          existingPointOids={cameraToDiagnose.points
+            .map((p) => p.oid)
+            .filter((oid): oid is string => oid !== null)}
           onClose={() => setCameraToDiagnose(null)}
           onApplied={() => void refetch()}
         />
@@ -863,21 +854,23 @@ export default function CftvPage({ embedded = false }: { embedded?: boolean } = 
       {/* Detalhe de telemetria da câmera (todos os perfis) */}
       {cameraForTelemetry && (
         <CameraTelemetryModal
-          camera={cameraForTelemetry}
+          // Sempre a versão mais fresca da lista, inclusive após alterações de
+          // configuração feitas em outra ação do card.
+          camera={cameras.find((c) => c.id === cameraForTelemetry.id) ?? cameraForTelemetry}
           live={byDevice}
           showIp={isAdmin}
-          isAdmin={isAdmin}
           onClose={() => setCameraForTelemetry(null)}
         />
       )}
 
-      {/* Alarmes e trends por ponto da câmera (mesma experiência do BMS) */}
+      {/* Alarmes e histórico por ponto da câmera (mesma experiência do BMS) */}
       {cameraForAlarm && (
         <CameraPointConfigModal
           camera={cameraForAlarm}
           live={byDevice}
           alarmRuleByPoint={alarmRuleByPoint}
           trendByPoint={trendByPoint}
+          isAdmin={isAdmin}
           onChanged={refreshPointConfig}
           onClose={() => setCameraForAlarm(null)}
         />
@@ -960,129 +953,142 @@ export default function CftvPage({ embedded = false }: { embedded?: boolean } = 
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
             {filteredSwitches.map((sw) => {
               const statusPoint = sw.points.find((p) => p.tag === 'STATUS');
-              const uptimePoint = sw.points.find((p) => p.tag === 'UPTIME');
-              const cpuPoint = sw.points.find((p) => p.tag === 'CPU');
               const statusEntry = byDevice.get(deviceTagKey(sw.id, 'STATUS'));
-              const uptimeEntry = byDevice.get(deviceTagKey(sw.id, 'UPTIME'));
-              const cpuEntry = byDevice.get(deviceTagKey(sw.id, 'CPU'));
 
               const liveStatus = statusEntry?.value ?? statusPoint?.lastValue ?? null;
               const isOnline = typeof liveStatus === 'number' ? liveStatus >= 1 : sw.status === 'online';
-
-              const liveUptime = typeof uptimeEntry?.value === 'number' ? uptimeEntry.value : uptimePoint?.lastValue ?? null;
-              const liveCpu = typeof cpuEntry?.value === 'number' ? cpuEntry.value : cpuPoint?.lastValue ?? null;
 
               const portCount = sw.ports.length;
 
               return (
                 <div
                   key={sw.id}
-                  className="group rounded-lg border border-border bg-card p-4 space-y-3 cursor-pointer hover:border-primary/40 transition-colors"
-                  onClick={() => setSwitchForPanel(sw)}
+                  className="rounded-xl border border-border bg-card p-3 space-y-2"
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div
-                        className={[
-                          'flex h-9 w-9 shrink-0 items-center justify-center rounded-md',
-                          sw.gatewayOnline === false
-                            ? 'bg-muted text-muted-foreground'
-                            : isOnline
-                              ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400'
-                              : 'bg-red-100 text-red-600 dark:bg-red-500/15 dark:text-red-400',
-                        ].join(' ')}
-                      >
-                        <Network className="h-4 w-4" />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-foreground">{sw.name}</p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {sw.ip}:{sw.port} · SNMP v{sw.snmpVersion}
-                        </p>
-                      </div>
+                  {/* Header — ícone + nome/badge/sinal */}
+                  <div className="flex items-start gap-3">
+                    <div
+                      className={[
+                        'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border',
+                        sw.gatewayOnline === false
+                          ? 'bg-muted/40 text-muted-foreground'
+                          : isOnline
+                            ? 'bg-blue-100/60 text-blue-600 dark:bg-blue-500/15 dark:text-blue-400'
+                            : 'bg-red-100/60 text-red-600 dark:bg-red-500/15 dark:text-red-400',
+                      ].join(' ')}
+                    >
+                      <Network className="h-5 w-5" />
                     </div>
-                    <div className="flex shrink-0 items-center gap-1">
-                      <span
-                        className={[
-                          'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium',
-                          sw.gatewayOnline === false
-                            ? 'bg-muted text-muted-foreground'
-                            : isOnline
-                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400'
-                              : 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-400',
-                        ].join(' ')}
-                      >
+
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+                        <p className="truncate text-sm font-semibold text-foreground">{sw.name}</p>
                         <span
                           className={[
-                            'h-1.5 w-1.5 rounded-full',
+                            'inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold',
                             sw.gatewayOnline === false
-                              ? 'bg-slate-400'
-                              : isOnline ? 'bg-emerald-500' : 'bg-red-500',
+                              ? 'bg-muted text-muted-foreground'
+                              : isOnline
+                                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400'
+                                : 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-400',
                           ].join(' ')}
-                        />
-                        {sw.gatewayOnline === false ? 'GW offline' : isOnline ? 'Online' : 'Offline'}
-                      </span>
-                      {isAdmin && (
+                        >
+                          <span
+                            className={[
+                              'h-1.5 w-1.5 rounded-full',
+                              sw.gatewayOnline === false
+                                ? 'bg-slate-400'
+                                : isOnline ? 'bg-emerald-500' : 'bg-red-500',
+                            ].join(' ')}
+                          />
+                          {sw.gatewayOnline === false ? 'GW offline' : isOnline ? 'Online' : 'Offline'}
+                        </span>
+                        <span
+                          className="flex shrink-0 items-end gap-[2px]"
+                          title={
+                            sw.gatewayOnline === false
+                              ? 'Gateway offline'
+                              : isOnline ? 'Comunicação saudável' : 'Sem comunicação'
+                          }
+                        >
+                          {[3, 5, 7, 9].map((bh, i) => (
+                            <span
+                              key={bh}
+                              style={{ height: bh }}
+                              className={[
+                                'w-[3px] rounded-sm',
+                                isOnline && sw.gatewayOnline !== false
+                                  ? 'bg-emerald-500'
+                                  : sw.gatewayOnline === false
+                                    ? 'bg-slate-300 dark:bg-slate-600'
+                                    : i === 0 ? 'bg-red-500' : 'bg-red-200 dark:bg-red-500/20',
+                              ].join(' ')}
+                            />
+                          ))}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                        {[
+                          `${sw.ip}:${sw.port} · SNMP v${sw.snmpVersion}`,
+                          sw.site || null,
+                          portCount > 0
+                            ? `${portCount} porta${portCount !== 1 ? 's' : ''}`
+                            : 'Sincronizar portas',
+                        ]
+                          .filter(Boolean)
+                          .join(' — ')}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Métricas SNMP dinâmicas — tiles */}
+                  <SnmpHealthMetrics
+                    points={sw.points as unknown as CameraPoint[]}
+                    snmpInfo={sw.snmpInfo}
+                    getEntry={(tag) => {
+                      const live = byDevice.get(deviceTagKey(sw.id, tag));
+                      if (live !== undefined) return { value: live.value };
+                      const point = sw.points.find((p) => p.tag === tag);
+                      return { value: point?.lastValue ?? null };
+                    }}
+                    deviceLabel="switch"
+                    variant="tiles"
+                  />
+
+                  {/* Barra de ações textual */}
+                  <div className="flex flex-wrap items-center gap-1 rounded-lg border border-border bg-muted/30 p-1">
+                    <button
+                      type="button"
+                      onClick={() => setSwitchForPanel(sw)}
+                      className="flex min-w-0 flex-[1_1_30%] sm:flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-emerald-600 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-500/10"
+                      title="Ver portas e detalhes do switch"
+                    >
+                      <Network className="h-3.5 w-3.5" />
+                      <span className="truncate">Ver portas</span>
+                    </button>
+                    {isAdmin && (
+                      <>
                         <button
                           type="button"
-                          onClick={(e) => { e.stopPropagation(); setSwitchToEdit(sw); setSwitchFormOpen(true); }}
-                          className="rounded p-1 text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-muted hover:text-foreground transition-opacity"
+                          onClick={() => { setSwitchToEdit(sw); setSwitchFormOpen(true); }}
+                          className="flex min-w-0 flex-[1_1_30%] sm:flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
                           title="Editar switch"
                         >
                           <Pencil className="h-3.5 w-3.5" />
+                          <span className="truncate">Editar</span>
                         </button>
-                      )}
-                      {isAdmin && (
                         <button
                           type="button"
-                          onClick={(e) => { e.stopPropagation(); setSwitchToDelete(sw); }}
-                          className="rounded p-1 text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10 transition-opacity"
+                          onClick={() => setSwitchToDelete(sw)}
+                          className="flex min-w-0 flex-[1_1_30%] sm:flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-red-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10"
                           title="Excluir switch"
                         >
                           <Trash2 className="h-3.5 w-3.5" />
+                          <span className="truncate">Remover</span>
                         </button>
-                      )}
-                    </div>
+                      </>
+                    )}
                   </div>
-
-                  {/* Métricas escalares */}
-                  <div className="grid grid-cols-3 gap-2 text-xs">
-                    <div>
-                      <p className="text-[10px] text-muted-foreground">Uptime</p>
-                      <p className="font-medium text-foreground">
-                        {uptimePoint?.unsupported
-                          ? 'n/d'
-                          : typeof liveUptime === 'number' && Number.isFinite(liveUptime)
-                            ? formatUptime(liveUptime)
-                            : '—'}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-muted-foreground">CPU</p>
-                      <p className="font-medium text-foreground">
-                        {cpuPoint?.unsupported
-                          ? 'n/d'
-                          : typeof liveCpu === 'number' && Number.isFinite(liveCpu)
-                            ? `${Math.round(liveCpu)}%`
-                            : '—'}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-muted-foreground">Portas</p>
-                      <p className="font-medium text-foreground">
-                        {portCount > 0 ? portCount : <span className="text-muted-foreground">sync</span>}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Site/gateway */}
-                  {(sw.site || sw.gatewayId) && (
-                    <p className="text-[11px] text-muted-foreground truncate">
-                      {[sw.site, sw.gatewayId ? `GW: ${sw.gatewayId.slice(0, 12)}…` : null]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </p>
-                  )}
                 </div>
               );
             })}
@@ -1186,95 +1192,140 @@ export default function CftvPage({ embedded = false }: { embedded?: boolean } = 
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
             {filteredNvrs.map((nvr) => {
               const statusPoint = nvr.points.find((p) => p.tag === 'STATUS');
-              const uptimePoint = nvr.points.find((p) => p.tag === 'UPTIME');
-              const cpuPoint = nvr.points.find((p) => p.tag === 'CPU');
               const statusEntry = byDevice.get(deviceTagKey(nvr.id, 'STATUS'));
-              const uptimeEntry = byDevice.get(deviceTagKey(nvr.id, 'UPTIME'));
-              const cpuEntry = byDevice.get(deviceTagKey(nvr.id, 'CPU'));
 
               const liveStatus = statusEntry?.value ?? statusPoint?.lastValue ?? null;
               const isOnline = typeof liveStatus === 'number' ? liveStatus >= 1 : nvr.status === 'online';
-              const liveUptime = typeof uptimeEntry?.value === 'number' ? uptimeEntry.value : uptimePoint?.lastValue ?? null;
-              const liveCpu = typeof cpuEntry?.value === 'number' ? cpuEntry.value : cpuPoint?.lastValue ?? null;
 
               return (
                 <div
                   key={nvr.id}
-                  className="rounded-lg border border-border bg-card p-4 space-y-3 cursor-pointer hover:border-primary/40 transition-colors"
-                  onClick={() => setNvrForPanel(nvr)}
+                  className="rounded-xl border border-border bg-card p-3 space-y-2"
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className={[
-                        'flex h-9 w-9 shrink-0 items-center justify-center rounded-md',
-                        isOnline
-                          ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400'
-                          : 'bg-red-100 text-red-600 dark:bg-red-500/15 dark:text-red-400',
-                      ].join(' ')}>
-                        <HardDrive className="h-4.5 w-4.5" />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-foreground">{nvr.name}</p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {[
-                            isAdmin ? `${nvr.ip}:${nvr.port}` : null,
-                            nvr.site || null,
-                            nvr.manufacturer || null,
-                          ].filter(Boolean).join(' — ')}
-                        </p>
-                      </div>
+                  {/* Header — ícone + nome/badge/sinal */}
+                  <div className="flex items-start gap-3">
+                    <div
+                      className={[
+                        'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border',
+                        nvr.gatewayOnline === false
+                          ? 'bg-muted/40 text-muted-foreground'
+                          : isOnline
+                            ? 'bg-orange-100/60 text-orange-600 dark:bg-orange-500/15 dark:text-orange-400'
+                            : 'bg-red-100/60 text-red-600 dark:bg-red-500/15 dark:text-red-400',
+                      ].join(' ')}
+                    >
+                      <HardDrive className="h-5 w-5" />
                     </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      {isAdmin && (
-                        <>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setNvrToEdit(nvr); setNvrFormOpen(true); }}
-                            title="Editar NVR"
-                            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setNvrToDelete(nvr); }}
-                            title="Excluir NVR"
-                            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-red-600 dark:hover:text-red-400"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </>
-                      )}
+
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+                        <p className="truncate text-sm font-semibold text-foreground">{nvr.name}</p>
+                        <span
+                          className={[
+                            'inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold',
+                            nvr.gatewayOnline === false
+                              ? 'bg-muted text-muted-foreground'
+                              : isOnline
+                                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400'
+                                : 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-400',
+                          ].join(' ')}
+                        >
+                          <span
+                            className={[
+                              'h-1.5 w-1.5 rounded-full',
+                              nvr.gatewayOnline === false
+                                ? 'bg-slate-400'
+                                : isOnline ? 'bg-emerald-500' : 'bg-red-500',
+                            ].join(' ')}
+                          />
+                          {nvr.gatewayOnline === false ? 'GW offline' : isOnline ? 'Online' : 'Offline'}
+                        </span>
+                        <span
+                          className="flex shrink-0 items-end gap-[2px]"
+                          title={
+                            nvr.gatewayOnline === false
+                              ? 'Gateway offline'
+                              : isOnline ? 'Comunicação saudável' : 'Sem comunicação'
+                          }
+                        >
+                          {[3, 5, 7, 9].map((bh, i) => (
+                            <span
+                              key={bh}
+                              style={{ height: bh }}
+                              className={[
+                                'w-[3px] rounded-sm',
+                                isOnline && nvr.gatewayOnline !== false
+                                  ? 'bg-emerald-500'
+                                  : nvr.gatewayOnline === false
+                                    ? 'bg-slate-300 dark:bg-slate-600'
+                                    : i === 0 ? 'bg-red-500' : 'bg-red-200 dark:bg-red-500/20',
+                              ].join(' ')}
+                            />
+                          ))}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                        {[
+                          isAdmin ? `${nvr.ip}:${nvr.port}` : null,
+                          nvr.site || null,
+                          nvr.manufacturer || null,
+                          `${nvr.disks.length} disco${nvr.disks.length !== 1 ? 's' : ''}`,
+                          `${nvr.channels.length} canal${nvr.channels.length !== 1 ? 'is' : ''}`,
+                          nvr.profileLabel || null,
+                        ]
+                          .filter(Boolean)
+                          .join(' — ')}
+                      </p>
                     </div>
                   </div>
 
-                  {/* Status badge + métricas */}
-                  <div className="flex items-center gap-3 text-xs">
-                    <span className={[
-                      'inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium',
-                      isOnline
-                        ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400'
-                        : 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-400',
-                    ].join(' ')}>
-                      <span className={[
-                        'h-1.5 w-1.5 rounded-full',
-                        isOnline ? 'bg-emerald-500' : 'bg-red-500',
-                      ].join(' ')} />
-                      {isOnline ? 'Online' : 'Offline'}
-                    </span>
-                    {liveUptime !== null && (
-                      <span className="text-muted-foreground font-mono">{formatUptime(liveUptime)}</span>
-                    )}
-                    {liveCpu !== null && (
-                      <span className="text-muted-foreground font-mono">CPU {Math.round(liveCpu)}%</span>
-                    )}
-                  </div>
+                  {/* Métricas SNMP dinâmicas — tiles */}
+                  <SnmpHealthMetrics
+                    points={nvr.points as unknown as CameraPoint[]}
+                    snmpInfo={nvr.snmpInfo}
+                    getEntry={(tag) => {
+                      const live = byDevice.get(deviceTagKey(nvr.id, tag));
+                      if (live !== undefined) return { value: live.value };
+                      const point = nvr.points.find((p) => p.tag === tag);
+                      return { value: point?.lastValue ?? null };
+                    }}
+                    deviceLabel="NVR"
+                    variant="tiles"
+                  />
 
-                  {/* Resumo de discos/canais */}
-                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                    <span>{nvr.disks.length} disco{nvr.disks.length !== 1 ? 's' : ''}</span>
-                    <span>·</span>
-                    <span>{nvr.channels.length} canal{nvr.channels.length !== 1 ? 'is' : ''}</span>
-                    <span>·</span>
-                    <span className="truncate">{nvr.profileLabel}</span>
+                  {/* Barra de ações textual */}
+                  <div className="flex flex-wrap items-center gap-1 rounded-lg border border-border bg-muted/30 p-1">
+                    <button
+                      type="button"
+                      onClick={() => setNvrForPanel(nvr)}
+                      className="flex min-w-0 flex-[1_1_30%] sm:flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-emerald-600 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-500/10"
+                      title="Ver discos, canais e detalhes do NVR"
+                    >
+                      <HardDrive className="h-3.5 w-3.5" />
+                      <span className="truncate">Ver detalhes</span>
+                    </button>
+                    {isAdmin && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => { setNvrToEdit(nvr); setNvrFormOpen(true); }}
+                          className="flex min-w-0 flex-[1_1_30%] sm:flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                          title="Editar NVR"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                          <span className="truncate">Editar</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setNvrToDelete(nvr)}
+                          className="flex min-w-0 flex-[1_1_30%] sm:flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-red-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10"
+                          title="Excluir NVR"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          <span className="truncate">Remover</span>
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               );
@@ -1413,8 +1464,27 @@ function CameraFormModal({
     setSiteId('');
     setGatewayId('');
   }
-  const [snmpVersion, setSnmpVersion] = useState<'1' | '2c'>(camera?.snmpVersion ?? '2c');
+  const [snmpVersion, setSnmpVersion] = useState<'1' | '2c' | '3'>(camera?.snmpVersion ?? '2c');
   const [community, setCommunity] = useState(camera?.community ?? 'public');
+  // SNMPv3 (USM): chaves NUNCA vêm da API — em edição, campo vazio = manter.
+  const snmpCred = camera?.snmpCredential ?? null;
+  const [securityName, setSecurityName] = useState(snmpCred?.securityName ?? '');
+  const [authProtocol, setAuthProtocol] = useState(snmpCred?.authProtocol ?? '');
+  const [authKey, setAuthKey] = useState('');
+  const [privProtocol, setPrivProtocol] = useState(snmpCred?.privProtocol ?? '');
+  const [privKey, setPrivKey] = useState('');
+  const [contextName, setContextName] = useState(snmpCred?.contextName ?? '');
+  const isV3 = snmpVersion === '3';
+  const v3Payload = isV3
+    ? {
+        securityName: securityName.trim(),
+        authProtocol: authProtocol || undefined,
+        authKey: authKey || undefined,
+        privProtocol: privProtocol || undefined,
+        privKey: privKey || undefined,
+        contextName: contextName.trim() || undefined,
+      }
+    : {};
   // SNMP: fabricante manual (identifica o provider de telemetria no gateway).
   const [manufacturer, setManufacturer] = useState(
     camera?.monitoringProtocol === 'snmp' ? (camera?.manufacturer ?? '') : '',
@@ -1476,9 +1546,11 @@ function CameraFormModal({
         ip: ip.trim(),
         // ONVIF usa os campos do canal de saúde; SNMP usa os campos principais.
         port: protocol === 'onvif' ? Number(healthPort) || 161 : Number(port) || 161,
+        // Canal de saúde ONVIF continua v1/2c; câmera SNMP pode usar v3.
         snmpVersion: protocol === 'onvif' ? healthVersion : snmpVersion,
         community:
           (protocol === 'onvif' ? healthCommunity.trim() : community.trim()) || 'public',
+        ...(protocol !== 'onvif' ? v3Payload : {}),
         manufacturer:
           protocol === 'onvif'
             ? (camera?.deviceInfo?.manufacturer ?? null)
@@ -1533,6 +1605,7 @@ function CameraFormModal({
               monitoringProtocol: 'snmp' as const,
               snmpVersion,
               community: community.trim(),
+              ...v3Payload,
               manufacturer: manufacturer.trim() || null,
               // "Vídeo ao vivo" opcional: username vazio limpa as credenciais;
               // senha vazia na edição mantém a atual.
@@ -1573,7 +1646,17 @@ function CameraFormModal({
       // edição com senha já salva, que é mantida).
       !onvifUsername.trim() ||
       Boolean(onvifPassword || (camera?.hasOnvifPassword && camera.onvifUsername));
-  const valid = name.trim() && ip.trim() && onvifValid && (camera || (tenantId && gatewayId));
+  // SNMPv3: usuário obrigatório; chave nova obrigatória com protocolo escolhido
+  // (exceto edição com chave já salva — vazio = manter); priv exige auth (USM).
+  const v3Valid =
+    isOnvif ||
+    !isV3 ||
+    (securityName.trim() &&
+      (!authProtocol || authKey || snmpCred?.hasAuthKey) &&
+      (!privProtocol || privKey || snmpCred?.hasPrivKey) &&
+      (!privProtocol || Boolean(authProtocol)));
+  const valid =
+    name.trim() && ip.trim() && onvifValid && v3Valid && (camera || (tenantId && gatewayId));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -1741,18 +1824,83 @@ function CameraFormModal({
           <>
             <div className="grid grid-cols-3 gap-3">
               <Field label="Versão SNMP">
-                <select value={snmpVersion} onChange={(e) => setSnmpVersion(e.target.value as '1' | '2c')} className={inputCls}>
+                <select value={snmpVersion} onChange={(e) => setSnmpVersion(e.target.value as '1' | '2c' | '3')} className={inputCls}>
                   <option value="2c">v2c</option>
                   <option value="1">v1</option>
+                  <option value="3">v3</option>
                 </select>
               </Field>
-              <Field label="Community">
-                <input value={community} onChange={(e) => setCommunity(e.target.value)} className={inputCls} />
-              </Field>
+              {!isV3 && (
+                <Field label="Community">
+                  <input value={community} onChange={(e) => setCommunity(e.target.value)} className={inputCls} />
+                </Field>
+              )}
               <Field label="Polling (s)">
                 <input type="number" min={5} value={pollingInterval} onChange={(e) => setPollingInterval(Number(e.target.value))} className={inputCls} />
               </Field>
             </div>
+
+            {isV3 && (
+              <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
+                <p className="text-[11px] font-medium text-muted-foreground">
+                  Credenciais SNMPv3 (USM) — as chaves são criptografadas e nunca reexibidas
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Usuário (securityName) *">
+                    <input value={securityName} onChange={(e) => setSecurityName(e.target.value)} className={inputCls} />
+                  </Field>
+                  <Field label="Contexto (opcional)">
+                    <input value={contextName} onChange={(e) => setContextName(e.target.value)} className={inputCls} />
+                  </Field>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Autenticação">
+                    <select value={authProtocol} onChange={(e) => setAuthProtocol(e.target.value)} className={inputCls}>
+                      <option value="">Sem autenticação</option>
+                      <option value="sha">SHA-1</option>
+                      <option value="sha256">SHA-256</option>
+                      <option value="sha512">SHA-512</option>
+                      <option value="md5">MD5</option>
+                    </select>
+                  </Field>
+                  <Field label="Chave de autenticação">
+                    <input
+                      type="password"
+                      value={authKey}
+                      onChange={(e) => setAuthKey(e.target.value)}
+                      disabled={!authProtocol}
+                      placeholder={snmpCred?.hasAuthKey ? 'Deixe em branco para manter' : 'Mínimo 8 caracteres'}
+                      className={inputCls + (!authProtocol ? ' opacity-60 cursor-not-allowed' : '')}
+                    />
+                  </Field>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Privacidade (criptografia)">
+                    <select
+                      value={privProtocol}
+                      onChange={(e) => setPrivProtocol(e.target.value)}
+                      disabled={!authProtocol}
+                      className={inputCls + (!authProtocol ? ' opacity-60 cursor-not-allowed' : '')}
+                    >
+                      <option value="">Sem privacidade</option>
+                      <option value="aes">AES-128</option>
+                      <option value="aes256">AES-256</option>
+                      <option value="des">DES</option>
+                    </select>
+                  </Field>
+                  <Field label="Chave de privacidade">
+                    <input
+                      type="password"
+                      value={privKey}
+                      onChange={(e) => setPrivKey(e.target.value)}
+                      disabled={!privProtocol}
+                      placeholder={snmpCred?.hasPrivKey ? 'Deixe em branco para manter' : 'Mínimo 8 caracteres'}
+                      className={inputCls + (!privProtocol ? ' opacity-60 cursor-not-allowed' : '')}
+                    />
+                  </Field>
+                </div>
+              </div>
+            )}
 
             <Field label="Fabricante (opcional)">
               <input
@@ -1841,6 +1989,10 @@ function CameraFormModal({
             className={inputCls}
           />
         </Field>
+
+        {/* Perfil e probe são configuração técnica: ficam na edição, não no
+            detalhe de telemetria, que é estritamente de consulta. */}
+        {camera && <MonitoringProfilePanel camera={camera} isAdmin={isGlobal} />}
 
         <p className="text-[11px] text-muted-foreground">
           {isOnvif
@@ -2352,7 +2504,7 @@ const PROFILE_SOURCE_CLS: Record<string, string> = {
 };
 
 /**
- * Secção colapsável "Perfil de monitoramento" dentro do CameraTelemetryModal.
+ * Secção colapsável "Perfil de monitoramento" dentro da edição de câmera.
  * Só visível para ADMIN/CCO. Permite:
  *   – Ver o perfil detectado / manual / genérico
  *   – Selecionar um perfil manualmente
@@ -2563,43 +2715,15 @@ function CameraTelemetryModal({
   camera,
   live,
   showIp,
-  isAdmin,
   onClose,
 }: {
   camera: CameraType;
   live: TelemetryMap;
   /** IP:porta é informação de rede — só perfis administrativos veem. */
   showIp: boolean;
-  isAdmin: boolean;
   onClose: () => void;
 }) {
-  const queryClient = useQueryClient();
-
-  // Toggle de ponto crítico (estrela) — otimista, reverte em erro (mesmo
-  // padrão dos pontos das controladoras BACnet/Modbus/MQTT).
-  const [pointCriticalById, setPointCriticalById] = useState<Record<string, boolean>>({});
-  const isPointCritical = (p: { id: string; critical?: boolean }) =>
-    pointCriticalById[p.id] ?? !!p.critical;
-  async function handleTogglePointCritical(pointId: string) {
-    const current = isPointCritical(
-      camera.points.find((p) => p.id === pointId) ?? { id: pointId },
-    );
-    const next = !current;
-    setPointCriticalById((m) => ({ ...m, [pointId]: next }));
-    try {
-      await setCameraPointCritical(camera.id, pointId, next);
-      queryClient.invalidateQueries({ queryKey: ['cftv-cameras'] });
-      queryClient.invalidateQueries({ queryKey: ['dashboard-critical-assets'] });
-    } catch {
-      setPointCriticalById((m) => ({ ...m, [pointId]: current }));
-    }
-  }
-
-  const points = [...camera.points].sort((a, b) => {
-    const ia = TELEMETRY_TAG_ORDER.indexOf(a.tag);
-    const ib = TELEMETRY_TAG_ORDER.indexOf(b.tag);
-    return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
-  });
+  const points = selectOperationalPoints(camera.points);
   const info = camera.deviceInfo;
   // "Tempo ligada" estimado (mesma camada do card): só quando a câmera está
   // online e o ponto UPTIME não tem leitura real — dado real sempre prevalece.
@@ -2634,7 +2758,14 @@ function CameraTelemetryModal({
         <ul className="divide-y divide-border rounded-lg border border-border">
           {points.map((p) => {
             const entry = liveOrSeed(camera, p.tag, live);
-            const value = formatPointLiveValue(p, entry?.value ?? null);
+            const display = displayForHealth(p, p.display);
+            const blocked =
+              p.healthState === 'broken' ||
+              (p.healthState === 'pending' && entry?.value === null);
+            const normalized = blocked
+              ? null
+              : normalizeHealthReading(p.metric, entry?.value, display.unit || p.unit);
+            const value = normalized === null ? null : formatHealthValue(p.metric, normalized, display.unit || p.unit);
             const readAt = formatReadTime(entry?.timestamp ?? null);
             const unreliable = value !== null && entry?.unreliable === true;
             const stateLabel = entry?.state ? POINT_STATE_LABELS[entry.state] : undefined;
@@ -2642,18 +2773,8 @@ function CameraTelemetryModal({
             const showEstimated = p.tag === 'UPTIME' && value === null && estUptime !== null;
             return (
               <li key={p.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
-                <span className="flex min-w-0 items-center gap-1">
-                  <CriticalStarButton
-                    critical={isPointCritical(p)}
-                    size={14}
-                    onToggle={() => handleTogglePointCritical(p.id)}
-                  />
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm text-foreground">{p.objectName}</span>
-                    <span className="block text-xs text-muted-foreground">
-                      {p.tag}{p.unit ? ` · ${p.unit}` : ''}
-                    </span>
-                  </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-sm text-foreground">{display.label}</span>
                 </span>
                 <span className="shrink-0 text-right">
                   <span
@@ -2683,7 +2804,11 @@ function CameraTelemetryModal({
                               <span className="ml-1 text-[11px] font-normal text-muted-foreground">(estimado)</span>
                             </>
                           )
-                        : p.unsupported
+                        : p.healthState === 'broken'
+                          ? 'fonte quebrada — corrija no diagnóstico'
+                          : p.healthState === 'pending'
+                            ? 'atualização pendente — aguardando primeira leitura'
+                            : p.unsupported
                           ? 'não suportado pela câmera'
                           : (stateLabel ?? 'sem dados')}
                   </span>
@@ -2697,15 +2822,12 @@ function CameraTelemetryModal({
             );
           })}
         </ul>
-
-        {/* Secção "Perfil de monitoramento" — só para ADMIN/CCO */}
-        <MonitoringProfilePanel camera={camera} isAdmin={isAdmin} />
       </div>
     </div>
   );
 }
 
-// ─── Alarmes e trends por ponto da câmera ────────────────────────────────────
+// ─── Alarmes e histórico por ponto da câmera ─────────────────────────────────
 
 /**
  * Modal de configuração por ponto da câmera: lista os pontos de saúde com
@@ -2717,6 +2839,7 @@ function CameraPointConfigModal({
   live,
   alarmRuleByPoint,
   trendByPoint,
+  isAdmin,
   onChanged,
   onClose,
 }: {
@@ -2724,10 +2847,32 @@ function CameraPointConfigModal({
   live: TelemetryMap;
   alarmRuleByPoint: Map<string, AlarmRuleItem>;
   trendByPoint: Map<string, TrendItem>;
+  isAdmin: boolean;
   onChanged: () => void;
   onClose: () => void;
 }) {
+  const queryClient = useQueryClient();
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [pointCriticalById, setPointCriticalById] = useState<Record<string, boolean>>({});
+
+  const isPointCritical = (p: { id: string; critical?: boolean }) =>
+    pointCriticalById[p.id] ?? !!p.critical;
+
+  async function handleTogglePointCritical(pointId: string) {
+    const current = isPointCritical(
+      camera.points.find((p) => p.id === pointId) ?? { id: pointId },
+    );
+    const next = !current;
+    setPointCriticalById((m) => ({ ...m, [pointId]: next }));
+    try {
+      await setCameraPointCritical(camera.id, pointId, next);
+      queryClient.invalidateQueries({ queryKey: ['cftv-cameras'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard-critical-assets'] });
+    } catch {
+      setPointCriticalById((m) => ({ ...m, [pointId]: current }));
+    }
+  }
+
   const points = [...camera.points].sort((a, b) => {
     const ia = TELEMETRY_TAG_ORDER.indexOf(a.tag);
     const ib = TELEMETRY_TAG_ORDER.indexOf(b.tag);
@@ -2739,7 +2884,7 @@ function CameraPointConfigModal({
       <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-border bg-card shadow-xl">
         <div className="flex shrink-0 items-center justify-between border-b border-border px-6 py-4">
           <h3 className="text-sm font-semibold text-foreground">
-            Alarmes e trends — {camera.name}
+            Alarmes e histórico — {camera.name}
           </h3>
           <button type="button" onClick={onClose} className="rounded-md p-1 text-muted-foreground hover:bg-muted">
             <X className="h-4 w-4" />
@@ -2747,55 +2892,71 @@ function CameraPointConfigModal({
         </div>
         <div className="flex-1 space-y-3 overflow-y-auto px-6 py-4">
           <p className="text-xs text-muted-foreground">
-            Clique num ponto de saúde para ver e configurar o alarme e a trend
-            (histórico) daquele ponto — mesma experiência do detalhe de dispositivo.
+            Escolha um ponto para configurar alarmes, trend (histórico) e criticidade.
+            O valor exibido abaixo é apenas um resumo para identificar o ponto.
           </p>
           <ul className="divide-y divide-border rounded-lg border border-border">
             {points.map((p) => {
               const entry = liveOrSeed(camera, p.tag, live);
-              const value = formatPointLiveValue(p, entry?.value ?? null);
+              const value =
+                p.healthState === 'broken' ||
+                (p.healthState === 'pending' && entry?.value === null)
+                  ? null
+                  : formatPointLiveValue(p, entry?.value ?? null);
               const pointAlarm = alarmRuleByPoint.get(p.id);
               const pointTrend = trendByPoint.get(p.id);
               const expanded = expandedId === p.id;
               return (
-                <li key={p.id}>
-                  <button
-                    onClick={() => setExpandedId(expanded ? null : p.id)}
-                    className={`flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-muted ${expanded ? 'bg-muted/50' : ''}`}
+                <li key={p.id} className="flex flex-col">
+                  <div
+                    className={`flex items-center gap-1 px-3 py-2.5 hover:bg-muted transition-colors ${expanded ? 'bg-muted/50' : ''}`}
                   >
-                    <span className="min-w-0">
-                      <span className="flex items-center gap-1.5 min-w-0">
-                        {pointTrend && (
-                          <LineChart className="h-3.5 w-3.5 shrink-0 text-cyan-600" strokeWidth={2} aria-label="Trend ativa" />
-                        )}
-                        {pointAlarm && (
-                          <Bell
-                            className={`h-3.5 w-3.5 shrink-0 ${alarmSeverityColor[pointAlarm.severity] ?? 'text-amber-500'}`}
-                            strokeWidth={2}
-                            aria-label="Alarme configurado"
-                          />
-                        )}
-                        <span className="truncate text-sm text-foreground">{p.objectName}</span>
+                    {isAdmin && (
+                      <CriticalStarButton
+                        critical={isPointCritical(p)}
+                        size={14}
+                        onToggle={() => void handleTogglePointCritical(p.id)}
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setExpandedId(expanded ? null : p.id)}
+                      className="flex flex-1 items-center justify-between gap-3 text-left"
+                    >
+                      <span className="min-w-0">
+                        <span className="flex items-center gap-1.5 min-w-0">
+                          {pointTrend && (
+                            <LineChart className="h-3.5 w-3.5 shrink-0 text-cyan-600" strokeWidth={2} aria-label="Trend ativa" />
+                          )}
+                          {pointAlarm && (
+                            <Bell
+                              className={`h-3.5 w-3.5 shrink-0 ${alarmSeverityColor[pointAlarm.severity] ?? 'text-amber-500'}`}
+                              strokeWidth={2}
+                              aria-label="Alarme configurado"
+                            />
+                          )}
+                          <span className="truncate text-sm text-foreground">{p.objectName}</span>
+                        </span>
+                        <span className="block text-xs text-muted-foreground">
+                          {p.tag}{p.unit ? ` · ${p.unit}` : ''}
+                        </span>
                       </span>
-                      <span className="block text-xs text-muted-foreground">
-                        {p.tag}{p.unit ? ` · ${p.unit}` : ''}
+                      <span className="flex shrink-0 items-center gap-2">
+                        <span
+                          className={
+                            value !== null
+                              ? 'text-sm font-medium text-foreground'
+                              : 'text-xs text-muted-foreground'
+                          }
+                        >
+                          {value !== null ? value : p.unsupported ? 'não suportado' : 'sem dados'}
+                        </span>
+                        {expanded
+                          ? <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                          : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
                       </span>
-                    </span>
-                    <span className="flex shrink-0 items-center gap-2">
-                      <span
-                        className={
-                          value !== null
-                            ? 'text-sm font-medium text-foreground'
-                            : 'text-xs text-muted-foreground'
-                        }
-                      >
-                        {value !== null ? value : p.unsupported ? 'não suportado' : 'sem dados'}
-                      </span>
-                      {expanded
-                        ? <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                        : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
-                    </span>
-                  </button>
+                    </button>
+                  </div>
                   {expanded && (
                     <PointConfigPanel
                       pointId={p.id}

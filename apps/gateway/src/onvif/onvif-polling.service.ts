@@ -256,6 +256,14 @@ export class OnvifPollingService implements OnModuleDestroy {
       );
 
       this.publishTelemetry(deviceId, points);
+    } catch (err) {
+      // Isolamento do ciclo: exceção inesperada não pode escapar como unhandled
+      // rejection (disparo é `void pollDevice(...)`) — loga, libera o guard e o
+      // próximo ciclo tenta de novo (reconexão fica a cargo do driver).
+      this.logger.error(
+        `[${deviceId}] Ciclo ONVIF abortado por erro inesperado: ` +
+          `${(err as Error)?.stack ?? (err as Error)?.message ?? String(err)}`,
+      );
     } finally {
       state.polling = false;
     }

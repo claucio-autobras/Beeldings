@@ -37,13 +37,20 @@ export const BASE_SWITCH_PROFILE: DeviceProfile = {
     { metricKey: 'uptime', oid: '1.3.6.1.2.1.1.3.0', scale: 0.01 },
 
     // ── HOST-RESOURCES-MIB hrProcessorLoad (primeira CPU) ───────────────────
-    { metricKey: 'cpu', oid: '1.3.6.1.2.1.25.3.3.1.2.1', scale: 1 },
+    { metricKey: 'cpu', tableOidPrefix: '1.3.6.1.2.1.25.3.3.1.2', scale: 1 },
 
     // ── IF-MIB — métricas de tabela (uma entrada por porta) ─────────────────
     // Lidas por subtree walk (tableOidPrefix); o ifIndex final é o índice.
     { metricKey: 'if_oper_status', tableOidPrefix: '1.3.6.1.2.1.2.2.1.8' },
-    { metricKey: 'if_in_octets',   tableOidPrefix: '1.3.6.1.2.1.2.2.1.10' },
-    { metricKey: 'if_out_octets',  tableOidPrefix: '1.3.6.1.2.1.2.2.1.16' },
+    { metricKey: 'if_in_octets',   tableOidPrefix: '1.3.6.1.2.1.31.1.1.1.6' },
+    { metricKey: 'if_out_octets',  tableOidPrefix: '1.3.6.1.2.1.31.1.1.1.10' },
+    // Contadores de erro/descartes (Counter32 — gateway converte em pkt/s).
+    // Só são lidos quando o device tem pontos destas métricas (leitura gated
+    // por explicitMetrics no driver) — sem custo para devices existentes.
+    { metricKey: 'if_in_discards',  tableOidPrefix: '1.3.6.1.2.1.2.2.1.13' },
+    { metricKey: 'if_in_errors',    tableOidPrefix: '1.3.6.1.2.1.2.2.1.14' },
+    { metricKey: 'if_out_discards', tableOidPrefix: '1.3.6.1.2.1.2.2.1.19' },
+    { metricKey: 'if_out_errors',   tableOidPrefix: '1.3.6.1.2.1.2.2.1.20' },
 
     // ── IF-MIB — colunas de descoberta de portas (sync-ports) ───────────────
     // Não usadas no polling de telemetria; lidas uma vez pelo comando MQTT.

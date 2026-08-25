@@ -286,6 +286,10 @@ export class CriticalAssetsService {
       const liveStatus = this.resolveDeviceStatus(d.id, isCamera, d.points);
       const pointAlarms = (alarmsByDevice.get(d.id) ?? []).filter((a) => a.pointId === p.id);
       const fault = faultOf(pointAlarms);
+      // Ponto STATUS da câmera (tag fixa 'STATUS'): mesmo sem opRole, o estado
+      // dele é o canal da câmera — trata como ponto de status para o card
+      // refletir ligado/desligado corretamente (e não "sem dados").
+      const isCameraStatusPoint = isCamera && p.tag === 'STATUS';
       assets.push(await this.buildAsset({
         id: p.id,
         kind: 'point',
@@ -299,10 +303,11 @@ export class CriticalAssetsService {
         siteName: d.site?.name ?? null,
         liveStatus,
         fault,
-        statusPoint: p.opRole === 'status' ? p : undefined,
+        statusPoint: p.opRole === 'status' || isCameraStatusPoint ? p : undefined,
         faultPoint:
           p.opRole === 'fault' && p.lastValue !== null && p.lastValue >= 0.5 ? p : undefined,
-        pointRole: p.opRole ?? null,
+        pointRole: p.opRole ?? (isCameraStatusPoint ? 'status' : null),
+        cameraStatusChannel: isCameraStatusPoint,
         from, to, now,
         statusEvent: statusEventByDevice.get(d.id),
         lastSeen: lastSeenMap.get(d.id) ?? null,
@@ -373,6 +378,12 @@ export class CriticalAssetsService {
     };
     /** Papel operacional do próprio ponto (kind='point'); null nos devices. */
     pointRole: string | null;
+    /**
+     * Ponto STATUS de câmera: as transições em status_events do device SÃO as
+     * transições do próprio ponto (a câmera segue o STATUS), então valem como
+     * fallback durável para "ligado/desligado desde".
+     */
+    cameraStatusChannel?: boolean;
     from: Date;
     to: Date;
     now: Date;
@@ -394,16 +405,29 @@ export class CriticalAssetsService {
     const runtimeMs = await this.computeRuntime(args.statusPoint, args.from, args.to);
 
     // Ativo agora: último valor do ponto de status >= 0.5, mas só com o device
-    // vivo (valor stale de device offline não vale). Sem ponto/valor = null.
+    // vivo (valor stale de device offline não vale). Sem lastValue persistido
+    // (pontos BMS não persistem), a última amostra da trend é a evidência
+    // durável do valor vigente. Sem nenhuma evidência = null (nunca inventa).
     const sp = args.statusPoint;
+    let currentOn: boolean | null = null;
+    if (sp) {
+      if (sp.lastValue !== null) {
+        currentOn = sp.lastValue >= 0.5;
+      } else {
+        const latest = await this.latestTrendSample(sp, now);
+        if (latest) currentOn = latest.value >= 0.5;
+      }
+    }
     const activeNow: boolean | null =
-      sp && sp.lastValue !== null
-        ? liveStatus === 'online' && sp.lastValue >= 0.5
-        : null;
+      currentOn === null ? null : liveStatus === 'online' && currentOn;
     let activeSince: string | null = null;
     let activeMs: number | null = null;
     if (activeNow === true) {
-      const since = await this.computeActiveSince(sp, now);
+      let since = await this.computeActiveSince(sp, now);
+      // Fallback durável (canal da câmera): última transição para online.
+      if (!since && args.cameraStatusChannel && statusEvent?.status === 'online') {
+        since = statusEvent.at;
+      }
       if (since) {
         activeSince = since.toISOString();
         activeMs = Math.max(0, now.getTime() - since.getTime());
@@ -415,7 +439,11 @@ export class CriticalAssetsService {
     let stoppedSince: string | null = null;
     let stoppedMs: number | null = null;
     if (activeNow === false) {
-      const since = await this.computeStoppedSince(sp, now);
+      let since = await this.computeStoppedSince(sp, now);
+      // Fallback durável (canal da câmera): última transição para offline.
+      if (!since && args.cameraStatusChannel && statusEvent?.status === 'offline') {
+        since = statusEvent.at;
+      }
       if (since) {
         stoppedSince = since.toISOString();
         stoppedMs = Math.max(0, now.getTime() - since.getTime());
@@ -491,6 +519,23 @@ export class CriticalAssetsService {
       lastSeen: args.lastSeen,
       scadaScreenId: args.scadaScreenId,
     };
+  }
+
+  /**
+   * Última amostra registrada na trend do ponto — evidência durável do valor
+   * vigente quando lastValue não é persistido (pontos BMS). null = sem amostras.
+   */
+  private async latestTrendSample(
+    statusPoint: { trends: { id: string; enabled: boolean }[] },
+    now: Date,
+  ): Promise<{ value: number; timestamp: Date } | null> {
+    const trendIds = statusPoint.trends.map((t) => t.id);
+    if (trendIds.length === 0) return null;
+    return this.prisma.trendRecord.findFirst({
+      where: { trendId: { in: trendIds }, timestamp: { lte: now } },
+      orderBy: { timestamp: 'desc' },
+      select: { timestamp: true, value: true },
+    });
   }
 
   /**

@@ -16,6 +16,8 @@ import { PointConfigPanel } from '@/modules/trends/components/PointConfigPanel';
 import { OpRoleBadge } from './OpRoleBadge';
 import { AlarmGroupsSection } from './AlarmGroupsSection';
 import { DeviceTimelineTab } from './DeviceTimelineTab';
+import { PointNoCommBadge } from './PointNoCommBadge';
+import { showNoCommBadge } from '../utils/point-no-comm';
 import {
   NO_COMM_BANNER_CLASS,
   NO_COMM_TEXT_CLASS,
@@ -46,9 +48,15 @@ const CRITICAL_MARK_HINT =
 interface Props {
   device: MqttDevice;
   onBack: () => void;
+  /** Deep-link do card Ativos Críticos: ponto a destacar/rolar até. */
+  highlightPointId?: string;
 }
 
-export default function MqttDeviceDetail({ device, onBack }: Props) {
+export default function MqttDeviceDetail({ device, onBack, highlightPointId }: Props) {
+  // Rola até o ponto destacado assim que ele renderiza (uma vez).
+  const scrollToHighlight = (el: HTMLElement | null) => {
+    el?.scrollIntoView({ block: 'center' });
+  };
   const [points, setPoints] = useState<MqttPoint[]>(device.points);
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'points' | 'timeline'>('points');
@@ -543,7 +551,15 @@ export default function MqttDeviceDetail({ device, onBack }: Props) {
               : null;
 
             return (
-              <div key={p.id} className={expanded ? 'bg-muted/30' : ''}>
+              <div
+                key={p.id}
+                ref={p.id === highlightPointId ? scrollToHighlight : undefined}
+                className={
+                  p.id === highlightPointId
+                    ? 'bg-cyan-50/70 ring-1 ring-inset ring-cyan-300 dark:bg-cyan-950/30 dark:ring-cyan-800'
+                    : expanded ? 'bg-muted/30' : ''
+                }
+              >
                 <div
                   onClick={() => setExpandedPointId(expanded ? null : p.id)}
                   className="cursor-pointer px-4 py-3 space-y-2 transition-colors active:bg-muted/20"
@@ -591,9 +607,13 @@ export default function MqttDeviceDetail({ device, onBack }: Props) {
                   </div>
 
                   <div className="flex items-center gap-2 flex-wrap text-sm">
-                    <span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-medium border capitalize ${pointStatusBadge[p.status] ?? ''}`}>
-                      {p.status}
-                    </span>
+                    {showNoCommBadge(noCommunication, p.status) ? (
+                      <PointNoCommBadge />
+                    ) : (
+                      <span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-medium border capitalize ${pointStatusBadge[p.status] ?? ''}`}>
+                        {p.status}
+                      </span>
+                    )}
                     {renderCurrentValue(p, liveLabel)}
                   </div>
 
@@ -662,7 +682,7 @@ export default function MqttDeviceDetail({ device, onBack }: Props) {
                   : null;
                 return (
                 <Fragment key={p.id}>
-                <tr onClick={() => setExpandedPointId(expanded ? null : p.id)} className={`cursor-pointer transition-colors ${expanded ? 'bg-muted/30' : 'hover:bg-muted/20'}`}>
+                <tr ref={p.id === highlightPointId ? scrollToHighlight : undefined} onClick={() => setExpandedPointId(expanded ? null : p.id)} className={`cursor-pointer transition-colors ${p.id === highlightPointId ? 'bg-cyan-50/70 ring-1 ring-inset ring-cyan-300 dark:bg-cyan-950/30 dark:ring-cyan-800' : expanded ? 'bg-muted/30' : 'hover:bg-muted/20'}`}>
                   <td className="px-4 py-3 font-mono text-xs text-foreground">
                     <span className="flex items-center gap-1.5">
                       {pointTrend && <LineChart className="h-3.5 w-3.5 text-cyan-600 shrink-0" strokeWidth={2} aria-label="Trend ativa" />}
@@ -684,7 +704,11 @@ export default function MqttDeviceDetail({ device, onBack }: Props) {
                     {renderCurrentValue(p, liveLabel)}
                   </td>
                   <td className="px-4 py-3">
-                    <span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-medium border capitalize ${pointStatusBadge[p.status] ?? ''}`}>{p.status}</span>
+                    {showNoCommBadge(noCommunication, p.status) ? (
+                      <PointNoCommBadge />
+                    ) : (
+                      <span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-medium border capitalize ${pointStatusBadge[p.status] ?? ''}`}>{p.status}</span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-right text-muted-foreground">
                     <span className="inline-flex items-center gap-1">

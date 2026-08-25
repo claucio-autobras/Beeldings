@@ -26,6 +26,15 @@ export interface LoginResponse {
   user: AuthUser;
 }
 
+export interface TwoFactorRequiredResponse {
+  requiresTwoFactor: true;
+  challengeId: string;
+  expiresInSeconds: number;
+  emailMasked: string;
+}
+
+export type LoginOutcome = LoginResponse | TwoFactorRequiredResponse;
+
 /**
  * Sessão do frontend: apenas o usuário. O token de acesso vive num cookie
  * HttpOnly emitido pelo backend e NUNCA é acessível ao JavaScript.

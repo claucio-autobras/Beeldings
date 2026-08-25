@@ -15,8 +15,8 @@ falha.
 - **Node.js 20+** instalado — baixe em https://nodejs.org (no Windows, marque a
   opção *"Add to PATH"* durante a instalação).
 - Saída de rede liberada para o broker MQTT.
-- O arquivo **`gateway-config.env`** do projeto (baixe na plataforma em
-  **Projetos → Baixar gateway-config.env**).
+- O arquivo **`gateway-config.env`** do gateway (baixe na plataforma em
+  **Gateways → Baixar gateway-config.env**).
 
 > No Windows, módulos nativos podem exigir as *Build Tools*. Se o `npm install`
 > falhar compilando dependências, instale uma vez:
@@ -32,7 +32,7 @@ falha.
    `C:\beeldings-gateway-agent`).
    > Extrair em `C:\` evita erros de instalação quando o nome do usuário
    > Windows tem acento e facilita encontrar a pasta depois.
-3. Copie o **`gateway-config.env`** (baixado na criação do projeto do cliente)
+3. Copie o **`gateway-config.env`** (baixado na criação do gateway do cliente)
    para **dentro dessa pasta**. O instalador o renomeia para `.env`
    automaticamente.
 4. Clique com o botão direito em **`instalar.bat`** → **Executar como
@@ -91,6 +91,28 @@ journalctl -u beeldings-gateway -f
 Baixe o pacote novo, extraia **por cima** da pasta atual (mantendo o `.env`) e
 rode novamente `instalar.bat` (Windows) ou `sudo bash instalar.sh` (Linux). O
 script remove a versão anterior do serviço e reinstala.
+
+> **Importante — launcher (run.js):** o arquivo `run.js` (launcher que aplica
+> as atualizações remotas) **não é substituído pela atualização remota (OTA)**
+> — ele só é trocado numa **reinstalação do agente** como esta. Gateways
+> instalados com pacotes anteriores à **v1.19.0** usam um launcher antigo que,
+> numa OTA malsucedida no Windows, podia deixar o serviço sem iniciar
+> ("o serviço não retornou um erro"). Reinstale o agente nesses gateways para
+> receber o launcher à prova de falhas (retentativas, rollback automático e
+> auto-recuperação no boot).
+>
+> Pacotes anteriores à **v1.21.0** usam um launcher que aborta a OTA quando o
+> Windows mantém uma pasta travada por mais de ~15s (antivírus, OneDrive,
+> indexador) — erro típico: `EPERM: operation not permitted, rename 'src' →
+> 'previous\src'`. O launcher atual tolera isso (mais retentativas, fallback
+> de cópia e itens não essenciais como `src` nunca derrubam a atualização),
+> mas **só chega a gateways em campo por reinstalação manual do agente** —
+> a OTA não atualiza o `run.js`.
+
+> **Dica (Windows):** instale o gateway **fora de pastas sincronizadas**
+> (evite `Documents`/OneDrive — prefira `C:\`) e, se possível, adicione uma
+> exceção do antivírus para a pasta do gateway. Isso evita bloqueios de
+> arquivos durante as atualizações remotas.
 
 ---
 

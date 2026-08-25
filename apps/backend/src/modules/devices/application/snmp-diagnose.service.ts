@@ -26,11 +26,52 @@ export interface DiagnoseOidResult {
   raw: string | null;
 }
 
+/**
+ * Entrada do walk. Gateways novos (≥1.20) enriquecem cada entrada com tipo
+ * ASN.1, valor normalizado e índice de instância; gateways antigos mandam só
+ * { oid, value } — todos os campos novos são opcionais.
+ */
+export interface DiagnoseWalkEntry {
+  oid: string;
+  value: string;
+  /** Nome do tipo ASN.1 ('OctetString', 'Gauge32', …). */
+  type?: string;
+  /** Valor normalizado numérico (null quando não numérico). */
+  numeric?: number | null;
+  /** Índice de instância (entradas de tabela/não-.0); null p/ escalares. */
+  index?: number | null;
+}
+
 export interface DiagnoseWalkSection {
   root: string;
   label: string;
-  entries: Array<{ oid: string; value: string }>;
+  entries: DiagnoseWalkEntry[];
   truncated: boolean;
+  /** Campos enriquecidos (gateway ≥1.20). */
+  found?: number;
+  discarded?: Record<string, number>;
+  error?: string | null;
+  durationMs?: number;
+}
+
+/** Estatísticas agregadas do walk (gateway ≥1.20). */
+export interface DiagnoseWalkStats {
+  /** Alvo do walk — SEM a community (credencial nunca trafega no resultado). */
+  target: { ip: string; port: number; snmpVersion: string };
+  roots: Array<{
+    root: string;
+    label: string;
+    found: number;
+    discarded: number;
+    truncated: boolean;
+    durationMs: number;
+    error: string | null;
+  }>;
+  totalFound: number;
+  totalDiscarded: number;
+  discardedReasons: Record<string, number>;
+  errors: Array<{ root: string; error: string }>;
+  walkDurationMs: number;
 }
 
 /** Progresso parcial de um diagnóstico em andamento. */
@@ -43,21 +84,90 @@ export interface SnmpDiagnoseProgress {
   tenantId?: string;
 }
 
+/** Credenciais SNMPv3 (USM) em texto claro — só trafegam backend → gateway. */
+export interface DiagnoseSnmpV3 {
+  securityName: string;
+  securityLevel?: 'noAuthNoPriv' | 'authNoPriv' | 'authPriv';
+  authProtocol?: string;
+  authKey?: string;
+  privProtocol?: string;
+  privKey?: string;
+  contextName?: string;
+}
+
 export interface DiagnoseSnmpDto {
   tenantId: string;
   gatewayId: string;
   ip: string;
   port: number;
-  snmpVersion: '1' | '2c';
+  snmpVersion: '1' | '2c' | '3';
   community: string;
+  /** Credenciais USM decifradas — obrigatórias quando snmpVersion='3'. */
+  v3?: DiagnoseSnmpV3 | null;
   current: DiagnoseOidProbe[];
   candidates: DiagnoseOidProbe[];
   /** ID gerado pelo cliente — permite acompanhar o progresso via polling. */
   diagnoseId?: string;
+  /**
+   * Dicas de identificação do device (opcionais): habilitam raízes de walk
+   * proprietárias declaradas pelos perfis do gateway. Gateways antigos ignoram.
+   */
+  deviceType?: string;
+  manufacturer?: string;
 }
 
 /** Causa provável quando a câmera não respondeu ao SNMP (reachable=false). */
 export type SnmpUnreachableCause = 'community' | 'no_response';
+
+/**
+ * Métrica canônica reportada pelo gateway (gateway ≥1.21+).
+ * Resultado de resolução automática de métrica por catálogo interno do gateway.
+ */
+export interface GatewayCanonicalMetricResult {
+  /** Chave canônica (ex.: 'cpu_usage', 'memory_used_percent', 'uptime'). */
+  canonicalKey: string;
+  /** Nome legível da métrica. */
+  label: string;
+  /** OID escolhido como melhor candidato; null para métricas derivadas/tabelas. */
+  selectedOid: string | null;
+  /** Valor lido pelo gateway (já em unidade de exibição). */
+  value: number | null;
+  /** Valor máximo observado (CPU multi-core). */
+  maxValue?: number | null;
+  /** Unidade de exibição. */
+  unit: string;
+  /** Fonte vencedora, já resolvida para nome legível. */
+  source: string | null;
+  /** Confiança da resolução feita pelo gateway. */
+  confidence: 'exact' | 'inferred';
+  /** OIDs membros (para métricas agregadas como média de CPUs). */
+  memberOids?: string[];
+  /** OIDs necessários para métricas derivadas de tabela. */
+  dependencyOids?: string[];
+  /** Detalhes por núcleo ou volume. */
+  detail?: Array<Record<string, unknown>>;
+  /** Contadores acumulados precisam ser convertidos para taxa no polling. */
+  isCounter?: boolean;
+  counterType?: 'counter32' | 'counter64';
+  rawUnit?: string;
+}
+
+export type GatewayCanonicalMetrics = Record<string, GatewayCanonicalMetricResult>;
+
+/** Formato transitório usado por gateways de desenvolvimento da Fase 3. */
+interface LegacyGatewayCanonicalMetricResult {
+  metricKey: string;
+  oid: string;
+  value: number | null;
+  unit: string;
+  verified?: boolean;
+  memberOids?: string[];
+  memberLabels?: Record<string, string>;
+}
+
+type GatewayCanonicalMetricsPayload =
+  | GatewayCanonicalMetrics
+  | LegacyGatewayCanonicalMetricResult[];
 
 export interface SnmpDiagnoseSuccess {
   success: true;
@@ -69,7 +179,15 @@ export interface SnmpDiagnoseSuccess {
   sysObjectId: string | null;
   oidResults: Record<string, DiagnoseOidResult>;
   walk: DiagnoseWalkSection[];
+  /** Estatísticas do walk (null quando o gateway é antigo). */
+  walkStats: DiagnoseWalkStats | null;
   durationMs: number;
+  /**
+   * Métricas canônicas resolvidas pelo gateway (gateway ≥1.21+).
+   * null/undefined em gateways antigos — nesse caso os controllers fazem
+   * a resolução via catálogo estático local.
+   */
+  canonicalMetrics?: GatewayCanonicalMetrics | null;
 }
 
 export type SnmpDiagnoseResult =
@@ -89,8 +207,11 @@ interface DiagnoseResultPayload {
   sysObjectId?: string | null;
   oidResults?: Record<string, DiagnoseOidResult>;
   walk?: DiagnoseWalkSection[];
+  walkStats?: DiagnoseWalkStats;
   durationMs?: number;
   error?: string;
+  /** Gateway ≥1.21+ — métricas canônicas resolvidas automaticamente. */
+  canonicalMetrics?: GatewayCanonicalMetricsPayload;
 }
 
 interface DiagnoseProgressPayload {
@@ -150,8 +271,13 @@ export class SnmpDiagnoseService implements OnModuleInit {
         port: dto.port,
         snmpVersion: dto.snmpVersion,
         community: dto.community,
+        // Credenciais v3 decifradas SÓ no payload MQTT ao gateway — nunca em
+        // respostas da API nem em logs (mesmo padrão das senhas ONVIF).
+        ...(dto.snmpVersion === '3' && dto.v3 ? { v3: dto.v3 } : {}),
         current: dto.current,
         candidates: dto.candidates,
+        deviceType: dto.deviceType,
+        manufacturer: dto.manufacturer,
       },
     };
 
@@ -282,7 +408,9 @@ export class SnmpDiagnoseService implements OnModuleInit {
         sysObjectId: payload.sysObjectId ?? null,
         oidResults: payload.oidResults ?? {},
         walk: Array.isArray(payload.walk) ? payload.walk : [],
+        walkStats: payload.walkStats ?? null,
         durationMs: Number(payload.durationMs) || 0,
+        canonicalMetrics: normalizeCanonicalMetrics(payload.canonicalMetrics),
       });
     } else {
       pending.resolve({
@@ -291,4 +419,33 @@ export class SnmpDiagnoseService implements OnModuleInit {
       });
     }
   }
+}
+
+function normalizeCanonicalMetrics(
+  input: GatewayCanonicalMetricsPayload | undefined,
+): GatewayCanonicalMetrics | null {
+  if (!input) return null;
+  if (!Array.isArray(input)) return input;
+
+  return Object.fromEntries(
+    input
+      .filter((metric) => typeof metric.metricKey === 'string' && metric.metricKey.length > 0)
+      .map((metric) => [
+        metric.metricKey,
+        {
+          canonicalKey: metric.metricKey,
+          label: metric.metricKey,
+          selectedOid: metric.oid || null,
+          value: metric.value,
+          unit: metric.unit,
+          source: null,
+          confidence: metric.verified === false ? 'inferred' : 'exact',
+          memberOids: metric.memberOids,
+          detail: Object.entries(metric.memberLabels ?? {}).map(([oid, descr]) => ({
+            oid,
+            descr,
+          })),
+        } satisfies GatewayCanonicalMetricResult,
+      ]),
+  );
 }

@@ -64,7 +64,7 @@ describe('resolveProvider', () => {
   });
 
   it('enterprise 1004849 ambíguo → Intelbras (melhor-esforço)', () => {
-    const p = resolveProvider({ pointOids: ['1.3.6.1.4.1.1004849.2.1.3.1.1.1'] });
+    const p = resolveProvider({ pointOids: ['1.3.6.1.4.1.1004849.2.1.3.0'] });
     expect(p?.id).toBe('intelbras');
     expect(p?.bestEffort).toBe(true);
   });
@@ -72,7 +72,7 @@ describe('resolveProvider', () => {
   it('cadastro manual Dahua desempata o enterprise compartilhado', () => {
     const p = resolveProvider({
       manufacturer: 'dahua',
-      pointOids: ['1.3.6.1.4.1.1004849.2.1.3.1.1.1'],
+      pointOids: ['1.3.6.1.4.1.1004849.2.1.3.0'],
     });
     expect(p?.id).toBe('dahua');
     expect(p?.bestEffort).toBeUndefined();
@@ -212,27 +212,28 @@ describe('CameraTelemetryEngine — camadas e prioridades', () => {
 // ─── Sentinelas Intelbras (dado não confiável) ───────────────────────────────
 
 describe('CameraTelemetryEngine — sentinelas Intelbras', () => {
-  const dahuaCpu = '1.3.6.1.4.1.1004849.2.1.3.1.1.1';
-  const dahuaTemp = '1.3.6.1.4.1.1004849.2.1.3.3.1.1';
+  // OIDs OFICIAIS Dahua: cpuUsage 2.1.3.0 / memoryUsage 2.1.9.2.0
+  const dahuaCpu = '1.3.6.1.4.1.1004849.2.1.3.0';
+  const dahuaMem = '1.3.6.1.4.1.1004849.2.1.9.2.0';
 
   it('valor 0 em campo com sentinela → unreliable (só naquele campo)', async () => {
-    const io = makeIo({ oidValues: { [dahuaCpu]: 0, [dahuaTemp]: 41 } });
+    const io = makeIo({ oidValues: { [dahuaCpu]: 0, [dahuaMem]: 41 } });
     const engine = new CameraTelemetryEngine(io);
     const out = await engine.runCycle(
       device({
         manufacturer: 'Intelbras',
         points: [
           { tag: 'CAM_CPU', metric: 'cpu' },
-          { tag: 'CAM_TEMP', metric: 'temperature' },
+          { tag: 'CAM_MEM', metric: 'memory' },
         ],
       }),
     );
     const cpu = pointOf(out, 'CAM_CPU');
     expect(cpu.value).toBe(0);
     expect(cpu.unreliable).toBe(true);
-    const temp = pointOf(out, 'CAM_TEMP');
-    expect(temp.value).toBe(41);
-    expect(temp.unreliable).toBeUndefined();
+    const mem = pointOf(out, 'CAM_MEM');
+    expect(mem.value).toBe(41);
+    expect(mem.unreliable).toBeUndefined();
   });
 
   it('Dahua (sem bestEffort) NÃO marca 0 como não confiável', async () => {

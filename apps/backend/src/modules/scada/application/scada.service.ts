@@ -51,7 +51,7 @@ export class ScadaService {
       select: { id: true },
     });
     if (!project) {
-      throw new NotFoundException(`Projeto ${projectId} não encontrado`);
+      throw new NotFoundException(`Gateway ${projectId} não encontrado`);
     }
     return this.prisma.project.update({
       where: { id: projectId },
@@ -72,7 +72,7 @@ export class ScadaService {
       select: { id: true },
     });
     if (!project) {
-      throw new NotFoundException(`Projeto ${projectId} não encontrado`);
+      throw new NotFoundException(`Gateway ${projectId} não encontrado`);
     }
     await this.prisma.$transaction([
       // Apaga só as telas SCADA deste projeto (escopadas ao tenant por segurança).
@@ -121,7 +121,7 @@ export class ScadaService {
       select: { name: true },
     });
     if (siblings.some((s) => s.name.trim().toLowerCase() === normalized)) {
-      const where = scope.projectId ? 'neste projeto' : scope.siteId ? 'neste site' : 'neste cliente';
+      const where = scope.projectId ? 'neste gateway' : scope.siteId ? 'neste site' : 'neste cliente';
       throw new ConflictException(`Já existe uma tela com esse nome ${where}`);
     }
   }
@@ -141,7 +141,7 @@ export class ScadaService {
         select: { id: true, siteId: true },
       });
       if (!project) {
-        throw new NotFoundException(`Projeto ${dto.projectId} não encontrado para este cliente`);
+        throw new NotFoundException(`Gateway ${dto.projectId} não encontrado para este cliente`);
       }
     } else if (dto.siteId) {
       const site = await this.prisma.site.findFirst({

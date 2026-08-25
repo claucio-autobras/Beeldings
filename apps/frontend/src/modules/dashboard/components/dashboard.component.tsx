@@ -12,4 +12,3 @@ export { DeviceAreaTable } from './DeviceAreaTable';
 export { QuickAccess } from './QuickAccess';
 export { OperationalSummaryCard } from './OperationalSummaryCard';
 export { TopOffendersCard } from './TopOffendersCard';
-export { AdminTrendCard } from './AdminTrendCard';

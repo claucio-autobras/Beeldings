@@ -150,17 +150,20 @@ describe('resolveProfile() — ACCESS_CONTROLLER', () => {
     expect(cpu?.profileLayer).toBe('vendor');
   });
 
-  it('manufacturer="Control iD" → perfil control-id (monitoramento genérico MIB-II por ora)', () => {
+  it('manufacturer="Control iD" → média canônica via hrProcessorLoad e temperatura não suportada', () => {
     const p = resolveProfile({
       deviceType: 'ACCESS_CONTROLLER',
       manufacturer: 'Control iD',
     });
     expect(p.id).toBe('control-id');
-    // Perfil ainda sem OIDs proprietários → cai nos OIDs base MIB-II
+    // A fonte proprietária cidCpuUsage não representa a média canônica.
     const cpu = p.mappings.get('cpu');
-    expect(cpu).not.toBeNull();
-    // Deve ser OID MIB-II (HOST-RESOURCES hrProcessorLoad), não OID proprietário
-    expect(cpu?.profileLayer).toBe('base');
+    expect(cpu?.tableOidPrefix).toBe('1.3.6.1.2.1.25.3.3.1.2');
+    expect(cpu?.profileLayer).toBe('vendor');
+    const temp = p.mappings.get('temperature');
+    expect(temp?.oid).toBe('');
+    expect(temp?.scale).toBeUndefined();
+    expect(temp?.profileLayer).toBe('vendor');
   });
 
   it('manufacturer="Intelbras" → perfil intelbras-ac (monitoramento genérico MIB-II por ora)', () => {
@@ -197,11 +200,11 @@ describe('resolveProfile() — ACCESS_CONTROLLER', () => {
     expect(ids).toContain('intelbras-ac');
   });
 
-  it('BASE_ACCESS_CONTROLLER_PROFILE tem priority === 0 e define cpu, memory e uptime', () => {
+    it('BASE_ACCESS_CONTROLLER_PROFILE tem priority === 0 e define cpu, memória disponível e uptime', () => {
     expect(BASE_ACCESS_CONTROLLER_PROFILE.priority).toBe(0);
     const keys = BASE_ACCESS_CONTROLLER_PROFILE.mappings.map((m) => m.metricKey);
     expect(keys).toContain('cpu');
-    expect(keys).toContain('memory');
+      expect(keys).toContain('memory_available');
     expect(keys).toContain('uptime');
   });
 

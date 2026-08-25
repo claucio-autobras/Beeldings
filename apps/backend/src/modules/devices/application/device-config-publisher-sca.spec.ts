@@ -19,7 +19,13 @@ function fakePoint(tag: string, metric: string) {
     objectType: 'AV',
     instance: 0,
     unit: '%',
-    binding: { metric, oid: '1.3.6.1.2.1.25.3.3.1.2.1', scale: 1 },
+    binding: {
+      metric,
+      oid: metric === 'memory'
+        ? '1.3.6.1.4.1.2021.4.6.0'
+        : '1.3.6.1.2.1.25.3.3.1.2.1',
+      scale: 1,
+    },
   };
 }
 
@@ -50,6 +56,13 @@ function buildPrismaMock(devices: ReturnType<typeof fakeScaDevice>[]) {
     device: {
       findMany: jest.fn().mockResolvedValue(devices),
       groupBy: jest.fn().mockResolvedValue([]),
+    },
+    // Espelho de bindings de coleta (fase 2): stub mínimo — os devices fake
+    // não trazem metricBindings, então o sync só cria a partir dos pontos.
+    deviceMetricBinding: {
+      create: jest.fn().mockResolvedValue({}),
+      update: jest.fn().mockResolvedValue({}),
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
   };
 }
@@ -91,6 +104,74 @@ describe('DeviceConfigPublisherService — SCA (ACCESS_CONTROLLER)', () => {
     const block = payload.devices[0];
     expect(block.protocol).toBe('snmp');
     expect(block.monitoredDeviceType).toBe('ACCESS_CONTROLLER');
+    const memoryPoint = (block.points as Array<{ tag: string; metric: string; oid: string | null; unit: string | null }>)
+      .find((point) => point.tag === 'MEM');
+    expect(memoryPoint).toMatchObject({
+      metric: 'memory_available',
+      oid: '1.3.6.1.4.1.2021.4.6.0',
+      unit: 'bytes',
+    });
+  });
+
+  it('não publica OID residual de temperatura no perfil Control iD', async () => {
+    const device = fakeScaDevice({
+      config: {
+        snmpVersion: '2c',
+        community: 'public',
+        manufacturer: 'Control iD',
+      },
+      points: [
+        ...fakeScaDevice().points,
+        {
+          tag: 'TEMPERATURA',
+          objectType: 'snmp',
+          instance: 3,
+          unit: '°C',
+          binding: {
+            metric: 'temperature',
+            oid: '1.3.6.1.4.1.2021.13.16.2.1.3.1',
+            scale: 1,
+          },
+        },
+      ],
+    });
+    const prisma = buildPrismaMock([device]);
+    const { mock: published, service: mqtt } = buildMqttMock();
+    const publisher = new DeviceConfigPublisherService(prisma as never, mqtt as never);
+
+    await publisher.publishForGateway('tenant-1', 'gw-1');
+
+    const payload = published[0].payload as {
+      devices: Array<{ points: Array<Record<string, unknown>> }>;
+    };
+    const temperature = payload.devices[0].points.find((point) => point.tag === 'TEMPERATURA');
+    expect(temperature).toMatchObject({
+      metric: 'temperature',
+      oid: null,
+      unsupported: true,
+    });
+  });
+
+  it('publica as dependências UCD da memória recuperável para Control iD', async () => {
+    const device = fakeScaDevice({
+      config: { snmpVersion: '2c', community: 'public', manufacturer: 'Control iD' },
+    });
+    const prisma = buildPrismaMock([device]);
+    const { mock: published, service: mqtt } = buildMqttMock();
+    const publisher = new DeviceConfigPublisherService(prisma as never, mqtt as never);
+
+    await publisher.publishForGateway('tenant-1', 'gw-1');
+
+    const payload = published[0].payload as {
+      devices: Array<{ points: Array<{ tag: string; memberOids?: string[] }> }>;
+    };
+    expect(payload.devices[0].points.find((point) => point.tag === 'MEM')?.memberOids)
+      .toEqual([
+        '1.3.6.1.4.1.2021.4.6.0',
+        '1.3.6.1.4.1.2021.4.14.0',
+        '1.3.6.1.4.1.2021.4.15.0',
+        '1.3.6.1.4.1.2021.4.5.0',
+      ]);
   });
 
   it('controladora SCA com monitoredDeviceType null usa "CAMERA" como fallback', async () => {

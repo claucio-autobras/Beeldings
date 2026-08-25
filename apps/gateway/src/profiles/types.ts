@@ -141,6 +141,17 @@ export interface DeviceProfile {
   bestEffort?: boolean;
   /** Mapeamentos métrica → meio de coleta neste perfil. */
   mappings: MetricMapping[];
+  /**
+   * Conhecimento de DESCOBERTA aportado pelo perfil (aditivo — nunca altera
+   * o motor genérico): subárvores proprietárias a percorrer no walk de
+   * diagnóstico, além das raízes padrão (MIB-II, HOST-RESOURCES, ENTITY).
+   * Perfil sem `discovery` → fallback automático para a enterprise extraída
+   * do sysObjectID do equipamento.
+   */
+  discovery?: {
+    /** Raízes de walk proprietárias (ex.: Control iD → '1.3.6.1.4.1.49617.1'). */
+    walkRoots?: string[];
+  };
 }
 
 /**

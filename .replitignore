@@ -13,6 +13,9 @@
 # apps/frontend/.next inteiro: o .replitignore também remove o build de
 # produção da imagem final → "Could not find a production build" em prod.
 apps/frontend/.next/cache
+# Artefatos do servidor de DESENVOLVIMENTO (Turbopack) — chegam a 1,7 GB e
+# não são usados em produção (o build de prod recria .next do zero)
+apps/frontend/.next/dev
 
 # Libs Python (usadas só em ferramentas de dev, nada em produção roda Python)
 .pythonlibs

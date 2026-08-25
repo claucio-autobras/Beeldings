@@ -11,6 +11,10 @@ import {
 } from './preferences.types';
 
 export const PREFS_KEY = 'bluebee_prefs';
+/** Cookie leve que persiste o tema resolvido (dark|light) para o SSR.
+ *  Sem HttpOnly — precisa ser legível pelo script inline no <head>.
+ *  Max-age de 1 ano; path=/ para valer em todas as rotas. */
+export const THEME_COOKIE = 'bluebee_theme';
 const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK === 'true';
 
 // ─── Cache local (resposta instantânea + no-flash do tema) ───────────────────
@@ -56,17 +60,28 @@ export function isPublicRoute(pathname?: string): boolean {
   return PUBLIC_ROUTE_RE.test(path);
 }
 
+/** Grava o tema resolvido no cookie leve usado pelo SSR (sem HttpOnly). */
+function setThemeCookie(resolved: 'dark' | 'light'): void {
+  if (typeof document === 'undefined') return;
+  // max-age=31536000 = 1 ano; SameSite=Lax é seguro e compatível com o proxy
+  document.cookie = `${THEME_COOKIE}=${resolved}; path=/; SameSite=Lax; max-age=31536000`;
+}
+
 export function applyTheme(theme: ThemePreference): void {
   if (typeof document === 'undefined') return;
   if (isPublicRoute()) {
     // Rotas públicas são sempre claras — não reaplicar o tema salvo aqui.
     document.documentElement.classList.remove('dark');
     document.documentElement.style.colorScheme = 'light';
+    setThemeCookie('light');
     return;
   }
   const dark = theme === 'dark' || (theme === 'system' && systemPrefersDark());
   document.documentElement.classList.toggle('dark', dark);
   document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+  // Persiste o tema resolvido no cookie para que o SSR pinte o <html>
+  // corretamente no próximo carregamento — elimina o flash claro/escuro.
+  setThemeCookie(dark ? 'dark' : 'light');
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────

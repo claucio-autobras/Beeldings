@@ -35,6 +35,16 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   // ── Passo 2: validação assíncrona no backend ───────────────────────────────
   useEffect(() => {
+    const path = window.location.pathname;
+    const isPublic =
+      path.startsWith('/login') ||
+      path.startsWith('/forgot-password') ||
+      path.startsWith('/reset-password');
+    // Páginas públicas não precisam validar uma sessão: além de evitar uma
+    // chamada 401 inútil, isso mantém recuperação de senha independente do
+    // estado de cookies do navegador.
+    if (isPublic) return;
+
     const existing = getSession(); // lê de novo para o snapshot correto
     void refreshProfile().then((user) => {
       if (user) {
@@ -44,8 +54,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
       // Sessão inválida (cookie ausente/expirado): limpa e redireciona ao login,
       // exceto em rotas públicas (a própria tela de login passa por aqui).
       clearAuth();
-      const path = window.location.pathname;
-      const isPublic = path.startsWith('/login') || path.startsWith('/forgot-password');
       if (!isPublic && existing) {
         window.location.href = '/login';
       }

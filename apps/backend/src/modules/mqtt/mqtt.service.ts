@@ -21,7 +21,25 @@ export interface MqttConnectionStatus {
   lastDisconnectedAt: string | null;
   /** Mensagem do último erro MQTT, ou null. */
   lastError: string | null;
+  /**
+   * O broker RECUSOU a credencial do backend (CONNACK de autenticação) e a
+   * conexão segue caída — estado que exige ação do admin (re-provisionar as
+   * credenciais no EMQX ou corrigir MQTT_USERNAME/MQTT_PASSWORD).
+   */
+  authRefused: boolean;
+  /** Último instante em que o broker recusou a autenticação (ISO), ou null. */
+  lastAuthRefusedAt: string | null;
 }
+
+/** Período normal de reconexão do cliente MQTT. */
+const RECONNECT_PERIOD_MS = 5_000;
+/**
+ * Período de reconexão APÓS recusa de autenticação. Reconectar a cada 5s com
+ * credencial inválida dispara o flapping_detect do EMQX (15 (des)conexões/min
+ * → ban de 5 min), o que atrasaria a recuperação mesmo depois de corrigir a
+ * credencial. 60s fica bem abaixo do limiar e ainda recupera sozinho.
+ */
+const AUTH_REFUSED_RECONNECT_PERIOD_MS = 60_000;
 
 @Injectable()
 export class MqttService implements OnModuleInit, OnModuleDestroy {
@@ -36,6 +54,8 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
   private lastConnectedAt: string | null = null;
   private lastDisconnectedAt: string | null = null;
   private lastError: string | null = null;
+  private authRefused = false;
+  private lastAuthRefusedAt: string | null = null;
   private sanitizedBroker = '';
   private authUsername: string | undefined;
 
@@ -54,7 +74,7 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
       clientId,
       username,
       password,
-      reconnectPeriod: 5000,
+      reconnectPeriod: RECONNECT_PERIOD_MS,
       connectTimeout: 10000,
     });
 
@@ -62,6 +82,13 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
       this.connected = true;
       this.connectCount += 1;
       this.lastConnectedAt = new Date().toISOString();
+      if (this.authRefused) {
+        // Credencial voltou a ser aceita — limpa o estado e restaura o ritmo
+        // normal de reconexão.
+        this.authRefused = false;
+        this.client.options.reconnectPeriod = RECONNECT_PERIOD_MS;
+        this.logger.log('MQTT: autenticação restabelecida no broker');
+      }
       this.logger.log(`Connected to MQTT broker: ${this.sanitizedBroker}`);
     });
 
@@ -78,6 +105,11 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
         reasonCode === 134 ||
         reasonCode === 135
       ) {
+        this.authRefused = true;
+        this.lastAuthRefusedAt = new Date().toISOString();
+        // Anti-flapping: reconectar a cada 5s com credencial recusada ativa o
+        // ban temporário do EMQX (flapping_detect) — recua para 60s.
+        this.client.options.reconnectPeriod = AUTH_REFUSED_RECONNECT_PERIOD_MS;
         this.logger.error(
           `MQTT: AUTENTICAÇÃO RECUSADA pelo broker ${this.sanitizedBroker} ` +
             `(username: ${this.authUsername ?? '(não definido)'}): ${err.message}. ` +
@@ -126,6 +158,8 @@ export class MqttService implements OnModuleInit, OnModuleDestroy {
       lastConnectedAt: this.lastConnectedAt,
       lastDisconnectedAt: this.lastDisconnectedAt,
       lastError: this.lastError,
+      authRefused: this.authRefused,
+      lastAuthRefusedAt: this.lastAuthRefusedAt,
     };
   }
 

@@ -32,7 +32,7 @@ function makeSitesPrisma() {
 describe('SitesService.create — endereço e contato do site', () => {
   it('persiste location e responsibleName com trim', async () => {
     const prisma = makeSitesPrisma();
-    const service = new SitesService(prisma as never, {} as never);
+    const service = new SitesService(prisma as never, {} as never, {} as never);
 
     const site = await service.create({
       name: '  Unidade Morumbi ',
@@ -51,7 +51,7 @@ describe('SitesService.create — endereço e contato do site', () => {
 
   it('campos ausentes ou vazios viram null', async () => {
     const prisma = makeSitesPrisma();
-    const service = new SitesService(prisma as never, {} as never);
+    const service = new SitesService(prisma as never, {} as never, {} as never);
 
     await service.create({ name: 'Site X', tenantId: 't1', location: '', responsibleName: undefined });
 

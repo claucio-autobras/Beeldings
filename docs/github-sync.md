@@ -11,12 +11,15 @@ pelos checkpoints do Replit) nem faz force-push depois da base publicada.
 | --- | --- |
 | `scripts/sync-github.sh status` | Mostra se Replit e GitHub estão em dia, à frente, atrás ou divergentes. |
 | `scripts/sync-github.sh push` | Reproduz cada commit local desde o último ponto sincronizado como commit normal em cima do `main` remoto (sem force). **Aborta** se o GitHub tiver commits ainda não trazidos — rode `pull` primeiro. |
+| `scripts/sync-github.sh push-snapshot` | Publica o estado atual da `main` como um único commit normal. É o comando recomendado quando existem muitos commits locais pendentes; exclui `attached_assets/`, `exports/`, `screenshots/`, vídeos, o artefato de vídeo e saídas geradas. |
 | `scripts/sync-github.sh pull` | Busca os commits novos do GitHub, aplica o diff ao worktree e cria um commit no `main` local preservando mensagem/autoria originais no texto. |
 | `scripts/sync-github.sh init-base` | Só para primeiro setup ou recuperação: force-pusha um snapshot sem histórico do HEAD atual e registra o ponto de sincronização. Apaga commits remotos ainda não trazidos — use com cuidado. |
 
 Requisitos: `GITHUB_TOKEN` no ambiente (vai via credential helper do git — nunca em URLs,
 arquivos ou logs). O estado do ponto de sincronização (SHA local ↔ SHA remoto) fica em
-`.git/bluebee-github-sync`, fora do worktree versionado. `backups/` nunca é publicado.
+`.git/bluebee-github-sync`, fora do worktree versionado. `backups/`, `attached_assets/`,
+`exports/`, `screenshots/`, vídeos e artefatos de vídeo nunca são publicados. Assets de
+runtime em `apps/frontend/public` continuam no snapshot porque são necessários para o app.
 
 O `scripts/post-merge.sh` roda `status` após cada merge como lembrete (não bloqueia).
 

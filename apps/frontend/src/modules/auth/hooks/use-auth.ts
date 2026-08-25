@@ -7,19 +7,21 @@ import {
   signIn,
   signOut,
   getSession,
+  verifyEmailTwoFactor,
 } from '../services/auth.service';
 import {
   useAuthStore,
   selectUser,
   selectIsAuthenticated,
 } from '../store/auth.store';
-import type { LoginCredentials, AuthUser } from '../types/auth.types';
+import type { LoginCredentials, AuthUser, LoginOutcome } from '../types/auth.types';
 
 export interface UseAuthReturn {
   user: AuthUser | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (credentials: LoginCredentials) => Promise<void>;
+  login: (credentials: LoginCredentials) => Promise<LoginOutcome | undefined>;
+  verifyTwoFactor: (challengeId: string, code: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -42,14 +44,36 @@ export function useAuth(): UseAuthReturn {
   }, []);
 
   const login = useCallback(
-    async (credentials: LoginCredentials): Promise<void> => {
+    async (credentials: LoginCredentials): Promise<LoginOutcome | undefined> => {
       setLoading(true);
       try {
-        const newSession = await signIn(credentials);
+        const outcome = await signIn(credentials);
+        if ('requiresTwoFactor' in outcome) {
+          setLoading(false);
+          return outcome;
+        }
+        const newSession = outcome;
         // Descarta qualquer cache do React Query do usuário anterior ANTES de
         // autenticar o novo. O QueryClient vive durante toda a aba (SPA), então
         // sem isso dados do usuário anterior (ex.: lista de usuários do admin)
         // vazariam por instantes para o novo usuário. Ver fix do flash do admin.
+        queryClient.clear();
+        setSession(newSession);
+        router.push('/dashboard');
+        return undefined;
+      } catch (err) {
+        setLoading(false);
+        throw err;
+      }
+    },
+    [setSession, setLoading, router, queryClient],
+  );
+
+  const verifyTwoFactor = useCallback(
+    async (challengeId: string, code: string): Promise<void> => {
+      setLoading(true);
+      try {
+        const newSession = await verifyEmailTwoFactor(challengeId, code);
         queryClient.clear();
         setSession(newSession);
         router.push('/dashboard');
@@ -69,5 +93,5 @@ export function useAuth(): UseAuthReturn {
     router.push('/login');
   }, [clearAuth, router, queryClient]);
 
-  return { user, isAuthenticated, isLoading, login, logout };
+  return { user, isAuthenticated, isLoading, login, verifyTwoFactor, logout };
 }

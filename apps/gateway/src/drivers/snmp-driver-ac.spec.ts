@@ -1,183 +1,161 @@
 /**
- * SnmpDriver — comportamento de identificação e coleta para ACCESS_CONTROLLER.
+ * Contrato de polling SNMP para controladoras de acesso.
  *
- * Verifica que:
- *  1. Sem manufacturer, o driver tenta sysDescr auto-detect (NOT base-camera shortcut).
- *  2. Com sysDescr Hikvision → perfil vendor hikvision.
- *  3. Sem sysDescr útil → perfil base-access-controller após SNMP respondido.
- *  4. Quando SNMP falha (readNumbers=null), STATUS=0 e todos os pontos null.
- *  5. manufacturer='Hikvision' → perfil hikvision sem precisar de readStrings.
+ * A identificação e a descoberta acontecem antes da coleta. O ciclo recorrente
+ * recebe bindings concretos e só executa GET; perfil implícito e walk não fazem
+ * parte deste caminho.
  */
-
-jest.mock('../snmp/snmp-read.util', () => ({
-  readSnmpOids: jest.fn(),
-  readSnmpStrings: jest.fn(),
-}));
-
-import { SnmpDriver, type SnmpDeviceConfig } from './snmp.driver';
-import { LAYER1_OIDS } from '../cameras/provider-registry';
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+import {
+  computeLinuxAvailableMemory,
+  SnmpDriver,
+  type SnmpDeviceConfig,
+} from './snmp.driver';
 
 const SNMP = { ip: '10.0.0.50', port: 161, community: 'public', snmpVersion: '2c' as const };
+const CPU_OID = '1.3.6.1.4.1.49617.1.1.4.0';
+const HR_CPU_OIDS = [
+  '1.3.6.1.2.1.25.3.3.1.2.1',
+  '1.3.6.1.2.1.25.3.3.1.2.2',
+  '1.3.6.1.2.1.25.3.3.1.2.3',
+  '1.3.6.1.2.1.25.3.3.1.2.4',
+];
+const MEM_OID = '1.3.6.1.4.1.2021.4.6.0';
+const MEM_TOTAL_OID = '1.3.6.1.4.1.2021.4.5.0';
+const MEM_BUFFER_OID = '1.3.6.1.4.1.2021.4.14.0';
+const MEM_CACHED_OID = '1.3.6.1.4.1.2021.4.15.0';
 
-function makeIo(opts: {
-  /**
-   * Quando true, readStrings retorna null (device não responde ao sysDescr → retry
-   * no próximo ciclo). Quando false/ausente, readStrings retorna o par fornecido em
-   * `readStringsResult` (ou [null, null] por padrão — device respondeu mas sem info útil).
-   *
-   * NOTA: não passar `null` diretamente aqui, pois `null ?? default` avalia para
-   * `default` — use `stringsTimeout: true` para simular ausência de resposta.
-   */
-  stringsTimeout?: boolean;
-  readStringsResult?: [string | null, string | null];
-  /** Null = timeout no readNumbers (device offline). Omitir = all-null mas acessível. */
-  oidValues?: Record<string, number | null> | null;
-} = {}) {
-  const stringsResponse: [string | null, string | null] | null = opts.stringsTimeout
-    ? null
-    : (opts.readStringsResult ?? [null, null]);
-
+function makeIo(values: Record<string, number | null> = {}) {
   return {
-    readStrings: jest.fn().mockResolvedValue(stringsResponse),
-    readNumbers: jest.fn(async (_target: unknown, oids: string[]) => {
-      if (opts.oidValues === null) return null; // simula timeout
-      return oids.map((o) => opts.oidValues?.[o] ?? null);
-    }),
+    readStrings: jest.fn().mockResolvedValue(['Control iD', '1.3.6.1.4.1.49617.1']),
+    readNumbers: jest.fn(async (_target: unknown, oids: string[]) =>
+      oids.map((oid) => values[oid] ?? null),
+    ),
     pingLoss: jest.fn().mockResolvedValue(null),
     isapiUptime: jest.fn().mockResolvedValue(null),
+    readTable: jest.fn().mockResolvedValue([]),
   };
 }
 
-/** Device mínimo de controladora de acesso. */
-function acDevice(overrides: Partial<SnmpDeviceConfig> = {}): SnmpDeviceConfig {
+function device(points: SnmpDeviceConfig['points']): SnmpDeviceConfig {
   return {
     deviceId: 'ctrl-1',
-    ip: '10.0.0.50',
+    ip: SNMP.ip,
     snmp: SNMP,
     monitoredDeviceType: 'ACCESS_CONTROLLER',
-    manufacturer: null,
-    points: [
-      { tag: 'STATUS', metric: 'status', oid: null, scale: 1, unit: null },
-      { tag: 'CPU', metric: 'cpu', oid: '1.3.6.1.2.1.25.3.3.1.2.1', scale: 1, unit: '%' },
-      { tag: 'MEM', metric: 'memory', oid: '1.3.6.1.4.1.2021.4.6.0', scale: 1, unit: 'kB' },
-    ],
-    ...overrides,
+    manufacturer: 'Control iD',
+    restrictToBindings: true,
+    points,
   };
 }
 
-// ─── Identificação ────────────────────────────────────────────────────────────
-
-describe('SnmpDriver — ACCESS_CONTROLLER identification', () => {
-  it('sem manufacturer tenta sysDescr auto-detect (readStrings chamado)', async () => {
-    // Device responde ao sysDescr mas sem info útil → fica no perfil base
-    const io = makeIo({ oidValues: { [LAYER1_OIDS.sysUpTime]: 10000 } });
-    const driver = new SnmpDriver(io);
-
-    await driver.runCycle(acDevice());
-
-    // readStrings DEVE ter sido chamado — sem manufacturer há auto-detect
-    expect(io.readStrings).toHaveBeenCalledTimes(1);
-    expect(io.readStrings).toHaveBeenCalledWith(SNMP, [LAYER1_OIDS.sysDescr, LAYER1_OIDS.sysObjectId]);
-  });
-
-  it('sysDescr Hikvision → perfil vendor hikvision, não base-access-controller', async () => {
+describe('SnmpDriver — ACCESS_CONTROLLER polling GET-only', () => {
+  it('publica a média de todos os núcleos hrProcessorLoad, não o OID proprietário', async () => {
     const io = makeIo({
-      readStringsResult: ['Hikvision DS-K2602 Linux 3.0', '1.3.6.1.4.1.39165.1.1'],
-      oidValues: {},
+      [HR_CPU_OIDS[0]]: 28,
+      [HR_CPU_OIDS[1]]: 17,
+      [HR_CPU_OIDS[2]]: 19,
+      [HR_CPU_OIDS[3]]: 22,
+      [CPU_OID]: 99,
     });
     const driver = new SnmpDriver(io);
+    const out = await driver.runCycle(device([{
+      tag: 'CPU',
+      metric: 'cpu_usage',
+      oid: HR_CPU_OIDS[0],
+      memberOids: HR_CPU_OIDS,
+      scale: 1,
+      unit: '%',
+    }]));
 
-    await driver.runCycle(acDevice());
-
-    expect(driver.profileId).toBe('hikvision');
+    expect(io.readNumbers.mock.calls[0][1]).toEqual(expect.arrayContaining(HR_CPU_OIDS));
+    expect(out.points[0]).toMatchObject({
+      value: 21.5,
+      unit: '%',
+      source: 'aggregate',
+    });
   });
 
-  it('sysDescr genérico (sem match) → perfil base-access-controller', async () => {
+  it('compõe memória Linux recuperável e limita ao total', () => {
+    expect(computeLinuxAvailableMemory(31_400, 10_000, 18_000, 119_400)).toBe(59_400);
+    expect(computeLinuxAvailableMemory(110_000, 20_000, 20_000, 119_400)).toBe(119_400);
+  });
+
+  it('publica memória Linux composta em bytes e inclui dependências no GET', async () => {
     const io = makeIo({
-      readStringsResult: ['Generic Linux Device', '1.3.6.1.4.1.99999.1'],
-      oidValues: {},
+      [MEM_OID]: 31_400,
+      [MEM_BUFFER_OID]: 10_000,
+      [MEM_CACHED_OID]: 18_000,
+      [MEM_TOTAL_OID]: 119_400,
     });
     const driver = new SnmpDriver(io);
+    const out = await driver.runCycle(device([
+      { tag: 'STATUS', metric: 'status', oid: null, scale: 1, unit: null },
+      { tag: 'MEM', metric: 'memory_available', oid: MEM_OID, scale: 1024, unit: 'bytes' },
+    ]));
 
-    await driver.runCycle(acDevice());
-
-    expect(driver.profileId).toBe('base-access-controller');
-  });
-
-  it('com manufacturer="Hikvision" → perfil hikvision SEM readStrings (skip auto-detect)', async () => {
-    const io = makeIo({ oidValues: {} });
-    const driver = new SnmpDriver(io);
-
-    await driver.runCycle(acDevice({ manufacturer: 'Hikvision' }));
-
-    // Manufacturer explícito → identifica diretamente, sem SNMP de auto-detect.
-    expect(io.readStrings).not.toHaveBeenCalled();
-    expect(driver.profileId).toBe('hikvision');
-  });
-
-  it('com manufacturer desconhecido → base-access-controller SEM readStrings', async () => {
-    const io = makeIo({ oidValues: {} });
-    const driver = new SnmpDriver(io);
-
-    await driver.runCycle(acDevice({ manufacturer: 'MarcaXYZ' }));
-
-    // Manufacturer set mas sem match vendor → skip auto-detect, usa base
-    expect(io.readStrings).not.toHaveBeenCalled();
-    expect(driver.profileId).toBe('base-access-controller');
-  });
-
-  it('SNMP não responde no 1º ciclo → não identificado ainda (retry no próximo ciclo)', async () => {
-    // stringsTimeout: true → readStrings retorna null (device não responde sysDescr)
-    const io = makeIo({ stringsTimeout: true, oidValues: {} });
-    const driver = new SnmpDriver(io);
-
-    await driver.runCycle(acDevice());
-
-    // Não identificado → profileId ainda null (retry no próximo ciclo)
-    expect(driver.profileId).toBeNull();
-  });
-});
-
-// ─── Telemetria com SNMP falhando ─────────────────────────────────────────────
-
-describe('SnmpDriver — ACCESS_CONTROLLER null-on-failure', () => {
-  it('readNumbers=null → reachable=false, STATUS=0, demais pontos null', async () => {
-    // Controladora identificada (manufacturer=Hikvision para pular auto-detect)
-    // mas readNumbers falha neste ciclo.
-    const io = makeIo({ oidValues: null }); // null = timeout no readNumbers
-    const driver = new SnmpDriver(io);
-
-    const out = await driver.runCycle(acDevice({ manufacturer: 'Hikvision' }));
-
-    expect(out.reachable).toBe(false);
-
-    const byTag = Object.fromEntries(out.points.map((p) => [p.tag, p.value]));
-    expect(byTag['STATUS']).toBe(0);
-    expect(byTag['CPU']).toBeNull();
-    expect(byTag['MEM']).toBeNull();
-  });
-
-  it('readNumbers ok → reachable=true, STATUS=1, valores publicados', async () => {
-    const io = makeIo({
-      readStringsResult: [null, null],
-      oidValues: {
-        [LAYER1_OIDS.sysUpTime]: 360000,       // 3600s
-        [LAYER1_OIDS.ifInDiscards]: 0,
-        [LAYER1_OIDS.ifInErrors]: 0,
-        '1.3.6.1.2.1.25.3.3.1.2.1': 42,       // CPU 42%
-        '1.3.6.1.4.1.2021.4.6.0': 512000,      // MEM 512 MB
-      },
+    expect(io.readNumbers.mock.calls[0][1]).toEqual(expect.arrayContaining([
+      MEM_OID, MEM_BUFFER_OID, MEM_CACHED_OID, MEM_TOTAL_OID,
+    ]));
+    expect(out.points.find((point) => point.tag === 'MEM')).toMatchObject({
+      value: 59_400 * 1024,
+      unit: 'bytes',
+      source: 'linux-memory',
     });
-    const driver = new SnmpDriver(io);
+  });
 
-    const out = await driver.runCycle(acDevice());
+  it('mantém memAvailReal quando buffers/cache não são expostos', async () => {
+    const io = makeIo({ [MEM_OID]: 31_400 });
+    const driver = new SnmpDriver(io);
+    const out = await driver.runCycle(device([
+      { tag: 'MEM', metric: 'memory_available', oid: MEM_OID, scale: 1024, unit: 'bytes' },
+    ]));
 
     expect(out.reachable).toBe(true);
-    const byTag = Object.fromEntries(out.points.map((p) => [p.tag, p.value]));
-    expect(byTag['STATUS']).toBe(1);
-    expect(byTag['CPU']).toBe(42);
-    expect(byTag['MEM']).toBe(512000);
+    expect(out.points[0]).toMatchObject({ value: 31_400 * 1024, source: 'linux-memory' });
+  });
+
+  it('consulta somente os OIDs persistidos e não identifica perfil em cada ciclo', async () => {
+    const io = makeIo({ [CPU_OID]: 23.4, [MEM_OID]: 45000 });
+    const driver = new SnmpDriver(io);
+    const out = await driver.runCycle(device([
+      { tag: 'STATUS', metric: 'status', oid: null, scale: 1, unit: null },
+      { tag: 'CPU', metric: 'cpu_usage', oid: CPU_OID, scale: 1, unit: '%' },
+      { tag: 'MEM', metric: 'memory_used_percent', oid: MEM_OID, scale: 1, unit: '%' },
+    ]));
+
+    expect(io.readStrings).not.toHaveBeenCalled();
+    expect(io.readTable).not.toHaveBeenCalled();
+    expect(io.readNumbers.mock.calls[0][1]).toEqual(expect.arrayContaining([CPU_OID, MEM_OID]));
+    expect(out.reachable).toBe(true);
+    expect(out.points.find((point) => point.tag === 'CPU')?.value).toBe(23.4);
+  });
+
+  it('binding sem OID não inventa candidato nem volta ao perfil implícito', async () => {
+    const io = makeIo();
+    const driver = new SnmpDriver(io);
+    const out = await driver.runCycle(device([
+      { tag: 'STATUS', metric: 'status', oid: null, scale: 1, unit: null },
+      { tag: 'CPU', metric: 'cpu_usage', oid: null, scale: 1, unit: '%' },
+    ]));
+
+    expect(io.readNumbers).toHaveBeenCalledWith(SNMP, []);
+    expect(io.readStrings).not.toHaveBeenCalled();
+    expect(out.points.find((point) => point.tag === 'CPU')?.value).toBeNull();
+  });
+
+  it('timeout do GET publica offline e valores nulos', async () => {
+    const io = {
+      ...makeIo(),
+      readNumbers: jest.fn().mockResolvedValue(null),
+    };
+    const driver = new SnmpDriver(io);
+    const out = await driver.runCycle(device([
+      { tag: 'STATUS', metric: 'status', oid: null, scale: 1, unit: null },
+      { tag: 'CPU', metric: 'cpu_usage', oid: CPU_OID, scale: 1, unit: '%' },
+    ]));
+
+    expect(out.reachable).toBe(false);
+    expect(out.points.find((point) => point.tag === 'STATUS')?.value).toBe(0);
+    expect(out.points.find((point) => point.tag === 'CPU')?.value).toBeNull();
   });
 });

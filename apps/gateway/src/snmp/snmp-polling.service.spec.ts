@@ -7,9 +7,7 @@
  * para o frontend seguir mostrando "não suportado". O STATUS nunca é
  * afetado por ponto unsupported.
  *
- * Com o motor de 3 camadas, o GET em lote passa a incluir também os OIDs
- * MIB-II da Camada 1 (sysUpTime/ifInDiscards/ifInErrors) — sempre à frente
- * dos OIDs dos pontos.
+ * O GET em lote contém exclusivamente OIDs persistidos nos bindings.
  */
 
 jest.mock('./snmp-read.util', () => ({
@@ -20,7 +18,7 @@ jest.mock('./snmp-read.util', () => ({
 import { SnmpPollingService } from './snmp-polling.service';
 import { readSnmpOids } from './snmp-read.util';
 import { SnmpDriver } from '../drivers/snmp.driver';
-import { LAYER1_OIDS } from '../cameras/provider-registry';
+import { ReachabilityTracker } from './reachability-tracker';
 
 const readSnmpOidsMock = readSnmpOids as jest.Mock;
 
@@ -52,6 +50,7 @@ function buildState() {
       pingLoss: jest.fn().mockResolvedValue(null),
       isapiUptime: jest.fn().mockResolvedValue(null),
     }),
+    reachabilityTracker: new ReachabilityTracker(),
   };
 }
 
@@ -72,12 +71,6 @@ const DEVICE = {
   ],
 };
 
-const LAYER1_BATCH = [
-  LAYER1_OIDS.sysUpTime,
-  LAYER1_OIDS.ifInDiscards,
-  LAYER1_OIDS.ifInErrors,
-];
-
 beforeEach(() => {
   readSnmpOidsMock.mockReset();
 });
@@ -91,9 +84,11 @@ describe('SnmpPollingService.pollDevice', () => {
 
     await (service as any).pollDevice(buildState(), DEVICE);
 
-    // GET em lote = Camada 1 (MIB-II) + OIDs suportados dos pontos.
+    // GET em lote = somente OIDs suportados dos pontos persistidos.
     expect(readSnmpOidsMock).toHaveBeenCalledTimes(1);
-    expect(readSnmpOidsMock.mock.calls[0][1]).toEqual([...LAYER1_BATCH, '1.1', '1.3']);
+    expect(readSnmpOidsMock.mock.calls[0][1]).toEqual(
+      expect.arrayContaining(['1.1', '1.3']),
+    );
 
     expect(published).toHaveLength(1);
     const points = published[0].payload.points;

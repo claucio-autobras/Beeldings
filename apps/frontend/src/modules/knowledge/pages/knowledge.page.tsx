@@ -4,17 +4,20 @@ import { useEffect, useRef, useState } from 'react';
 import {
   BookOpen,
   CheckCircle2,
+  ExternalLink,
   FileText,
   FileUp,
   Loader2,
   Plus,
   RotateCcw,
+  Sparkles,
   Trash2,
 } from 'lucide-react';
 import { API_URL, apiDelete, apiGet, apiPost } from '@/lib/api-client';
 
-type KnowledgeType = 'MANUAL' | 'HOWTO' | 'PLAYBOOK';
+type KnowledgeType = 'MANUAL' | 'HOWTO' | 'PLAYBOOK' | 'CASE';
 type KnowledgeStatus = 'DRAFT' | 'APPROVED';
+type KnowledgeClass = 'FIELD_VALIDATED' | 'DOCUMENTED' | 'DERIVED' | 'SYNTHETIC';
 
 interface KnowledgeDoc {
   id: string;
@@ -27,6 +30,16 @@ interface KnowledgeDoc {
   anonymized: boolean;
   createdAt: string;
   updatedAt: string;
+  // Metadados de caso técnico (type = CASE; null nos demais).
+  caseId: string | null;
+  knowledgeClass: KnowledgeClass | null;
+  caseSeverity: string | null;
+  protocol: string | null;
+  subsystem: string | null;
+  vendorScope: string | null;
+  evidenceStrength: string | null;
+  sourceUrl: string | null;
+  tags: string[];
   _count: { chunks: number };
 }
 
@@ -34,7 +47,26 @@ const TYPE_LABEL: Record<KnowledgeType, string> = {
   MANUAL: 'Manual',
   HOWTO: 'Como fazer',
   PLAYBOOK: 'Playbook',
+  CASE: 'Caso técnico',
 };
+
+// Classe de conhecimento do caso: ordem de confiança do método de diagnóstico.
+const CLASS_BADGE: Record<KnowledgeClass, { label: string; className: string }> = {
+  FIELD_VALIDATED: {
+    label: 'Validado em campo',
+    className: 'border-green-200 bg-green-50 text-green-700',
+  },
+  DOCUMENTED: { label: 'Documentado', className: 'border-sky-200 bg-sky-50 text-sky-700' },
+  DERIVED: { label: 'Derivado', className: 'border-amber-200 bg-amber-50 text-amber-700' },
+  SYNTHETIC: { label: 'Sintético', className: 'border-slate-200 bg-slate-50 text-slate-600' },
+};
+
+function severityBadgeClass(severity: string): string {
+  const s = severity.toLowerCase();
+  if (s.startsWith('alta')) return 'border-red-200 bg-red-50 text-red-700';
+  if (s.startsWith('m')) return 'border-amber-200 bg-amber-50 text-amber-700';
+  return 'border-slate-200 bg-slate-50 text-slate-600';
+}
 
 const EMPTY_FORM = {
   type: 'PLAYBOOK' as KnowledgeType,
@@ -53,6 +85,10 @@ export default function KnowledgePage() {
   const [form, setForm] = useState({ ...EMPTY_FORM });
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Filtro por tipo de documento ('' = todos).
+  const [typeFilter, setTypeFilter] = useState<'' | KnowledgeType>('');
+  const [importingSeed, setImportingSeed] = useState(false);
+  const [seedInfo, setSeedInfo] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [extracting, setExtracting] = useState(false);
   const [extractError, setExtractError] = useState<string | null>(null);
@@ -234,6 +270,80 @@ export default function KnowledgePage() {
     }
   }
 
+  /**
+   * Importa a seed de 100 casos técnicos BMS empacotada com o backend.
+   * Idempotente: o backend deduplica por case_id, então rodar de novo não
+   * duplica casos (só importa o que ainda não existe).
+   */
+  async function importSeedCases() {
+    if (importingSeed) return;
+    setImportingSeed(true);
+    setError(null);
+    setSeedInfo(null);
+    try {
+      // O import roda em segundo plano no backend (o proxy de produção corta
+      // requests >30s); acompanhamos por polling até concluir.
+      const start = await apiPost<{ pending: true; importId: string }>(
+        '/knowledge/import-seed-cases',
+        {},
+      );
+      const startedAt = Date.now();
+      const POLL_MS = 2000;
+      const TIMEOUT_MS = 5 * 60_000;
+      let unknownCount = 0;
+      let finished = false;
+      while (Date.now() - startedAt < TIMEOUT_MS) {
+        await new Promise((r) => setTimeout(r, POLL_MS));
+        let status: {
+          status: 'unknown' | 'pending' | 'error' | 'done';
+          message?: string;
+          imported?: number;
+          skippedExisting?: number;
+        };
+        try {
+          status = await apiGet(`/knowledge/import-seed-cases/${start.importId}/status`);
+        } catch {
+          continue;
+        }
+        if (status.status === 'pending') continue;
+        if (status.status === 'unknown') {
+          // Poll caiu em outra instância (ou o estado expirou). O import é
+          // idempotente e segue em segundo plano — informamos e recarregamos.
+          unknownCount += 1;
+          if (unknownCount < 3) continue;
+          setSeedInfo(
+            'A importação continua em segundo plano. Atualize a página em instantes para ver os casos importados.',
+          );
+          finished = true;
+          break;
+        }
+        if (status.status === 'error') {
+          setError(status.message ?? 'Erro ao importar os casos técnicos.');
+        } else {
+          const imported = status.imported ?? 0;
+          const skipped = status.skippedExisting ?? 0;
+          setSeedInfo(
+            imported > 0
+              ? `${imported} caso(s) técnico(s) importado(s) (${skipped} já existia(m)).`
+              : `Nenhum caso novo: os ${skipped} caso(s) da seed já estão na base.`,
+          );
+        }
+        finished = true;
+        break;
+      }
+      if (!finished) {
+        setSeedInfo(
+          'A importação está demorando, mas continua em segundo plano. Atualize a página em instantes.',
+        );
+      }
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erro ao importar os casos técnicos.');
+    } finally {
+      setImportingSeed(false);
+    }
+  }
+
   async function toggleApproval(doc: KnowledgeDoc) {
     setBusyId(doc.id);
     setError(null);
@@ -275,19 +385,41 @@ export default function KnowledgePage() {
             aprovados são usados nas respostas.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setShowForm((v) => !v)}
-          className="flex shrink-0 items-center gap-2 rounded-md bg-cyan-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-cyan-700"
-        >
-          <Plus className="h-4 w-4" />
-          Novo documento
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void importSeedCases()}
+            disabled={importingSeed}
+            title="Importa a base seed de 100 casos técnicos BMS (BB-BMS-XXXX). Idempotente: não duplica casos já importados."
+            className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm font-medium text-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {importingSeed ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Sparkles className="h-4 w-4 text-cyan-600" />
+            )}
+            {importingSeed ? 'Importando casos…' : 'Importar casos (seed)'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowForm((v) => !v)}
+            className="flex items-center gap-2 rounded-md bg-cyan-600 px-3 py-2 text-sm font-medium text-white transition hover:bg-cyan-700"
+          >
+            <Plus className="h-4 w-4" />
+            Novo documento
+          </button>
+        </div>
       </div>
 
       {error && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
+        </div>
+      )}
+
+      {seedInfo && (
+        <div className="rounded-lg border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm text-cyan-800">
+          {seedInfo}
         </div>
       )}
 
@@ -448,6 +580,31 @@ export default function KnowledgePage() {
         </div>
       )}
 
+      {!loading && docs.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {([['', 'Todos'], ['MANUAL', 'Manuais'], ['HOWTO', 'Como fazer'], ['PLAYBOOK', 'Playbooks'], ['CASE', 'Casos técnicos']] as const).map(
+            ([value, label]) => {
+              const count = value ? docs.filter((d) => d.type === value).length : docs.length;
+              const active = typeFilter === value;
+              return (
+                <button
+                  key={value || 'all'}
+                  type="button"
+                  onClick={() => setTypeFilter(value)}
+                  className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
+                    active
+                      ? 'border-cyan-600 bg-cyan-600 text-white'
+                      : 'border-border bg-card text-muted-foreground hover:bg-muted'
+                  }`}
+                >
+                  {label} ({count})
+                </button>
+              );
+            },
+          )}
+        </div>
+      )}
+
       {loading ? (
         <div className="space-y-3">
           {[1, 2, 3].map((i) => (
@@ -475,14 +632,77 @@ export default function KnowledgePage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {docs.map((doc) => {
+              {docs
+                .filter((d) => !typeFilter || d.type === typeFilter)
+                .map((doc) => {
                 const equip = [doc.equipmentType, doc.equipmentModel].filter(Boolean).join(' / ');
+                const classBadge = doc.knowledgeClass ? CLASS_BADGE[doc.knowledgeClass] : null;
                 return (
                   <tr key={doc.id} className="transition-colors hover:bg-muted/20">
                     <td className="px-4 py-3">
-                      <span className="font-medium text-foreground" title={doc.source ?? undefined}>
-                        {doc.title}
-                      </span>
+                      <div className="flex flex-col gap-1">
+                        <span className="font-medium text-foreground" title={doc.source ?? undefined}>
+                          {doc.title}
+                        </span>
+                        {doc.type === 'CASE' && (
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {doc.caseId && (
+                              <span className="rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+                                {doc.caseId}
+                              </span>
+                            )}
+                            {classBadge && (
+                              <span
+                                className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${classBadge.className}`}
+                                title={`Classificação: ${doc.knowledgeClass}`}
+                              >
+                                {classBadge.label}
+                              </span>
+                            )}
+                            {doc.caseSeverity && (
+                              <span
+                                className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${severityBadgeClass(doc.caseSeverity)}`}
+                              >
+                                Severidade {doc.caseSeverity}
+                              </span>
+                            )}
+                            {doc.protocol && (
+                              <span className="rounded-full border border-border bg-muted/30 px-2 py-0.5 text-[11px] text-muted-foreground">
+                                {doc.protocol}
+                              </span>
+                            )}
+                            {doc.source && doc.sourceUrl && (
+                              <a
+                                href={doc.sourceUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-[11px] text-cyan-700 hover:underline"
+                                title={doc.sourceUrl}
+                              >
+                                <ExternalLink className="h-3 w-3" />
+                                {doc.source}
+                              </a>
+                            )}
+                          </div>
+                        )}
+                        {doc.type === 'CASE' && doc.tags.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {doc.tags.slice(0, 6).map((tag) => (
+                              <span
+                                key={tag}
+                                className="rounded bg-muted/50 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                              >
+                                #{tag}
+                              </span>
+                            ))}
+                            {doc.tags.length > 6 && (
+                              <span className="text-[10px] text-muted-foreground">
+                                +{doc.tags.length - 6}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{TYPE_LABEL[doc.type]}</td>
                     <td className="px-4 py-3 text-muted-foreground">{equip || '—'}</td>

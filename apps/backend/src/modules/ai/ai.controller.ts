@@ -7,6 +7,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/presentation/guards/jwt-auth.guard.js';
@@ -15,7 +16,8 @@ import type { AuthenticatedUser } from '../auth/domain/interfaces/auth.interface
 import { AiRateLimitGuard } from './ai-rate-limit.guard.js';
 import { AiService } from './ai.service.js';
 import type {
-  ChatResult,
+  ChatPollResult,
+  ChatStartResult,
   ConversationDetail,
   ConversationSummary,
   FirstActionResult,
@@ -80,13 +82,15 @@ export class AiController {
   }
 
   // POST /ai/chat — envia um novo turno; cria a conversa se não houver id.
+  // Responde na hora (o proxy de produção corta requests >30s) e a resposta é
+  // gerada em segundo plano — o cliente busca via GET /ai/chat/result.
   // Rate limit por usuário: o endpoint chama a API paga a cada turno.
   @Post('chat')
   @UseGuards(AiRateLimitGuard)
   async chat(
     @CurrentUser() user: AuthenticatedUser,
     @Body() body: ChatRequestBody,
-  ): Promise<ChatResult> {
+  ): Promise<ChatStartResult> {
     const content = typeof body?.content === 'string' ? body.content.trim() : '';
     if (!content) {
       throw new BadRequestException('A mensagem não pode estar vazia.');
@@ -103,9 +107,24 @@ export class AiController {
     const tenantId = user.tenantId ?? null;
     const liveData = tenantId !== null || GLOBAL_ROLES.has(user.role);
 
-    return this.ai.chat(user.id, tenantId, conversationId, content.slice(0, MAX_CONTENT), {
+    return this.ai.startChat(user.id, tenantId, conversationId, content.slice(0, MAX_CONTENT), {
       liveData,
     });
+  }
+
+  // GET /ai/chat/result?conversationId=&after= — resultado de um turno
+  // iniciado pelo POST /ai/chat (polling). Durável: lê do banco, então
+  // funciona após restart e com múltiplas instâncias do backend.
+  @Get('chat/result')
+  async chatResult(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('conversationId') conversationId?: string,
+    @Query('after') after?: string,
+  ): Promise<ChatPollResult> {
+    if (!conversationId || !after) {
+      throw new BadRequestException('Informe conversationId e after.');
+    }
+    return this.ai.getChatResult(user.id, conversationId, after);
   }
 
   // POST /ai/suggest — sugere ações para um equipamento do próprio tenant.

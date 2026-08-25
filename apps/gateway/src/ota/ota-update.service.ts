@@ -186,12 +186,27 @@ export class OtaUpdateService implements OnModuleInit {
           // Apagar o marcador ANTES de publicar: é o sinal de "subiu com
           // sucesso" para o launcher não fazer rollback.
           fs.rmSync(pendingPath, { force: true });
+          // O launcher pode registrar avisos (itens NÃO críticos travados por
+          // antivírus/OneDrive que ficaram para trás); a atualização concluiu,
+          // mas o aviso vai junto na mensagem para a plataforma.
+          const warnings = Array.isArray(info.warnings)
+            ? (info.warnings as unknown[]).map((w) => String(w)).filter(Boolean)
+            : [];
+          const version = String(info.version ?? resolveGatewayVersion());
           this.publishProgress(
             this.commandFromInfo(info),
             'completed',
             String(info.previousVersion ?? ''),
-            { version: String(info.version ?? resolveGatewayVersion()) },
+            {
+              version,
+              ...(warnings.length
+                ? { error: `Atualizado para v${version} com avisos: ${warnings.join('; ')}` }
+                : {}),
+            },
           );
+          if (warnings.length) {
+            this.logger.warn(`OTA concluída com avisos: ${warnings.join('; ')}`);
+          }
           this.logger.log(
             `OTA concluída: gateway agora na versão ${resolveGatewayVersion()}`,
           );

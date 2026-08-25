@@ -8,6 +8,7 @@ description: Regras do motor de 3 camadas de telemetria de câmera (provider reg
 - Ordem por CAMPO: OID do ponto > campo do provider > MIB-II > sintético (ping/estimado). Falha/sentinela de um campo nunca derruba os demais.
 - Dado REAL sempre vence estimativa: uptime ISAPI (HTTP) > sysUpTime MIB-II > OID próprio > `state:'estimated'` com valor null (o backend deriva "tempo online estimado" de `config.availability.onlineSince`).
 - Intelbras compartilha a árvore enterprise Dahua (1004849) e firmware com bugs: campos válidos respondem 0 fixo → provider `bestEffort` com `sentinels:[0]` marca `unreliable` ("dado não confiável") em vez de exibir zero falso. Empate 1004849 sem cadastro manual resolve como Intelbras.
+- OIDs oficiais Dahua (root 1004849.2): cpu 2.1.3.0 e memory 2.1.9.2.0 (escalares %); NÃO existe objeto de temperatura na doc oficial (temp de câmera Dahua/Intelbras = UCD genérico); os antigos …2.1.3.X.1.1 de dumps comunitários eram inválidos.
 - Identificação: manufacturer manual > sysDescr/sysObjectID > enterprise dos OIDs dos pontos; com retry por ciclo enquanto a câmera não responde.
 
 **Why:** hardware Intelbras real responde valores impossíveis em OIDs válidos; sem sentinela o painel mostraria 0% de CPU como se fosse leitura boa.

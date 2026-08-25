@@ -55,10 +55,10 @@ describe('CommandDispatcherService — discover_nvr_tables parseDiskOids', () =>
         params: {
           ...(BASE_EVENT.message.params as Record<string, unknown>),
           diskTableOids: {
-            status:     '1.3.6.1.4.1.39165.1.4.1.1',
-            capacityGb: '1.3.6.1.4.1.39165.1.4.1.2',
-            // freeGb = hikHddFreeSpace (col 3 = espaço LIVRE, não usado)
-            freeGb:     '1.3.6.1.4.1.39165.1.4.1.3',
+            status:     '1.3.6.1.4.1.50001.1.241.1.3',
+            capacityGb: '1.3.6.1.4.1.50001.1.241.1.5',
+            // freeGb = hikDiskFreeSpace (col 4 oficial = espaço LIVRE, não usado)
+            freeGb:     '1.3.6.1.4.1.50001.1.241.1.4',
           },
           channelTableOids: { status: '1.3.6.1.4.1.39165.1.5.1.1' },
         },
@@ -67,9 +67,9 @@ describe('CommandDispatcherService — discover_nvr_tables parseDiskOids', () =>
 
     expect(captured).toHaveLength(1);
     const cmd = captured[0];
-    expect(cmd.diskTableOids.freeGb).toBe('1.3.6.1.4.1.39165.1.4.1.3');
-    expect(cmd.diskTableOids.status).toBe('1.3.6.1.4.1.39165.1.4.1.1');
-    expect(cmd.diskTableOids.capacityGb).toBe('1.3.6.1.4.1.39165.1.4.1.2');
+    expect(cmd.diskTableOids.freeGb).toBe('1.3.6.1.4.1.50001.1.241.1.4');
+    expect(cmd.diskTableOids.status).toBe('1.3.6.1.4.1.50001.1.241.1.3');
+    expect(cmd.diskTableOids.capacityGb).toBe('1.3.6.1.4.1.50001.1.241.1.5');
     // usedGb ausente para Hikvision (mutuamente exclusivo com freeGb)
     expect(cmd.diskTableOids.usedGb).toBeUndefined();
   });
@@ -84,19 +84,19 @@ describe('CommandDispatcherService — discover_nvr_tables parseDiskOids', () =>
         params: {
           ...(BASE_EVENT.message.params as Record<string, unknown>),
           diskTableOids: {
-            status:     '1.3.6.1.4.1.1004849.1.1.1.2',
-            capacityGb: '1.3.6.1.4.1.1004849.1.1.1.3',
-            usedGb:     '1.3.6.1.4.1.1004849.1.1.1.4',
+            status:     '1.3.6.1.4.1.1004849.2.4.1.1.5',
+            capacityGb: '1.3.6.1.4.1.1004849.2.4.1.1.7',
+            usedGb:     '1.3.6.1.4.1.1004849.2.4.1.1.6',
             // freeGb ausente para Dahua
           },
-          channelTableOids: { status: '1.3.6.1.4.1.1004849.1.2.1.2' },
+          channelTableOids: { status: '1.3.6.1.4.1.1004849.2.10.1.1.1.1.2' },
         },
       },
     });
 
     expect(captured).toHaveLength(1);
     const cmd = captured[0];
-    expect(cmd.diskTableOids.usedGb).toBe('1.3.6.1.4.1.1004849.1.1.1.4');
+    expect(cmd.diskTableOids.usedGb).toBe('1.3.6.1.4.1.1004849.2.4.1.1.6');
     expect(cmd.diskTableOids.freeGb).toBeUndefined();
   });
 
@@ -110,8 +110,8 @@ describe('CommandDispatcherService — discover_nvr_tables parseDiskOids', () =>
         params: {
           ...(BASE_EVENT.message.params as Record<string, unknown>),
           diskTableOids: {
-            status:     '1.3.6.1.4.1.39165.1.4.1.1',
-            capacityGb: '1.3.6.1.4.1.39165.1.4.1.2',
+            status:     '1.3.6.1.4.1.50001.1.241.1.3',
+            capacityGb: '1.3.6.1.4.1.50001.1.241.1.5',
             freeGb:     12345,  // número — deve ser ignorado (exige string)
           },
           channelTableOids: {},
@@ -135,7 +135,7 @@ describe('CommandDispatcherService — discover_nvr_tables parseDiskOids', () =>
           ...(BASE_EVENT.message.params as Record<string, unknown>),
           diskTableOids: {
             status:     '',   // string vazia → ignorada
-            capacityGb: '1.3.6.1.4.1.39165.1.4.1.2',
+            capacityGb: '1.3.6.1.4.1.50001.1.241.1.5',
             freeGb:     '',   // string vazia → ignorada
           },
           channelTableOids: {},
@@ -147,6 +147,6 @@ describe('CommandDispatcherService — discover_nvr_tables parseDiskOids', () =>
     const cmd = captured[0];
     expect(cmd.diskTableOids.status).toBeUndefined();
     expect(cmd.diskTableOids.freeGb).toBeUndefined();
-    expect(cmd.diskTableOids.capacityGb).toBe('1.3.6.1.4.1.39165.1.4.1.2');
+    expect(cmd.diskTableOids.capacityGb).toBe('1.3.6.1.4.1.50001.1.241.1.5');
   });
 });

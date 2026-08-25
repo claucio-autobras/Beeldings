@@ -24,8 +24,8 @@ export function TenantRankingCard({ ranking, isLoading }: TenantRankingCardProps
   const rows = ranking ?? [];
   const isEn = getCurrentLanguage() === 'en';
 
-  const openTenant = (tenantId: string) => {
-    setGlobalTenant(tenantId);
+  const openTenant = (tenantId: string, tenantName: string) => {
+    setGlobalTenant(tenantId, tenantName);
     setGlobalSite(null);
   };
 
@@ -59,7 +59,7 @@ export function TenantRankingCard({ ranking, isLoading }: TenantRankingCardProps
               <button
                 key={t.tenantId}
                 type="button"
-                onClick={() => openTenant(t.tenantId)}
+                onClick={() => openTenant(t.tenantId, t.tenantName)}
                 className="group block w-full p-3 text-left transition-colors hover:bg-muted/50"
                 title={`${getCurrentLanguage() === 'en' ? 'View dashboard of' : 'Ver dashboard de'} ${t.tenantName}`}
               >

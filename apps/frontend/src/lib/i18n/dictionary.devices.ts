@@ -51,4 +51,9 @@ export const DICT_DEVICES: Record<string, string> = {
   'Este tipo de dispositivo é gerenciado em outra área do sistema. Aqui você pode apenas remover o registro.':
     'This device type is managed in another area of the system. Here you can only remove the record.',
   'Erro ao remover dispositivo. Tente novamente.': 'Failed to remove device. Please try again.',
+
+  // ── Selo neutro por ponto quando o equipamento está sem comunicação ──
+  'Sem comunicação': 'No communication',
+  'Equipamento sem comunicação — o último status conhecido pode estar desatualizado.':
+    'Device not communicating — the last known status may be outdated.',
 };

@@ -4,6 +4,13 @@ import { PrismaService } from '../prisma/prisma.service.js';
 import { TelemetryGateway } from '../mqtt/telemetry.gateway.js';
 import { isConditionMet, type EvalRule } from './alarm-evaluator.js';
 
+/** Callback registrado pela camada de entrega externa (e-mail/WhatsApp). */
+export type AlarmNotifierFn = (
+  event: AlarmEvent,
+  rule: { id: string; tenantId: string; pointId: string; deviceId: string; tag: string; name: string; severity: 'HIGH' | 'MEDIUM' | 'LOW' },
+  reactivated: boolean,
+) => void;
+
 /** Subconjunto de telemetria consumido (compatível com BacnetTelemetryPayload). */
 export interface TelemetrySample {
   deviceId: string;
@@ -50,11 +57,22 @@ export class AlarmEngineService implements OnModuleInit {
   private readonly logger = new Logger(AlarmEngineService.name);
   private byDeviceTag = new Map<string, RuleRuntime[]>();
   private byRuleId = new Map<string, RuleRuntime>();
+  /** Callback da camada de entrega externa. Registrado via setAlarmNotifier(). */
+  private alarmNotifierFn: AlarmNotifierFn | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly gateway: TelemetryGateway,
   ) {}
+
+  /**
+   * Registra o callback de notificação externa (e-mail/WhatsApp).
+   * Chamado por AlarmNotifierService no OnModuleInit.
+   * Seguro chamar mais de uma vez (substitui o anterior).
+   */
+  setAlarmNotifier(fn: AlarmNotifierFn): void {
+    this.alarmNotifierFn = fn;
+  }
 
   async onModuleInit(): Promise<void> {
     try {
@@ -275,6 +293,7 @@ export class AlarmEngineService implements OnModuleInit {
           rt.openEventId = event.id;
           rt.openEventState = 'ACTIVE';
           await this.emit(rt, event);
+          this.alarmNotifierFn?.(event, rt.rule, true);
           this.logger.log(
             `Alarme REATIVADO — regra ${rt.rule.name} (ponto ${rt.rule.tag}, valor ${value}) — ocorrência pendente reaproveitada`,
           );
@@ -295,6 +314,7 @@ export class AlarmEngineService implements OnModuleInit {
       rt.openEventId = event.id;
       rt.openEventState = 'ACTIVE';
       await this.emit(rt, event);
+      this.alarmNotifierFn?.(event, rt.rule, false);
       this.logger.log(`Alarme ATIVADO — regra ${rt.rule.name} (ponto ${rt.rule.tag}, valor ${value})`);
     });
   }

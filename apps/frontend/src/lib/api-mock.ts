@@ -215,7 +215,7 @@ function handleGet(pathname: string, params: URLSearchParams): unknown {
   // Endpoint de objeto único sem dados na demonstração → erro explícito
   // (evita devolver shape inválido para quem espera um objeto).
   if (pathname.startsWith('/projects/')) {
-    throw new Error('Projeto não encontrado no modo demonstração.');
+    throw new Error('Gateway não encontrado no modo demonstração.');
   }
 
   // Sem dados cadastrados na demonstração → listas vazias (estado esperado)

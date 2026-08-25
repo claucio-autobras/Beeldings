@@ -408,15 +408,28 @@ export class BacnetCovService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Assina COV de um ponto; atualiza estado conforme o resultado. */
+  /**
+   * Assina COV de um ponto; atualiza estado conforme o resultado.
+   * Nunca rejeita: também é disparado com `void this.subscribe(sub)` no reload
+   * de config — uma exceção inesperada vira estado FAILED, não crash.
+   */
   private async subscribe(sub: CovSubscription): Promise<void> {
-    const ok = await this.bacnetClient.subscribeCovSafe(
-      this.deviceDest(sub.device),
-      { type: sub.obj.objectType, instance: sub.obj.objectInstance },
-      sub.subscribeId,
-      this.covLifetimeS,
-      this.SUBSCRIBE_TIMEOUT_MS,
-    );
+    let ok = false;
+    try {
+      ok = await this.bacnetClient.subscribeCovSafe(
+        this.deviceDest(sub.device),
+        { type: sub.obj.objectType, instance: sub.obj.objectInstance },
+        sub.subscribeId,
+        this.covLifetimeS,
+        this.SUBSCRIBE_TIMEOUT_MS,
+      );
+    } catch (err) {
+      this.logger.error(
+        `Erro inesperado ao assinar COV de ${sub.obj.tag} (${sub.device.ipAddress}): ` +
+          `${(err as Error)?.message ?? String(err)}`,
+      );
+      ok = false;
+    }
 
     if (ok) {
       sub.state = 'ACTIVE';
@@ -470,6 +483,13 @@ export class BacnetCovService implements OnModuleInit, OnModuleDestroy {
           await this.subscribe(sub);
         }
       }
+    } catch (err) {
+      // Isolamento: exceção inesperada não pode escapar como unhandled rejection
+      // (disparo é `void runMaintenance()`) — loga e o próximo tick segue.
+      this.logger.error(
+        `Loop de manutenção COV abortado por erro inesperado: ` +
+          `${(err as Error)?.stack ?? (err as Error)?.message ?? String(err)}`,
+      );
     } finally {
       this.maintenanceRunning = false;
     }
@@ -548,6 +568,13 @@ export class BacnetCovService implements OnModuleInit, OnModuleDestroy {
       }
 
       this.publishPoints(device.id, points);
+    } catch (err) {
+      // Isolamento: exceção inesperada não pode escapar como unhandled rejection
+      // (disparo é `void runDeviceCycle(key)`) — loga e o próximo ciclo segue.
+      this.logger.error(
+        `[${device.id}] Ciclo COV (heartbeat/fallback) abortado por erro inesperado: ` +
+          `${(err as Error)?.stack ?? (err as Error)?.message ?? String(err)}`,
+      );
     } finally {
       this.runningCycles.delete(key);
     }

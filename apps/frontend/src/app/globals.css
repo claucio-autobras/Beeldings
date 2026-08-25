@@ -131,6 +131,20 @@
   color-scheme: dark;
 }
 
+/* Selects do modal SCADA também abrem com a mesma superfície do modal.
+   `option` é respeitado por Chromium/Firefox quando o color-scheme está
+   definido no próprio controle (não apenas no documento). */
+.scada-project-select {
+  color-scheme: light;
+}
+.scada-project-select option {
+  background-color: var(--color-card);
+  color: var(--color-foreground);
+}
+.dark .scada-project-select {
+  color-scheme: dark;
+}
+
 /* A sidebar tem fundo escuro fixo nos dois temas — dentro dela, os tons
    slate voltam aos valores originais para o texto ficar legível no dark. */
 .dark .app-sidebar {

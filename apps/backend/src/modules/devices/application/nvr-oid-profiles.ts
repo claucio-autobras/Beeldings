@@ -52,8 +52,14 @@ export interface NvrDiskTableOids {
   capacityGb?: string;
   /** OID do espaço USADO (Dahua/Intelbras). Mutuamente exclusivo com freeGb. */
   usedGb?: string;
-  /** OID do espaço LIVRE/FREE (Hikvision hikHddFreeSpace). Mutuamente exclusivo com usedGb. */
+  /** OID do espaço LIVRE/FREE (Hikvision hikDiskFreeSpace). Mutuamente exclusivo com usedGb. */
   freeGb?: string;
+  /**
+   * true → o OID de `usedGb` reporta USO EM PERCENTUAL (0–100), não GB
+   * (Dahua/Intelbras physicalVolumeUsage). O sync-disks cria o ponto
+   * disk_used com unit '%' e NÃO aplica diskScale sobre o valor.
+   */
+  usedIsPercent?: boolean;
   /**
    * Fator de escala aplicado sobre os valores brutos de capacidade/espaço-usado.
    *
@@ -101,31 +107,46 @@ export interface NvrTableOids {
 /**
  * Mapeamento profileId → OID-prefixos de tabela.
  *
- * NOTAS DE RISCO (bestEffort — validar contra firmware real):
+ * FONTES OFICIAIS (validadas na tarefa "Perfis SNMP oficiais"):
  *
- * Hikvision NVR (hikHddTable / hikChannelTable):
- *   OIDs extraídos da HIKVISION-NVR-MIB pública (DS-7xxx/DS-9xxx).
- *   Firmwares antigos ou modelos DVR podem usar sub-árvore diferente.
- *   hikHddFreeSpace (col 3) reporta espaço LIVRE, não usado — a UI deve
- *   calcular usado = capacidade - livre.
+ * Hikvision NVR — HIKVISION-MIB oficial (hikEntity = 1.3.6.1.4.1.50001.1):
+ *   hikDiskTable → 50001.1.241.1.<col>.<idx>
+ *     col 3 hikDiskStatus     (enum oficial: 0=Normal, 1=Unformatted,
+ *       2=Abnormal, 3=Smartfailed, 4=Mismatch, 5=Idle, 6=NotOnline,
+ *       10=Repairing, 11=Formatting → statusMap para o enum canônico)
+ *     col 4 hikDiskFreeSpace  (MB — diskScale 0.001 → GB)
+ *     col 5 hikDiskCapability (MB — diskScale 0.001 → GB)
+ *   sync-disks normaliza: disk_used = capacity − freeGb (ambos já em GB).
+ *   hikChannelTable 39165.1.5.1 mantida (não-oficial, não contradita; bestEffort).
  *
- * Dahua NVR (dskTable / chnTable):
- *   OIDs levantados de dumps de MIB comunitários; pouco documentação pública.
- *   Col 2 em ambas as tabelas é o campo de índice real (col 1 = dskIndex/chnIndex);
- *   status na col 2, capacidade na col 3, usado na col 4.
- *   Unidade: MB (não GB) — scale nos pontos criados pelo backend.
+ * Dahua NVR — doc oficial "Product Management Information Library"
+ * (root 1.3.6.1.4.1.1004849.2; a árvore …1004849.1 é do ipSAN — os antigos
+ * dskTable/chnTable comunitários viviam nela e foram substituídos):
+ *   physicalVolumeInfoTable → 1004849.2.4.1.1.<col>.<physicNo>
+ *     col 5 physicalVolumeStatus (DisplayString "Error"/"Offline"/"Running" —
+ *       coluna TEXTO: leitura numérica devolve null → status "sem dados";
+ *       usada para enumerar slots)
+ *     col 6 physicalVolumeUsage  (0–100 % — usedIsPercent: disk_used vira USO %)
+ *     col 7 physicalVolumeTotal  (GB NATIVO — diskScale 1)
+ *   videoChannelStatusTable → 1004849.2.10.1.1.1.1.2 (1=online/0=offline,
+ *     coincide com o enum canônico de channel_status).
  */
 export const NVR_TABLE_OIDS: Record<string, NvrTableOids> = {
   'hikvision-nvr': {
     disk: {
-      status:     '1.3.6.1.4.1.39165.1.4.1.1',
-      capacityGb: '1.3.6.1.4.1.39165.1.4.1.2',
-      // col 3 = hikHddFreeSpace — reporta espaço LIVRE, NÃO usado.
+      status:     '1.3.6.1.4.1.50001.1.241.1.3',
+      capacityGb: '1.3.6.1.4.1.50001.1.241.1.5',
+      // col 4 = hikDiskFreeSpace — reporta espaço LIVRE, NÃO usado.
       // sync-disks normaliza: disk_used = capacity - freeGb.
       // Telemetria contínua fica no metric 'disk_free' (ponto separado).
       // A UI NUNCA precisa saber dessa inversão — todo output é "espaço usado".
-      freeGb:     '1.3.6.1.4.1.39165.1.4.1.3',
-      // usedGb: não disponível diretamente na HIKVISION-NVR-MIB
+      freeGb:     '1.3.6.1.4.1.50001.1.241.1.4',
+      // usedGb: não disponível diretamente na HIKVISION-MIB
+      // Unidade oficial: MB ("if we get 100, means free space is 100M").
+      diskScale:  0.001,
+      // Enum oficial hikDiskStatus → canônico (0=sem disco, 1=normal, 2=erro,
+      // 3=não formatado, 4=inicializando).
+      statusMap: { 0: 1, 1: 3, 2: 2, 3: 2, 4: 2, 5: 1, 6: 0, 10: 4, 11: 4 },
     },
     channel: {
       status: '1.3.6.1.4.1.39165.1.5.1.1',
@@ -133,32 +154,31 @@ export const NVR_TABLE_OIDS: Record<string, NvrTableOids> = {
   },
   'dahua-nvr': {
     disk: {
-      status:     '1.3.6.1.4.1.1004849.1.1.1.2',
-      capacityGb: '1.3.6.1.4.1.1004849.1.1.1.3',
-      usedGb:     '1.3.6.1.4.1.1004849.1.1.1.4',
-      // Col 3/4 reportam MB — converter para GB na ingestão e na telemetria.
-      diskScale:  0.001,
-      // Enum disk_status Dahua raw: 0=normal,1=erro,2=sem disco
-      // → Enum canônico:            1=normal,2=erro,0=sem disco
-      // Campo `statusMap` (não diskStatusMap) — corresponde ao campo homônimo
-      // na interface NvrDiskTableOids do gateway.
-      statusMap: { 0: 1, 1: 2, 2: 0 },
+      status:     '1.3.6.1.4.1.1004849.2.4.1.1.5',
+      capacityGb: '1.3.6.1.4.1.1004849.2.4.1.1.7',
+      usedGb:     '1.3.6.1.4.1.1004849.2.4.1.1.6',
+      // physicalVolumeUsage é PERCENTUAL (0–100), não GB: o ponto disk_used
+      // é criado com unit '%' e publica o uso em % (dado real > estimativa).
+      usedIsPercent: true,
+      // physicalVolumeTotal já é GB nativo.
+      diskScale:  1,
+      // Sem statusMap: physicalVolumeStatus é DisplayString (coluna texto).
     },
     channel: {
-      status: '1.3.6.1.4.1.1004849.1.2.1.2',
+      status: '1.3.6.1.4.1.1004849.2.10.1.1.1.1.2',
     },
   },
   'intelbras-nvr': {
-    // Intelbras é OEM Dahua — mesmos OIDs, mesma unidade (MB) e mesmo enum.
+    // Intelbras é OEM Dahua — mesma árvore oficial 1004849.2.
     disk: {
-      status:     '1.3.6.1.4.1.1004849.1.1.1.2',
-      capacityGb: '1.3.6.1.4.1.1004849.1.1.1.3',
-      usedGb:     '1.3.6.1.4.1.1004849.1.1.1.4',
-      diskScale:  0.001,
-      statusMap: { 0: 1, 1: 2, 2: 0 },
+      status:     '1.3.6.1.4.1.1004849.2.4.1.1.5',
+      capacityGb: '1.3.6.1.4.1.1004849.2.4.1.1.7',
+      usedGb:     '1.3.6.1.4.1.1004849.2.4.1.1.6',
+      usedIsPercent: true,
+      diskScale:  1,
     },
     channel: {
-      status: '1.3.6.1.4.1.1004849.1.2.1.2',
+      status: '1.3.6.1.4.1.1004849.2.10.1.1.1.1.2',
     },
   },
 };
@@ -191,8 +211,11 @@ export const NVR_OID_PROFILES: NvrOidProfile[] = [
     label: 'Hikvision NVR/DVR',
     match: ['hikvision'],
     oids: {
+      // cpu: 39165.1.7.0 confirmado em campo (a HIKVISION-MIB oficial 50001
+      // não tem objeto de USO de CPU — só nº de CPUs e frequência).
       cpu:         { oid: '1.3.6.1.4.1.39165.1.7.0',  scale: 1, unit: '%'  },
-      memory:      { oid: '1.3.6.1.4.1.39165.1.11.0', scale: 1, unit: '%'  },
+      // memory: hikMemoryUsage OFICIAL (HIKVISION-MIB, hikEntity.221), 0–100 %.
+      memory:      { oid: '1.3.6.1.4.1.50001.1.221.0', scale: 1, unit: '%'  },
       temperature: GENERIC_NVR_OIDS.temperature,
     },
   },
@@ -201,9 +224,11 @@ export const NVR_OID_PROFILES: NvrOidProfile[] = [
     label: 'Dahua NVR/DVR',
     match: ['dahua'],
     oids: {
-      cpu:         { oid: '1.3.6.1.4.1.1004849.2.1.3.1.1.1', scale: 1, unit: '%'  },
-      memory:      { oid: '1.3.6.1.4.1.1004849.2.1.3.2.1.1', scale: 1, unit: '%'  },
-      temperature: { oid: '1.3.6.1.4.1.1004849.2.1.3.3.1.1', scale: 1, unit: '°C' },
+      // OIDs OFICIAIS Dahua (root 1004849.2): cpuUsage 2.1.3.0 (escalar),
+      // memoryUsage 2.1.9.2.0. A doc oficial não define temperatura → UCD.
+      cpu:         { oid: '1.3.6.1.4.1.1004849.2.1.3.0',   scale: 1, unit: '%' },
+      memory:      { oid: '1.3.6.1.4.1.1004849.2.1.9.2.0', scale: 1, unit: '%' },
+      temperature: GENERIC_NVR_OIDS.temperature,
     },
   },
   {
@@ -211,9 +236,10 @@ export const NVR_OID_PROFILES: NvrOidProfile[] = [
     label: 'Intelbras NVR/DVR',
     match: ['intelbras'],
     oids: {
-      cpu:         { oid: '1.3.6.1.4.1.1004849.2.1.3.1.1.1', scale: 1, unit: '%'  },
-      memory:      { oid: '1.3.6.1.4.1.1004849.2.1.3.2.1.1', scale: 1, unit: '%'  },
-      temperature: { oid: '1.3.6.1.4.1.1004849.2.1.3.3.1.1', scale: 1, unit: '°C' },
+      // OEM Dahua — mesma árvore oficial 1004849.2.
+      cpu:         { oid: '1.3.6.1.4.1.1004849.2.1.3.0',   scale: 1, unit: '%' },
+      memory:      { oid: '1.3.6.1.4.1.1004849.2.1.9.2.0', scale: 1, unit: '%' },
+      temperature: GENERIC_NVR_OIDS.temperature,
     },
   },
   GENERIC_NVR_PROFILE,

@@ -106,7 +106,74 @@ export function resolveProfile(input: ResolveProfileInput): ResolvedProfile {
     (a, b) => b.priority - a.priority,
   );
 
-  // ── 1. Identificação do perfil vendor ──────────────────────────────────────
+  const selectedVendor = selectVendorProfile(candidates, input, kind);
+
+  // ── 2. Perfil base (fallback garantido) ────────────────────────────────────
+  const baseProfile =
+    candidates.find((p) => p.priority === 0) ?? BASE_CAMERA_PROFILE;
+
+  // ── 3. Fusão de camadas: base → vendor → override ─────────────────────────
+  const merged = new Map<string, ResolvedMapping>();
+
+  // Camada base.
+  for (const m of baseProfile.mappings) {
+    merged.set(m.metricKey, { ...m, profileLayer: 'base', profileId: baseProfile.id });
+  }
+
+  // Camada vendor (sobrescreve base por metricKey).
+  if (selectedVendor) {
+    for (const m of selectedVendor.mappings) {
+      merged.set(m.metricKey, { ...m, profileLayer: 'vendor', profileId: selectedVendor.id });
+    }
+  }
+
+  // Camada override por device (máxima prioridade).
+  if (input.metricOverrides) {
+    for (const [key, m] of Object.entries(input.metricOverrides)) {
+      merged.set(key, { ...m, metricKey: key, profileLayer: 'override', profileId: 'override' });
+    }
+  }
+
+  const dominant = selectedVendor ?? baseProfile;
+  return {
+    id: dominant.id,
+    label: dominant.label,
+    bestEffort: dominant.bestEffort ?? false,
+    mappings: merged,
+  };
+}
+
+/**
+ * Raízes de walk de DESCOBERTA declaradas pelos perfis aplicáveis ao device.
+ *
+ * Conhecimento aditivo dos perfis (spec de descoberta genérica): o motor de
+ * walk permanece independente de fabricante — o perfil só informa quais
+ * subárvores proprietárias valem a pena percorrer. Quando nenhum perfil
+ * casa (ou o perfil não declara raízes), o chamador cai no fallback da
+ * enterprise do sysObjectID.
+ *
+ * Sem deviceType conhecido (ex.: diagnóstico avulso), considera os perfis de
+ * TODOS os tipos — o match por sysDescr/enterprise continua discriminante.
+ */
+export function resolveDiscoveryWalkRoots(input: ResolveProfileInput): string[] {
+  const kind = (input.deviceType as DeviceKind | undefined | null) ?? null;
+  const pool = kind
+    ? ALL_PROFILES.filter((p) => p.deviceTypes.includes(kind))
+    : ALL_PROFILES;
+  const candidates = [...pool].sort((a, b) => b.priority - a.priority);
+  const vendor = selectVendorProfile(candidates, input, kind ?? 'CAMERA');
+  return vendor?.discovery?.walkRoots ?? [];
+}
+
+/**
+ * Seleção do perfil vendor (compartilhada entre resolução de mapeamentos e
+ * resolução de raízes de descoberta — um único ponto de matching).
+ */
+function selectVendorProfile(
+  candidates: DeviceProfile[],
+  input: ResolveProfileInput,
+  kind: DeviceKind | string,
+): DeviceProfile | null {
   let selectedVendor: DeviceProfile | null = null;
 
   // 1a. Perfil forçado por ID.
@@ -172,37 +239,5 @@ export function resolveProfile(input: ResolveProfileInput): ResolvedProfile {
     }
   }
 
-  // ── 2. Perfil base (fallback garantido) ────────────────────────────────────
-  const baseProfile =
-    candidates.find((p) => p.priority === 0) ?? BASE_CAMERA_PROFILE;
-
-  // ── 3. Fusão de camadas: base → vendor → override ─────────────────────────
-  const merged = new Map<string, ResolvedMapping>();
-
-  // Camada base.
-  for (const m of baseProfile.mappings) {
-    merged.set(m.metricKey, { ...m, profileLayer: 'base', profileId: baseProfile.id });
-  }
-
-  // Camada vendor (sobrescreve base por metricKey).
-  if (selectedVendor) {
-    for (const m of selectedVendor.mappings) {
-      merged.set(m.metricKey, { ...m, profileLayer: 'vendor', profileId: selectedVendor.id });
-    }
-  }
-
-  // Camada override por device (máxima prioridade).
-  if (input.metricOverrides) {
-    for (const [key, m] of Object.entries(input.metricOverrides)) {
-      merged.set(key, { ...m, metricKey: key, profileLayer: 'override', profileId: 'override' });
-    }
-  }
-
-  const dominant = selectedVendor ?? baseProfile;
-  return {
-    id: dominant.id,
-    label: dominant.label,
-    bestEffort: dominant.bestEffort ?? false,
-    mappings: merged,
-  };
+  return selectedVendor;
 }

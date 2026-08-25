@@ -30,7 +30,7 @@ release/
 ## Instalar no computador do cliente
 
 1. Copie a pasta `release/` para o cliente (ex: `C:\BlueBee\Gateway\`).
-2. Baixe o **`.env` do projeto** na plataforma BlueBee e coloque na **mesma pasta**
+2. Baixe o **`.env` do gateway** na plataforma BlueBee e coloque na **mesma pasta**
    do `bluebee-gateway.exe`.
 3. Clique com o botão direito em **`install-service.bat`** → **Executar como
    administrador**.

@@ -41,6 +41,8 @@ model Tenant {
   aiConversations        AiConversation[]
   alarmGroups            AlarmGroup[]
   notificationRecipients NotificationRecipient[]
+  insightConfig          TenantInsightConfig?
+  aiInsights             AiInsight[]
 
   @@map("tenants")
 }
@@ -59,12 +61,43 @@ model User {
   // Preferências pessoais (tema, idioma, notificações do sino). JSON livre —
   // o backend valida/mescla com defaults na leitura e na escrita.
   preferences  Json?
+  // Incrementado ao redefinir a senha para invalidar sessões emitidas antes da troca.
+  sessionVersion Int @default(0) @map("session_version")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
   aiConversations AiConversation[]
+  authChallenges  AuthChallenge[]
 
   @@map("users")
+}
+
+// ─── Autenticação por e-mail ──────────────────────────────────────────────────
+
+enum AuthChallengeType {
+  PASSWORD_RESET
+  LOGIN_2FA
+}
+
+/**
+ * Token/código de uso único para recuperação de senha e 2FA por e-mail.
+ * Apenas o hash é persistido; o segredo em texto puro vive somente no e-mail.
+ */
+model AuthChallenge {
+  id        String            @id @default(uuid())
+  userId    String            @map("user_id")
+  type      AuthChallengeType
+  tokenHash String            @map("token_hash")
+  expiresAt DateTime          @map("expires_at")
+  attempts  Int               @default(0)
+  consumedAt DateTime?        @map("consumed_at")
+  lastSentAt DateTime?        @map("last_sent_at")
+  createdAt DateTime          @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type, expiresAt])
+  @@map("auth_challenges")
 }
 
 enum Role {
@@ -184,6 +217,10 @@ model Device {
   // dashboard (horas ligado, falha contínua, tempo offline) e consumo pela IA.
   critical  Boolean  @default(false) @map("is_critical")
   config    Json? // config do device específica de protocolo (ex.: Modbus { unitId, pollingIntervalMs })
+  // MIB opcional escolhida explicitamente pelo operador para enriquecer o diagnóstico.
+  // Não altera o perfil curado nem cria pontos de coleta.
+  snmpMibId String? @map("snmp_mib_id")
+  snmpMib  SnmpMib? @relation(fields: [snmpMibId], references: [id], onDelete: SetNull)
   // Último diagnóstico de heartbeat MQTT (RSSI/IP/uptime + receivedAt) —
   // fallback durável do cache em memória do DeviceHeartbeatService.
   lastHeartbeat Json? @map("last_heartbeat")
@@ -197,6 +234,9 @@ model Device {
   points           DevicePoint[]
   telemetry        Telemetry[]
   capabilityMaps   DeviceCapabilityMap[]
+  snmpCredential   SnmpCredential?
+  metricBindings   DeviceMetricBinding[]
+  discoveryRuns    SnmpDiscoveryRun[]
 
   @@map("devices")
 }
@@ -654,6 +694,11 @@ model AiMessage {
   conversation   AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   role           String
   content        String
+  // Metadados do turno do assistente (fontes RAG, casos similares, flag de
+  // erro). O turno passou a ser processado em segundo plano (o proxy de
+  // produção corta requests >30s), então o resultado completo precisa ser
+  // durável para o polling funcionar em qualquer instância.
+  data           Json?
   createdAt      DateTime       @default(now()) @map("created_at")
 
   @@index([conversationId])
@@ -686,11 +731,23 @@ enum KnowledgeType {
   MANUAL
   HOWTO
   PLAYBOOK
+  // Caso técnico estruturado (diagnóstico): sintoma → causas → testes →
+  // correção → validação, com classificação de origem e fonte citável.
+  CASE
 }
 
 enum KnowledgeStatus {
   DRAFT
   APPROVED
+}
+
+// Classe de conhecimento de um caso técnico — ordem de confiança do método de
+// diagnóstico: FIELD_VALIDATED > DOCUMENTED > DERIVED > SYNTHETIC.
+enum KnowledgeClass {
+  FIELD_VALIDATED
+  DOCUMENTED
+  DERIVED
+  SYNTHETIC
 }
 
 model KnowledgeDoc {
@@ -706,6 +763,19 @@ model KnowledgeDoc {
   // arquivo. Null para documentos criados manualmente (sem PDF).
   fileHash         String?         @unique @map("file_hash")
   anonymized       Boolean         @default(true)
+  // ─── Campos estruturados de caso técnico (type = CASE; null nos demais) ────
+  // Identificador único do caso (ex.: BB-BMS-0001) — dedupe da importação seed.
+  caseId           String?         @unique @map("case_id")
+  knowledgeClass   KnowledgeClass? @map("knowledge_class")
+  // Severidade declarada do caso (Alta/Média/Baixa) — distinta de alarmes.
+  caseSeverity     String?         @map("case_severity")
+  protocol         String?
+  subsystem        String?
+  vendorScope      String?         @map("vendor_scope")
+  symptom          String?
+  evidenceStrength String?         @map("evidence_strength")
+  sourceUrl        String?         @map("source_url")
+  tags             String[]        @default([])
   createdByUserId  String?         @map("created_by_user_id")
   approvedByUserId String?         @map("approved_by_user_id")
   approvedAt       DateTime?       @map("approved_at")
@@ -973,4 +1043,258 @@ model NotificationRecipientSite {
   @@unique([recipientId, siteId])
   @@index([siteId])
   @@map("notification_recipient_sites")
+}
+
+// ─── Insights de IA (resumo executivo periódico por cliente) ─────────────────
+// Configuração por tenant (periodicidade + liga/desliga da geração automática)
+// e insights persistidos: bloco factual determinístico (facts) + texto
+// redacional da IA (narrative). Se a IA falhar, o insight é salvo só com a
+// parte factual (aiFailed=true) — nunca dá erro.
+
+enum InsightFrequency {
+  WEEKLY
+  MONTHLY
+}
+
+model TenantInsightConfig {
+  id        String           @id @default(uuid())
+  tenantId  String           @unique @map("tenant_id")
+  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  // Geração automática no fechamento de cada período (semana/mês em SP).
+  enabled   Boolean          @default(true)
+  frequency InsightFrequency @default(WEEKLY)
+  createdAt DateTime         @default(now()) @map("created_at")
+  updatedAt DateTime         @updatedAt @map("updated_at")
+
+  @@map("tenant_insight_configs")
+}
+
+model AiInsight {
+  id          String           @id @default(uuid())
+  tenantId    String           @map("tenant_id")
+  tenant      Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  frequency   InsightFrequency
+  // 'scheduled' (job periódico) ou 'manual' (gerado sob demanda pelo admin).
+  trigger     String           @default("scheduled")
+  periodStart DateTime         @map("period_start")
+  periodEnd   DateTime         @map("period_end")
+  periodLabel String           @map("period_label")
+  // Bloco factual determinístico — fonte única de verdade do insight.
+  facts       Json
+  // Texto redacional da IA. null quando a IA falhou (aiFailed=true).
+  theme       String?
+  summary     String?
+  narrative   Json?
+  aiFailed    Boolean          @default(false) @map("ai_failed")
+  createdAt   DateTime         @default(now()) @map("created_at")
+
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([tenantId, frequency, periodStart])
+  // Além dos índices acima existe o índice ÚNICO PARCIAL ai_insights_scheduled_unique
+  // (tenant_id, frequency, period_start WHERE trigger='scheduled'), criado em SQL na
+  // migração 20260814150000 — o Prisma não expressa índice parcial no schema. Ele
+  // garante idempotência da geração agendada em failover/race entre líderes.
+  @@map("ai_insights")
+}
+
+// ─── SnmpMib ──────────────────────────────────────────────────────────────────
+
+/**
+ * Arquivo MIB (ASN.1) importado pelo admin para resolver OIDs proprietários.
+ * entries: array de { oid: string, name: string, description?: string }.
+ * A classificação semântica de snmp-oid-semantics.ts tem precedência; a MIB
+ * só enriquece OIDs "desconhecidos" (sem correspondência na tabela estática).
+ */
+model SnmpMib {
+  id             String   @id @default(uuid())
+  label          String
+  // Rótulo normalizado opcional para relacionar a MIB a um fabricante/perfil.
+  manufacturer   String?
+  isOffline      Boolean  @default(false) @map("is_offline")
+  sourceFilename String?  @map("source_filename")
+  entries        Json     @default("[]")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  devices        Device[]
+
+  @@map("snmp_mibs")
+}
+
+// ─── SNMP Fase 2: credenciais, perfis, bindings e descoberta ─────────────────
+//
+// Separação descoberta × coleta:
+// - Descoberta: walk completo (cadastro + no máx. 1×/dia) → SnmpDiscoveryRun +
+//   SnmpDiscoveryObject (snapshot persistido, diff contra o run anterior).
+// - Perfil: SnmpDeviceProfile + SnmpProfileMetric (OID → métrica canônica →
+//   unidade/escala/categoria; catálogo curado — população plena na fase 3).
+// - Coleta: GET em lote SOMENTE nos OIDs resolvidos em DeviceMetricBinding.
+
+/**
+ * Credencial SNMP por equipamento (v1/v2c community ou SNMPv3 USM).
+ * Chaves auth/priv cifradas em repouso (AES-256-GCM, mesmo padrão das senhas
+ * ONVIF: "enc:v1:iv:tag:cipher"). NUNCA retornadas pela API — respostas expõem
+ * apenas hasAuthKey/hasPrivKey. Device.config.{snmpVersion,community} segue
+ * como fallback legado enquanto ambas as fontes existirem.
+ */
+model SnmpCredential {
+  id            String   @id @default(uuid())
+  tenantId      String   @map("tenant_id")
+  deviceId      String   @unique @map("device_id")
+  device        Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  // '1' | '2c' | '3'
+  version       String   @default("2c")
+  community     String?
+  // Campos SNMPv3 (USM). securityLevel: noAuthNoPriv | authNoPriv | authPriv.
+  securityName  String?  @map("security_name")
+  securityLevel String?  @map("security_level")
+  authProtocol  String?  @map("auth_protocol") // md5 | sha | sha256 | sha512
+  authKeyEnc    String?  @map("auth_key_enc") // cifrada (AES-GCM)
+  privProtocol  String?  @map("priv_protocol") // des | aes | aes256
+  privKeyEnc    String?  @map("priv_key_enc") // cifrada (AES-GCM)
+  contextName   String?  @map("context_name")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@index([tenantId])
+  @@map("snmp_credential")
+}
+
+/**
+ * Perfil curado de equipamento: fabricante/modelo/sysObjectID/faixa de
+ * firmware + raízes de walk proprietárias. Fase 2 cria a estrutura; o
+ * catálogo canônico completo e a UI metric-first são fase 3.
+ */
+model SnmpDeviceProfile {
+  id            String              @id @default(uuid())
+  tenantId      String              @map("tenant_id")
+  manufacturer  String
+  model         String?
+  sysObjectId   String?             @map("sys_object_id")
+  firmwareRange String?             @map("firmware_range")
+  // Raízes de walk proprietárias do fabricante: ["1.3.6.1.4.1.49617.1", …]
+  walkRoots     Json                @default("[]") @map("walk_roots")
+  createdAt     DateTime            @default(now()) @map("created_at")
+  updatedAt     DateTime            @updatedAt @map("updated_at")
+  metrics       SnmpProfileMetric[]
+
+  @@index([tenantId])
+  @@index([sysObjectId])
+  @@map("device_profile")
+}
+
+/**
+ * Métrica canônica de um perfil: metric_key → candidatos de OID (ordenados),
+ * escala, unidade e categoria.
+ */
+model SnmpProfileMetric {
+  id         String            @id @default(uuid())
+  tenantId   String            @map("tenant_id")
+  profileId  String            @map("profile_id")
+  profile    SnmpDeviceProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  metricKey  String            @map("metric_key")
+  // Candidatos ordenados: [{ oid, label?, priority? }]
+  candidates Json              @default("[]")
+  scale      Float             @default(1)
+  unit       String            @default("")
+  category   String            @default("")
+  createdAt  DateTime          @default(now()) @map("created_at")
+  updatedAt  DateTime          @updatedAt @map("updated_at")
+
+  @@unique([profileId, metricKey])
+  @@index([tenantId])
+  @@map("profile_metric")
+}
+
+/**
+ * OID resolvido por métrica de um equipamento — a ÚNICA fonte de OIDs do
+ * ciclo de coleta (o gateway nunca faz walk na coleta). Derivado dos bindings
+ * dos pontos (source='point'), das aplicações de diagnóstico e da resolução
+ * via catálogo canônico (fase 3). Pode ser herdado de outro device do mesmo
+ * tenant com mesmo sysObjectID + firmwareFamily (confidence='inferred').
+ */
+model DeviceMetricBinding {
+  id              String   @id @default(uuid())
+  tenantId        String   @map("tenant_id")
+  deviceId        String   @map("device_id")
+  device          Device   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  metricKey       String   @map("metric_key")
+  oid             String
+  // Confiança numérica legada (mantida para compatibilidade com gateway antigo).
+  confidence      Float    @default(1)
+  // Confiança semântica: 'exact' (auto-resolvido com probe respondendo),
+  // 'inferred' (herdado de outro device do mesmo tenant+sysObjectID),
+  // 'manual' (aplicado explicitamente pelo operador via apply-snmp-oids).
+  confidenceLabel String   @default("exact") @map("confidence_label")
+  // 'point' | 'diagnose' | 'profile' | 'inherited'
+  source          String   @default("point")
+  // Binding quebrado: OID sumiu/mudou de tipo no último run de descoberta.
+  broken          Boolean  @default(false)
+  brokenReason    String?  @map("broken_reason") // 'missing' | 'type_changed'
+  // sysObjectID do device no momento da resolução (para herança por modelo).
+  sysObjectId     String?  @map("sys_object_id")
+  // Família/faixa de firmware no momento da resolução (para herança por firmware).
+  firmwareFamily  String?  @map("firmware_family")
+  // OIDs membros (para métricas agregadas como média de CPUs).
+  memberOids      Json     @default("[]") @map("member_oids")
+  // Rótulos por OID membro (para exibição no card de agregados).
+  labels          Json     @default("{}") @map("labels")
+  resolvedAt      DateTime @default(now()) @map("resolved_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([deviceId, metricKey])
+  @@index([tenantId])
+  @@index([sysObjectId])
+  @@index([confidenceLabel])
+  @@map("device_metric_binding")
+}
+
+/**
+ * Run de descoberta (walk completo) de um equipamento. Guarda o snapshot em
+ * SnmpDiscoveryObject e o diff contra o run anterior (OIDs que apareceram,
+ * sumiram ou mudaram de tipo) + bindings quebrados detectados ao final.
+ */
+model SnmpDiscoveryRun {
+  id             String                @id @default(uuid())
+  tenantId       String                @map("tenant_id")
+  deviceId       String                @map("device_id")
+  device         Device                @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  // 'registration' | 'manual' | 'scheduled'
+  trigger        String                @default("manual")
+  startedAt      DateTime              @default(now()) @map("started_at")
+  durationMs     Int                   @default(0) @map("duration_ms")
+  totalOids      Int                   @default(0) @map("total_oids")
+  errorCount     Int                   @default(0) @map("error_count")
+  errors         Json                  @default("[]")
+  reachable      Boolean               @default(true)
+  sysObjectId    String?               @map("sys_object_id")
+  // { appeared: string[], disappeared: string[], typeChanged: [{oid,from,to}],
+  //   counts: { appeared, disappeared, typeChanged }, previousRunId } | null
+  diff           Json?
+  // [{ metricKey, oid, reason: 'missing'|'type_changed' }]
+  brokenBindings Json                  @default("[]") @map("broken_bindings")
+  objects        SnmpDiscoveryObject[]
+
+  @@index([deviceId, startedAt])
+  @@index([tenantId])
+  @@map("discovery_run")
+}
+
+/**
+ * Objeto respondido no walk de um run de descoberta: OID, tipo ASN.1,
+ * valor bruto (string) e nome MIB quando conhecido.
+ */
+model SnmpDiscoveryObject {
+  id       String           @id @default(uuid())
+  tenantId String           @map("tenant_id")
+  runId    String           @map("run_id")
+  run      SnmpDiscoveryRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  oid      String
+  type     String?
+  rawValue String?          @map("raw_value")
+  mibName  String?          @map("mib_name")
+
+  @@index([runId])
+  @@index([tenantId])
+  @@map("discovery_object")
 }

@@ -55,7 +55,7 @@ function parseType(value: unknown): KnowledgeType {
   if (typeof value === 'string' && value in KnowledgeType) {
     return KnowledgeType[value as keyof typeof KnowledgeType];
   }
-  throw new BadRequestException("Tipo inválido. Use 'MANUAL', 'HOWTO' ou 'PLAYBOOK'.");
+  throw new BadRequestException("Tipo inválido. Use 'MANUAL', 'HOWTO', 'PLAYBOOK' ou 'CASE'.");
 }
 
 // Gestão da base de conhecimento — restrita à operação (não a clientes finais).
@@ -170,6 +170,28 @@ export class KnowledgeController {
     if (!query) throw new BadRequestException('Informe o termo de busca (q).');
     const limit = k ? Number.parseInt(k, 10) : 5;
     return this.knowledge.search(query, Number.isFinite(limit) ? limit : 5);
+  }
+
+  // POST /knowledge/import-seed-cases — importa a seed de 100 casos técnicos
+  // BMS (BB-BMS-XXXX) empacotada com o app. Idempotente: deduplica por case_id,
+  // então rodar de novo não duplica casos. Roda em segundo plano (o proxy de
+  // produção corta requests >30s); o cliente acompanha via GET .../status.
+  @Post('import-seed-cases')
+  importSeedCases(@CurrentUser() user: AuthenticatedUser) {
+    const { importId } = this.knowledge.beginImportSeedCases(user.id);
+    return { pending: true as const, importId };
+  }
+
+  // GET /knowledge/import-seed-cases/:importId/status — polling do import da
+  // seed. 'unknown' quando o id expirou/é inválido ou o poll caiu em outra
+  // instância — o cliente informa que o import segue em segundo plano.
+  @Get('import-seed-cases/:importId/status')
+  importSeedCasesStatus(@Param('importId') importId: string) {
+    const job = this.knowledge.getSeedImportJob(importId);
+    if (!job) return { status: 'unknown' as const };
+    if (job.status === 'pending') return { status: 'pending' as const };
+    if (job.status === 'error') return { status: 'error' as const, message: job.message };
+    return { status: 'done' as const, ...job.result };
   }
 
   // GET /knowledge/:id — detalhe de um documento.

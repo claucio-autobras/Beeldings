@@ -288,9 +288,9 @@ export function buildMqttIntegrationGuidePdf(data: MqttGuideData): Buffer {
   doc.setFontSize(10);
   setText(doc, PDF_COLOR.muted);
   const sub = [
-    `Projeto: ${data.projectName}`,
+    `Nome: ${data.projectName}`,
     data.siteName ? `Site: ${data.siteName}` : null,
-    `Gateway: ${data.gatewayId}`,
+    `ID do gateway: ${data.gatewayId}`,
   ]
     .filter(Boolean)
     .join('  ·  ');
