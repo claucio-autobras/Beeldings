@@ -28,7 +28,7 @@ set -euo pipefail
 # under apps/frontend/public remain available to a cloned project.
 
 REPO_SLUG="claucio-autobras/Beeldings"
-REMOTE_URL="https://github.com/${REPO_SLUG}"
+REMOTE_URL="${GITHUB_SYNC_REMOTE_URL:-https://github.com/${REPO_SLUG}}"
 CRED_HELPER='!f() { echo "username=x-access-token"; echo "password=${GITHUB_TOKEN}"; }; f'
 
 err() { echo "ERROR: $*" >&2; }
@@ -208,15 +208,15 @@ cmd_push() {
 
 cmd_push_snapshot() {
   require_state
-  if [ "$LOCAL_HEAD" = "$SYNC_LOCAL" ]; then
-    echo "Nothing to push — local main is at the sync point (${SYNC_LOCAL})."
-    return 0
-  fi
   local rhead; rhead="$(remote_head)"
   if [ "$rhead" != "$SYNC_REMOTE" ]; then
     err "Remote main (${rhead}) has moved past the sync point (${SYNC_REMOTE})."
     err "GitHub has commits not yet pulled. Run: scripts/sync-github.sh pull first."
     exit 1
+  fi
+  if [ "$LOCAL_HEAD" = "$SYNC_LOCAL" ]; then
+    echo "Nothing to push — local main is at the sync point (${SYNC_LOCAL})."
+    return 0
   fi
   if ! git merge-base --is-ancestor "$SYNC_LOCAL" "$LOCAL_HEAD"; then
     err "Sync point ${SYNC_LOCAL} is not an ancestor of local HEAD."
