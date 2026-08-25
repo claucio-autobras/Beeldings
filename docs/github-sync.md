@@ -21,7 +21,11 @@ arquivos ou logs). O estado do ponto de sincronização (SHA local ↔ SHA remot
 `exports/`, `screenshots/`, vídeos e artefatos de vídeo nunca são publicados. Assets de
 runtime em `apps/frontend/public` continuam no snapshot porque são necessários para o app.
 
-O `scripts/post-merge.sh` roda `status` após cada merge como lembrete (não bloqueia).
+Um workflow persistente roda `scripts/github-sync-daemon.sh` e publica automaticamente
+novos commits da `main` local. O `scripts/post-merge.sh` também tenta sincronizar
+imediatamente após cada merge. O daemon usa lock e uma tentativa por intervalo para
+evitar concorrência e tempestade de retries. Se o GitHub avançar pela IDE, ele não
+faz pull nem force-push: registra a divergência para resolução manual.
 
 ## Fluxo para trabalhar na IDE local
 

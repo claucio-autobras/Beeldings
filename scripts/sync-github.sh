@@ -185,6 +185,10 @@ cmd_push() {
 
 cmd_push_snapshot() {
   require_state
+  if [ "$LOCAL_HEAD" = "$SYNC_LOCAL" ]; then
+    echo "Nothing to push — local main is at the sync point (${SYNC_LOCAL})."
+    return 0
+  fi
   local rhead; rhead="$(remote_head)"
   if [ "$rhead" != "$SYNC_REMOTE" ]; then
     err "Remote main (${rhead}) has moved past the sync point (${SYNC_REMOTE})."

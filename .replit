@@ -30,6 +30,10 @@ args = "Start Backend"
 task = "workflow.run"
 args = "gateway-manifest"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "GitHub sync"
+
 [[workflows.workflow]]
 name = "Start application"
 author = "agent"
@@ -63,6 +67,17 @@ args = "node apps/gateway/scripts/gateway-manifest.mjs"
 
 [workflows.workflow.metadata]
 isValidation = true
+
+[[workflows.workflow]]
+name = "GitHub sync"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "bash scripts/github-sync-daemon.sh"
+
+[workflows.workflow.metadata]
+outputType = "console"
 
 [agent]
 stack = "PNPM_WORKSPACE"

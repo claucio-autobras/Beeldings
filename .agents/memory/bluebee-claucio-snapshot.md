@@ -26,6 +26,8 @@ local `main` to `github.com/claucio-autobras/Beeldings` is off the table permane
   snapshot of HEAD and resets the sync point (remote-only commits are lost).
 - `push-snapshot` — publishes the current filtered tree as one normal commit; use this when
   many Replit commits are pending or the remote needs a clean IDE-ready snapshot.
+- A persistent workspace workflow plus the post-merge hook run `push-snapshot` automatically;
+  they use a lock and stop on remote divergence instead of pulling or force-pushing.
 
 **Gotchas learned:**
 - `trap cleanup EXIT` with `[ -n "$TMP" ] && rm` makes a successful run exit 1 when TMP is
@@ -36,7 +38,8 @@ local `main` to `github.com/claucio-autobras/Beeldings` is off the table permane
 - Published snapshots omit `attached_assets/`, `exports/`, `screenshots/`, generated outputs,
   video artifacts, root video/audio files and `backups/`; runtime assets remain.
 
-`scripts/post-merge.sh` runs `sync-github.sh status` non-fatally as a reminder.
+`scripts/post-merge.sh` and the persistent sync workflow publish filtered snapshots
+non-fatally; remote divergence remains a manual pull/resolve decision.
 User-facing guide (clone/run locally/commit/pull): `docs/github-sync.md`.
 
 ## Recuperação sem init-base (aprendido 11/08/2026)

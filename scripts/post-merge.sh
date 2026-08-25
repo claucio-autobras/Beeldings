@@ -16,11 +16,11 @@ if [ -z "$DATABASE_URL" ]; then
 fi
 (cd apps/backend && npx prisma migrate deploy && npx prisma generate)
 
-# Non-fatal reminder: report GitHub sync status (github.com/claucio-autobras/Beeldings).
-# Sync is manual/on-demand via scripts/sync-github.sh {push|pull|status}.
+# Non-fatal immediate sync after a Replit merge. A persistent sync workflow also
+# checks periodically so commits outside this hook are covered.
 if [ -n "${GITHUB_TOKEN:-}" ]; then
-  bash scripts/sync-github.sh status || \
-    echo "REMINDER: GitHub is out of sync. See scripts/sync-github.sh (push/pull) above." >&2
+  bash scripts/sync-github.sh push-snapshot || \
+    echo "REMINDER: GitHub was not synchronized automatically; inspect the sync log and resolve any divergence." >&2
 else
-  echo "NOTE: GITHUB_TOKEN not set; skipped GitHub sync status check." >&2
+  echo "NOTE: GITHUB_TOKEN not set; skipped automatic GitHub sync." >&2
 fi
