@@ -9,7 +9,7 @@
 - [BlueBee audit trail](bluebee-audit-trail.md) — global interceptor uses an explicit route allowlist; login audited in AuthService (needs FAILURE); never store req.body (password); IP masked only on display.
 - [BlueBee virtual points](bluebee-virtual-points.md) — Bancada = Device protocol='virtual'; NEVER count/list as real equipment; merge EXCLUDE_VIRTUAL_DEVICES in every real-device query; SimulatorService is the only virtual consumer.
 - [Task merge DB sync](bluebee-task-merge-db-sync.md) — merges add schema/migration files but post-merge runs only npm install; must `prisma migrate deploy` + `generate` + restart on main, else new tables missing & client stale (fire-and-forget writes fail silently).
-- [Claucio GitHub sync](bluebee-claucio-snapshot.md) — bidirectional via sync point in .git/bluebee-github-sync; push replays commits (never full history/force after base), pull applies remote diff as local commit.
+- [GitHub mirror sync](bluebee-github-sync.md) — bidirectional sync preserves local checkpoint history; publish filtered snapshots without force-pushing or overwriting remote work.
 - [BACnet COV](bluebee-bacnet-cov.md) — node-bacnet subscribeCov tem 8 args (options+cb); notificação via evento covNotifyUnconfirmed; COV points excluídos do polling de propósito; telemetria idêntica; correlacionar por subscribeId+address+objeto.
 - [Modbus RTU serial](bluebee-modbus-rtu.md) — RS485 half-duplex = 1 fila serializada por porta no gateway; setID antes de cada op; connectionType ausente = TCP; arquivo novo no gateway exige bump + manifest --update.
 - [Escrita Modbus](bluebee-modbus-write.md) — só holding/coil; sem relinquish/prioridade (conceito BACnet); gateway reverte scale/offset e publica readback como telemetria; nunca confirmar por readback.

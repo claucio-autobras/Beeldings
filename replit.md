@@ -43,7 +43,7 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Espelho externo (Claucio) — sincronização bidirecional
 
-- O remoto `github.com/claucio-autobras/Beeldings` é sincronizado nos DOIS sentidos por `scripts/sync-github.sh` (`push` / `push-snapshot` / `pull` / `status`; precisa de `GITHUB_TOKEN`). Um workflow persistente e o `post-merge` publicam automaticamente snapshots filtrados quando a `main` local avança, sem anexos do chat, vídeos, exports ou saídas geradas; eles não fazem pull/force-push quando o GitHub diverge. O histórico completo local (~3,8 GB) nunca é enviado. Guia completo: `docs/github-sync.md`; procedimento canônico: `.agents/memory/bluebee-claucio-snapshot.md`.
+- O remoto `github.com/claucio-autobras/Beeldings` é sincronizado nos DOIS sentidos por `scripts/sync-github.sh` (`push` / `push-snapshot` / `pull` / `status`; precisa de `GITHUB_TOKEN`). Um workflow persistente e o `post-merge` publicam automaticamente snapshots filtrados quando a `main` local avança, sem anexos do chat, vídeos, exports ou saídas geradas; eles não fazem pull/force-push quando o GitHub diverge. Um lock compartilhado evita concorrência e snapshots compostos apenas por arquivos excluídos não geram erro recorrente. O histórico completo local (~3,8 GB) nunca é enviado. Guia completo: `docs/github-sync.md`; procedimento canônico: `.agents/memory/bluebee-github-sync.md`.
 
 ## Pointers
 

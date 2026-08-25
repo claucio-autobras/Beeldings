@@ -45,6 +45,7 @@ fi
 ROOT_DIR="$(git rev-parse --show-toplevel)"
 cd "$ROOT_DIR"
 STATE_FILE="$ROOT_DIR/.git/bluebee-github-sync"
+LOCK_FILE="$ROOT_DIR/.git/bluebee-github-sync.lock"
 
 rgit() { git -c credential.helper= -c "credential.helper=${CRED_HELPER}" "$@"; }
 
@@ -65,6 +66,15 @@ load_state() {
 
 save_state() { # $1=local sha  $2=remote sha
   printf 'LOCAL_SHA=%s\nREMOTE_SHA=%s\n' "$1" "$2" > "$STATE_FILE"
+}
+
+with_sync_lock() {
+  exec 9>"$LOCK_FILE"
+  if flock -n 9; then
+    "$@"
+  else
+    echo "GitHub sync already in progress; skipped this attempt. The next cycle will re-check main." >&2
+  fi
 }
 
 export_tree() { # $1=rev  $2=destdir  — tracked files only, backups/ removed
@@ -211,6 +221,12 @@ cmd_push_snapshot() {
   find "$repo" -mindepth 1 -maxdepth 1 -not -name .git -exec rm -rf {} +
   export_tree "$LOCAL_HEAD" "$repo"
   git -C "$repo" add -A
+  if git -C "$repo" diff --cached --quiet; then
+    save_state "$LOCAL_HEAD" "$SYNC_REMOTE"
+    echo "Nothing publishable — local changes only affected excluded files."
+    echo "Sync point updated: local ${LOCAL_HEAD} <-> remote ${SYNC_REMOTE}"
+    return 0
+  fi
   git -C "$repo" commit -q -m "BlueBee code snapshot $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     -m "(source: ${LOCAL_HEAD})"
 
@@ -309,10 +325,10 @@ cmd_init_base() {
 }
 
 case "$CMD" in
-  push)      cmd_push ;;
-  push-snapshot) cmd_push_snapshot ;;
-  pull)      cmd_pull ;;
+  push)      with_sync_lock cmd_push ;;
+  push-snapshot) with_sync_lock cmd_push_snapshot ;;
+  pull)      with_sync_lock cmd_pull ;;
   status)    cmd_status ;;
-  init-base) cmd_init_base ;;
+  init-base) with_sync_lock cmd_init_base ;;
   *)         usage ;;
 esac

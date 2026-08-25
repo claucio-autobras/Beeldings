@@ -24,8 +24,11 @@ runtime em `apps/frontend/public` continuam no snapshot porque são necessários
 Um workflow persistente roda `scripts/github-sync-daemon.sh` e publica automaticamente
 novos commits da `main` local. O `scripts/post-merge.sh` também tenta sincronizar
 imediatamente após cada merge. O daemon usa lock e uma tentativa por intervalo para
-evitar concorrência e tempestade de retries. Se o GitHub avançar pela IDE, ele não
-faz pull nem force-push: registra a divergência para resolução manual.
+evitar concorrência e tempestade de retries; qualquer outro `push`, `pull` ou
+inicialização executado enquanto há uma sincronização em curso é ignorado com uma
+mensagem explícita. Alterações somente em arquivos excluídos são reconhecidas sem
+criar commits vazios. Se o GitHub avançar pela IDE, ele não faz pull nem force-push:
+registra a divergência para resolução manual.
 O workflow é iniciado junto com o projeto e verifica a `main` a cada 60 segundos por
 padrão; esse intervalo pode ser ajustado com `GITHUB_SYNC_INTERVAL_SECONDS`.
 

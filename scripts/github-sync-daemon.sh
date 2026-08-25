@@ -9,10 +9,9 @@ ROOT_DIR="$(git rev-parse --show-toplevel)"
 cd "$ROOT_DIR"
 
 INTERVAL_SECONDS="${GITHUB_SYNC_INTERVAL_SECONDS:-60}"
-LOCK_FILE="$ROOT_DIR/.git/bluebee-github-sync.lock"
 
 while true; do
-  if flock -n "$LOCK_FILE" bash scripts/sync-github.sh push-snapshot; then
+  if bash scripts/sync-github.sh push-snapshot; then
     :
   else
     status=$?
