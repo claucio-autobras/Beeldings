@@ -26,6 +26,8 @@ novos commits da `main` local. O `scripts/post-merge.sh` também tenta sincroniz
 imediatamente após cada merge. O daemon usa lock e uma tentativa por intervalo para
 evitar concorrência e tempestade de retries. Se o GitHub avançar pela IDE, ele não
 faz pull nem force-push: registra a divergência para resolução manual.
+O workflow é iniciado junto com o projeto e verifica a `main` a cada 60 segundos por
+padrão; esse intervalo pode ser ajustado com `GITHUB_SYNC_INTERVAL_SECONDS`.
 
 ## Fluxo para trabalhar na IDE local
 
