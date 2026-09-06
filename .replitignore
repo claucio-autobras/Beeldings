@@ -1,0 +1,38 @@
+# The format of this file is identical to `.dockerignore`.
+# It is used to reduce the size of deployed images to make the process of publishing faster.
+
+# Caches / stores locais (pnpm store, caches de dev)
+.local
+.cache
+.upm
+
+# Histórico git (3,9 GB) — não é necessário em runtime de produção
+.git
+
+# Cache do Next (pesado e desnecessário em runtime). NUNCA excluir
+# apps/frontend/.next inteiro: o .replitignore também remove o build de
+# produção da imagem final → "Could not find a production build" em prod.
+apps/frontend/.next/cache
+# Artefatos do servidor de DESENVOLVIMENTO (Turbopack) — chegam a 1,7 GB e
+# não são usados em produção (o build de prod recria .next do zero)
+apps/frontend/.next/dev
+
+# Libs Python (usadas só em ferramentas de dev, nada em produção roda Python)
+.pythonlibs
+
+# Assets anexados no chat e arquivos brutos — nunca servidos em produção
+attached_assets
+backups
+exports
+*.mp4
+
+# Artefatos auxiliares do workspace (mockups, vídeo comercial) — não fazem
+# parte do app publicado
+artifacts/mockup-sandbox
+artifacts/video-comercial
+
+# Diversos de dev
+docs
+nodered-flows
+infra
+docker-compose.test.yml

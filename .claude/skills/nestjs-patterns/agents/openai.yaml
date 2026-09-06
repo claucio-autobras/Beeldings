@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nestjs Patterns"
+  short_description: "Padroes backend NestJS BlueBee"
+  default_prompt: "Use $nestjs-patterns to apply the BlueBee IoT nestjs-patterns standards."

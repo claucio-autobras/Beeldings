@@ -1,0 +1,4 @@
+interface:
+  display_name: "Bacnet Objects"
+  short_description: "Objetos BACnet para BMS IoT"
+  default_prompt: "Use $bacnet-objects to apply the BlueBee IoT bacnet-objects standards."

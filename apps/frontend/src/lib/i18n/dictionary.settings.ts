@@ -1,0 +1,109 @@
+// Dicionário pt-BR → en do módulo Ajustes (settings) — cliente, site, gateway e destinatários.
+export const DICT_SETTINGS: Record<string, string> = {
+  // ── Página / cabeçalho ──
+  'Configure clientes, sites, gateways e destinatários de notificação': 'Configure clients, sites, gateways and notification recipients',
+
+  // ── Card Site ──
+  'Site': 'Site',
+  'Localização física e responsável do site': "Site's physical location and responsible person",
+  'Nenhum site cadastrado para este cliente.': 'No sites registered for this client.',
+  'Selecionar site': 'Select site',
+  'Salvar site': 'Save site',
+  'Site atualizado com sucesso.': 'Site updated successfully.',
+  'Não foi possível atualizar o site.': 'Could not update the site.',
+
+  // ── Card Gateway ──
+  'Gateway': 'Gateway',
+  'Sistemas implantados no site selecionado': 'Systems deployed at the selected site',
+  'Nenhum gateway disponível para este site.': 'No gateways available for this site.',
+  'Nenhum gateway disponível para este cliente.': 'No gateways available for this client.',
+  'Selecionar gateway': 'Select gateway',
+  'Nome do gateway': 'Gateway name',
+  'Salvar gateway': 'Save gateway',
+  'Gateway atualizado com sucesso.': 'Gateway updated successfully.',
+  'Não foi possível atualizar o gateway.': 'Could not update the gateway.',
+  // ── Seção destinatários ──
+  'Destinatários de Notificação': 'Notification Recipients',
+  'Quem deve receber alarmes e insights por e-mail ou WhatsApp': 'Who should receive alarms and insights by email or WhatsApp',
+  'Novo destinatário': 'New recipient',
+  'Nenhum destinatário cadastrado.': 'No recipients registered.',
+  'Carregando destinatários…': 'Loading recipients…',
+  'Não foi possível carregar os destinatários.': 'Could not load recipients.',
+
+  // ── Tabela ──
+  'Nome': 'Name',
+  'Contato': 'Contact',
+  'Canais': 'Channels',
+  'Categorias': 'Categories',
+  'Escopo': 'Scope',
+  'Todos os sites': 'All sites',
+  'site': 'site',
+  'sites': 'sites',
+  'destinatário': 'recipient',
+  'destinatários': 'recipients',
+  'Ativo': 'Active',
+  'Inativo': 'Inactive',
+  'Editar': 'Edit',
+  'Excluir': 'Delete',
+
+  // ── Diálogo criar/editar ──
+  'Novo Destinatário': 'New Recipient',
+  'Editar Destinatário': 'Edit Recipient',
+  'Nome do destinatário': "Recipient's name",
+  'Ex.: João Silva': 'e.g. John Smith',
+  'E-mail': 'Email',
+  'voce@empresa.com': 'you@company.com',
+  'Telefone (WhatsApp)': 'Phone (WhatsApp)',
+  'Ex.: +5511912345678': 'e.g. +5511912345678',
+  'Digite DDD e número. Para internacional, comece com + e o código do país.': 'Type area code and number. For international, start with + and the country code.',
+  'Canais habilitados': 'Enabled channels',
+  'Categorias de notificação': 'Notification categories',
+  'Alarmes': 'Alarms',
+  'Insights da IA': 'AI Insights',
+  'Escopo de sites': 'Site scope',
+  'Todos os sites do cliente': 'All client sites',
+  'Sites específicos': 'Specific sites',
+  'Carregando sites…': 'Loading sites…',
+  'Nenhum site disponível': 'No sites available',
+  'Destinatário ativo': 'Active recipient',
+  'Salvar': 'Save',
+  'Criar': 'Create',
+  'Cancelar': 'Cancel',
+
+  // ── Confirmação de exclusão ──
+  'Excluir destinatário': 'Delete recipient',
+  'Tem certeza que deseja excluir': 'Are you sure you want to delete',
+  'Esta ação não pode ser desfeita.': 'This action cannot be undone.',
+  'Excluindo…': 'Deleting…',
+
+  // ── Teste de canal ──
+  'Enviar teste': 'Send test',
+  'Testando…': 'Testing…',
+  'Teste enviado com sucesso!': 'Test sent successfully!',
+  'Falha ao enviar teste:': 'Failed to send test:',
+  'Canal E-mail': 'Email channel',
+  'Canal WhatsApp': 'WhatsApp channel',
+  '⚠️ Nenhum provedor configurado': '⚠️ No provider configured',
+  'RESEND_API_KEY e/ou credenciais Z-API não configuradas. Notificações externas desabilitadas.': 'RESEND_API_KEY and/or Z-API credentials not configured. External notifications disabled.',
+  'E-mail (Resend) não configurado': 'Email (Resend) not configured',
+  'WhatsApp (Z-API) não configurado': 'WhatsApp (Z-API) not configured',
+  'Testar e-mail': 'Test email',
+  'Testar WhatsApp': 'Test WhatsApp',
+
+  // ── Mensagens de feedback ──
+  'Destinatário criado com sucesso.': 'Recipient created successfully.',
+  'Destinatário atualizado com sucesso.': 'Recipient updated successfully.',
+  'Destinatário excluído com sucesso.': 'Recipient deleted successfully.',
+  'Não foi possível salvar o destinatário.': 'Could not save the recipient.',
+  'Não foi possível excluir o destinatário.': 'Could not delete the recipient.',
+
+  // ── Validação ──
+  'Informe ao menos um contato: e-mail ou telefone': 'Provide at least one contact: email or phone',
+  'Habilite ao menos um canal: E-mail ou WhatsApp': 'Enable at least one channel: Email or WhatsApp',
+  'Informe um e-mail válido': 'Provide a valid email address',
+  'Telefone incompleto ou inválido. Ex.: (11) 91234-5678': 'Phone number incomplete or invalid. E.g. (11) 91234-5678',
+  'Telefone incompleto ou inválido. Ex.: (11) 91234-5678.': 'Phone number incomplete or invalid. E.g. (11) 91234-5678.',
+  'Canal E-mail habilitado, mas e-mail não informado': 'Email channel enabled but no email provided',
+  'Canal WhatsApp habilitado, mas telefone não informado': 'WhatsApp channel enabled but no phone provided',
+  'Informe ao menos um site quando "Todos os sites" estiver desabilitado': 'Provide at least one site when "All sites" is disabled',
+};

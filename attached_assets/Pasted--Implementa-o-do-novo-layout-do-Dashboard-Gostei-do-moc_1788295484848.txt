@@ -1,0 +1,117 @@
+## Implementação do novo layout do Dashboard
+
+Gostei do mockup apresentado e quero que ele seja utilizado como **referência visual principal para a implementação do Dashboard**, tanto para usuários **Admin** quanto para usuários **Cliente**.
+
+### Regra principal
+
+O **mockup deve ser considerado a referência visual definitiva do Dashboard**.
+
+A implementação deve reproduzir o máximo possível o que está apresentado no mockup, respeitando principalmente:
+
+* estrutura e disposição dos elementos;
+* quantidade e posicionamento dos cards;
+* ícones utilizados;
+* tamanhos e proporções;
+* espaçamentos;
+* hierarquia visual;
+* bordas, sombras e arredondamentos;
+* cores e elementos visuais;
+* organização geral da página.
+
+Não quero apenas uma adaptação aproximada do layout atual. A intenção é **transformar o Dashboard atual para que ele visualmente siga o mockup**.
+
+### Tema claro e escuro
+
+O Dashboard precisa ser totalmente compatível com **tema claro e tema escuro**.
+
+Todos os elementos devem permanecer com ótima:
+
+* legibilidade;
+* contraste;
+* hierarquia visual;
+* visibilidade dos ícones;
+* diferenciação entre fundo, cards, textos e indicadores.
+
+Não implementar o tema escuro simplesmente invertendo as cores do tema claro. O layout deve ser visualmente bem ajustado para cada tema.
+
+---
+
+## Dashboard do Cliente
+
+Para o usuário **Cliente**, quero seguir o mockup **100% como referência de layout e conteúdo visual**.
+
+O Dashboard do Cliente deve ficar o mais próximo possível do mockup, sem manter elementos que existem atualmente no sistema mas que não aparecem no mockup.
+
+### Remover elementos que não existem no mockup
+
+Por exemplo, atualmente existem alguns cards que não fazem parte do mockup, como:
+
+* **Resumo Operacional**
+* **Acesso Rápido**
+* **Top ofensores (24h)**
+
+Esses elementos devem ser **removidos do Dashboard do Cliente**.
+
+A regra é:
+
+> **Se um card ou elemento existe atualmente no Dashboard do Cliente, mas não existe no mockup, ele deve ser removido, salvo indicação explícita em contrário.**
+
+Não quero que o layout antigo seja preservado junto com o novo mockup.
+
+O resultado final do Dashboard do Cliente deve parecer **uma implementação real do mockup**, e não uma combinação entre o mockup e o layout antigo.
+
+---
+
+## Dashboard do Admin
+
+O Dashboard do usuário **Admin** também deve utilizar o mockup como referência visual.
+
+A estrutura deve seguir o mesmo padrão visual apresentado no mockup, incluindo:
+
+* layout;
+* disposição dos cards;
+* ícones;
+* componentes;
+* espaçamentos;
+* estilo visual;
+* hierarquia das informações;
+* aparência geral.
+
+Porém, devem ser preservadas as informações e funcionalidades que são necessárias exclusivamente para o usuário Admin.
+
+Ou seja, **a diferença entre Admin e Cliente deve estar principalmente nas informações e permissões exibidas, e não na qualidade ou coerência visual do layout**.
+
+---
+
+## O que espero como resultado final
+
+### Usuário Admin
+
+O Dashboard Admin deve apresentar:
+
+* layout baseado no mockup;
+* mesma linguagem visual;
+* mesmos padrões de cards;
+* mesma organização dos elementos;
+* ícones seguindo o mockup;
+* aparência moderna e profissional;
+* compatibilidade completa com tema claro e escuro.
+
+### Usuário Cliente
+
+O Dashboard Cliente deve:
+
+* seguir **100% o mockup como referência**;
+* reproduzir a disposição dos elementos;
+* utilizar os mesmos padrões visuais;
+* utilizar os mesmos ícones e estilos;
+* remover os cards existentes atualmente que não aparecem no mockup;
+* não misturar elementos do layout antigo com o novo layout;
+* manter apenas os elementos previstos no mockup, respeitando as funcionalidades realmente necessárias para o cliente;
+* funcionar perfeitamente nos temas claro e escuro.
+
+### Critério de aceite
+
+Considere a implementação concluída somente quando, ao comparar o sistema com o mockup, o resultado visual estiver **claramente equivalente ao mockup**, e não apenas semelhante.
+
+**O mockup deve ser tratado como a fonte principal de verdade para o design do Dashboard.**

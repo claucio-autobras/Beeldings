@@ -1,0 +1,4 @@
+interface:
+  display_name: "Multi Tenant Rules"
+  short_description: "Isolamento multi-tenant obrigatorio"
+  default_prompt: "Use $multi-tenant-rules to apply the BlueBee IoT multi-tenant-rules standards."

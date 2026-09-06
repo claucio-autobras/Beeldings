@@ -1,0 +1,258 @@
+Corrija a normalização e os bindings do coletor SNMP.
+
+O alvo é o COLETOR GENÉRICO, que deve funcionar com qualquer equipamento SNMP,
+de qualquer fabricante. Um Control iD iDFlex V2 (10.201.10.120:161, v2c,
+community public, firmware 5.19.3) foi usado como bancada para verificar cada
+correção — os valores dele aparecem abaixo apenas como referência de teste.
+
+NÃO produza código específico para Control iD, para iDFlex, nem para o IP
+10.201.10.120. Se uma correção só funcionar nesse equipamento, ela está errada.
+
+As correções estão separadas em três camadas. Respeite a separação: ela é o
+que determina onde cada regra mora no código.
+
+  CAMADA A — Núcleo do coletor. Vale para todo equipamento, todo fabricante.
+  CAMADA B — Perfil MIB padrão. Vale para todo equipamento que implemente as
+             MIBs padrão (MIB-2, IF-MIB, HOST-RESOURCES). É o perfil de
+             fallback quando o fabricante é desconhecido.
+  CAMADA C — Perfil de fabricante. Só entra quando o sysObjectID casa. Hoje
+             existe um único item aqui.
+
+═══════════════════════════════════════════════════════════════════
+CAMADA A — NÚCLEO DO COLETOR
+═══════════════════════════════════════════════════════════════════
+
+A1) Caminho único de normalização
+
+Hoje existe mais de um: o card converte valores que a tela de telemetria exibe
+crus. Unifique. Tipo, escala e unidade são resolvidos UMA vez, na entrada,
+antes de qualquer consumidor. Nenhuma camada de apresentação converte nada.
+
+A2) Normalização por tipo ASN.1
+
+  TimeTicks           ÷ 100 → segundos
+  Counter32           taxa: (v2 − v1) ÷ Δt; wrap em 2^32
+  Counter64           taxa: (v2 − v1) ÷ Δt; wrap em 2^64
+  Gauge32/Unsigned32  valor direto; aplicar scale do perfil
+  INTEGER enumerado   guardar valor bruto E rótulo resolvido pela MIB
+  OCTET STRING numérica   coerção para float ("18.671" é número, não texto)
+  OCTET STRING composta   parser declarado no perfil
+  desconhecido        preservar bruto, marcar unknown, nunca descartar
+
+Para octetos de rede, multiplique a taxa por 8 para obter bps.
+Queda abrupta de um contador = reset do equipamento: descarte a amostra em vez
+de gerar pico negativo. Guarde a amostra anterior por métrica — sem ela não
+existe delta.
+
+Sintoma verificado: sysUpTime (1.3.6.1.2.1.1.3.0) aparecia como "402963 s" no
+painel e "1h 6m" no card. São TimeTicks: 402963 ÷ 100 = 4029,6 s = 1h 07m.
+
+A3) Unidade canônica no armazenamento
+
+  memória e storage   bytes
+  taxa de rede        bits por segundo
+  tempo               segundos
+  temperatura         graus Celsius
+
+A formatação é da tela e SEMPRE acompanha a unidade. Nunca exiba número nu.
+
+Sintoma verificado: card mostrando "117" sem unidade, ao lado de outro card
+mostrando "69 kB". Duas unidades diferentes na mesma tela.
+
+A4) Coleta não faz walk
+
+A telemetria reporta 3060 ms de latência SNMP, enquanto uma descoberta completa
+de 1981 OIDs leva 1,8 s. Numa LAN, uma consulta SNMP fica abaixo de 50 ms.
+
+Verifique se o ciclo de coleta ainda executa WALK. Walk é exclusivo da
+descoberta — sob demanda ou no máximo uma vez por dia. Coleta é GET em lote,
+apenas dos OIDs já resolvidos no binding.
+
+A5) Nenhum índice fixo no código
+
+Índice de interface, de processador e de linha de storage são DESCOBERTOS por
+equipamento e gravados no binding. Um índice literal no código quebra no
+primeiro aparelho diferente — e, em alguns agentes, quebra no próprio
+equipamento após um reboot que reordena interfaces.
+
+═══════════════════════════════════════════════════════════════════
+CAMADA B — PERFIL MIB PADRÃO
+═══════════════════════════════════════════════════════════════════
+
+Este perfil é o fallback universal. Qualquer equipamento SNMP desconhecido
+deve entregar, no mínimo: uptime, cpu_usage, memory_used_percent e
+reachability, usando só o que está abaixo.
+
+B1) Memória total — hrMemorySize
+
+  1.3.6.1.2.1.25.2.2.0     unidade: KBytes por definição da MIB
+
+Sintoma verificado: a telemetria atribuía o valor ao OID
+1.3.6.1.2.1.25.2.3.1.5.1 (hrStorageSize), mas ele vem do hrMemorySize.
+Na bancada: 119424 KBytes, exibido como "117" (119424 ÷ 1024 = 116,6 MB).
+Corrija o OID mostrado no detalhe e acrescente a unidade.
+
+B2) Memória e storage em uso — hrStorageTable
+
+Selecione a linha pelo hrStorageType, NUNCA por índice fixo:
+
+  hrStorageType             1.3.6.1.2.1.25.2.3.1.2.<idx>
+  hrStorageDescr            1.3.6.1.2.1.25.2.3.1.3.<idx>
+  hrStorageAllocationUnits  1.3.6.1.2.1.25.2.3.1.4.<idx>
+  hrStorageSize             1.3.6.1.2.1.25.2.3.1.5.<idx>
+  hrStorageUsed             1.3.6.1.2.1.25.2.3.1.6.<idx>
+
+  total_bytes  = hrStorageSize × hrStorageAllocationUnits
+  used_bytes   = hrStorageUsed × hrStorageAllocationUnits
+  used_percent = hrStorageUsed ÷ hrStorageSize × 100
+
+RAM usa a linha hrStorageRam; storage persistente usa hrStorageFixedDisk, e
+deve ser exposto por volume.
+
+Sintoma verificado: métrica rotulada "Memória disponível" lendo a coluna .5,
+que é o TOTAL, não o disponível — e sem multiplicar pelo fator de alocação.
+
+NÃO altere memory_used_percent: os 73,8% da bancada estão corretos.
+
+B3) CPU — hrProcessorLoad
+
+  1.3.6.1.2.1.25.3.3.1.2.<idx>
+
+É tabela, uma linha por núcleo. Colapse em UMA métrica lógica com agregação
+declarada: avg para o gráfico, max como agregação secundária. Guarde as
+instâncias individuais como detalhe, fora do fluxo de recomendação. Não exiba
+um card por núcleo.
+
+Sintoma verificado: cpu_usage vinculado a uma única instância
+(...25.3.3.1.2.196608) num equipamento de 4 núcleos, que retornava
+15, 15, 15, 30 — média 18,75%.
+
+B4) Rede — IF-MIB e ifXTable
+
+Regra de seleção da interface, executada na descoberta:
+
+  selecionar interfaces com ifType ≠ 24 (softwareLoopback)
+                        e ifOperStatus = 1 (up)
+  rotular por ifName (1.3.6.1.2.1.31.1.1.1.1.<idx>), fallback ifDescr
+  preferir contadores de 64 bits da ifXTable; cair para os de 32 bits
+           da ifTable quando a ifXTable não responder
+  gravar o índice resolvido no binding daquele equipamento
+
+Colunas, com <idx> resolvido:
+
+  ifOperStatus     1.3.6.1.2.1.2.2.1.8.<idx>      enum 1=up 2=down 3=testing
+  ifInErrors       1.3.6.1.2.1.2.2.1.14.<idx>     Counter32 → pkt/s
+  ifInDiscards     1.3.6.1.2.1.2.2.1.13.<idx>     Counter32 → pkt/s
+  ifOutErrors      1.3.6.1.2.1.2.2.1.20.<idx>     Counter32 → pkt/s
+  ifInUcastPkts    1.3.6.1.2.1.2.2.1.11.<idx>     Counter32
+  ifInNUcastPkts   1.3.6.1.2.1.2.2.1.12.<idx>     Counter32
+  ifHCInOctets     1.3.6.1.2.1.31.1.1.1.6.<idx>   Counter64 → bps
+  ifHCOutOctets    1.3.6.1.2.1.31.1.1.1.10.<idx>  Counter64 → bps
+  ifHighSpeed      1.3.6.1.2.1.31.1.1.1.15.<idx>  metadado, Mbps
+
+  fallback 32 bits:
+  ifInOctets       1.3.6.1.2.1.2.2.1.10.<idx>
+  ifOutOctets      1.3.6.1.2.1.2.2.1.16.<idx>
+
+Contador de 32 bits estoura a cada 4,3 GB — em link de 100 Mbps saturado, cerca
+de 6 minutos. Prefira sempre os de 64 bits.
+
+Perda de pacotes, sobre deltas da janela:
+
+  perda% = (Δ ifInDiscards + Δ ifInErrors)
+         ÷ (Δ ifInUcastPkts + Δ ifInNUcastPkts + Δ ifInDiscards + Δ ifInErrors)
+         × 100
+
+Mantenha separada a métrica de perda por ICMP (PERDA_PING) que já existe: ela
+mede o caminho entre coletor e equipamento; a de SNMP mede o que a interface do
+equipamento vê. Rotule as duas de forma que fique claro qual é qual — quando
+divergirem, a diferença é o diagnóstico.
+
+Sintoma verificado: net_in_rate e net_out_rate ligados ao índice 1, com valor
+idêntico (129). Na bancada, ifDescr.1 = "lo" e ifDescr.2 = "eth0"; a interface
+real retornava ifInOctets 1489269 contra ifOutOctets 1563553, e ifOperStatus
+up(1). Entrada igual à saída é a assinatura do loopback.
+
+B5) Uptime
+
+  1.3.6.1.2.1.1.3.0        TimeTicks — ver A2
+
+═══════════════════════════════════════════════════════════════════
+CAMADA C — PERFIL DE FABRICANTE
+═══════════════════════════════════════════════════════════════════
+
+Perfis de fabricante são selecionados por sysObjectID (1.3.6.1.2.1.1.2.0), lido
+na descoberta. Sem casamento, vale o perfil da Camada B.
+
+Cada métrica tem cadeia ordenada de candidatos: PADRÃO PRIMEIRO, proprietário
+como fallback. O primeiro candidato que responder vence e fica gravado no
+binding.
+
+C1) Control iD — linha de acesso (enterprise 49617)
+
+Único item proprietário necessário hoje. A MIB padrão não expõe temperatura
+neste equipamento.
+
+  cpu_temperature   1.3.6.1.4.1.49617.1.1.5.0   Gauge32, scale 0.001, °C
+  cpu_usage         1.3.6.1.4.1.49617.1.1.4.0   OCTET STRING → float, %
+                                                (fallback de hrProcessorLoad)
+  load_average      1.3.6.1.4.1.49617.1.1.3.0   OCTET STRING, trio 1m/5m/15m
+  firmware_version  1.3.6.1.4.1.49617.1.1.1.0   OCTET STRING
+  serial_number     1.3.6.1.4.1.49617.1.1.2.0   OCTET STRING
+
+Sintoma verificado: a telemetria exibia "87636 °C" porque a escala 0.001 não
+era aplicada nesse caminho. A MIB documenta a unidade como
+"T * 1000 degrees Celsius". 87636 → 87,636 °C.
+
+Validação cruzada disponível: hrProcessorLoad médio (18,75%) e o OID
+proprietário de CPU (18,671%) devem concordar no mesmo instante.
+
+AVISO sobre este fabricante, para o perfil não ser derivado da MIB publicada:
+a CONTROLID-MIB descreve a família inteira. Modelos que não têm SIP nem câmera
+omitem esses grupos e RENUMERAM os seguintes. No iDFlex V2, cidAlarm está em .6
+(a MIB diz .9), cidSecbox está em .7 (a MIB diz .10), e cidSystem não tem
+hasProVersion, o que desloca .4 a .9 em um. Confirmado idêntico em 5.13.9 e
+5.19.3 — é característica de modelo, não de versão.
+
+Consequência para o código: a MIB serve para nome, tipo, unidade e descrição,
+NUNCA para posição. Todo perfil de fabricante deve ser ancorado num walk real e
+ter chave "fabricante + modelo + faixa de firmware".
+
+Este fabricante também não define nenhum NOTIFICATION-TYPE nem TRAP-TYPE — não
+implemente receptor de trap para ele. Para outras marcas, o receptor na 162 é
+válido e deve ser previsto no perfil.
+
+═══════════════════════════════════════════════════════════════════
+CRITÉRIOS DE ACEITAÇÃO
+═══════════════════════════════════════════════════════════════════
+
+Genéricos — testados com equipamento de outro fabricante, ou com fixture:
+
+ 1. Um equipamento SNMP sem perfil de fabricante entrega uptime, cpu_usage,
+    memory_used_percent e reachability apenas pela Camada B.
+ 2. Nenhum índice de interface, processador ou storage aparece literal no
+    código; todos são resolvidos na descoberta e gravados no binding.
+ 3. Nenhum binding de rede seleciona interface com ifType = 24.
+ 4. Equipamento com 8 núcleos entrega uma métrica de CPU, não oito.
+ 5. Equipamento sem ifXTable cai para os contadores de 32 bits sem erro.
+ 6. Nenhuma métrica é exibida sem unidade.
+ 7. Tráfego é exibido em taxa, nunca em contador acumulado.
+ 8. O ciclo de coleta não executa nenhum walk.
+ 9. Cadastrar um segundo equipamento do mesmo modelo herda o perfil, sem
+    curadoria manual.
+10. Nenhuma consulta de descoberta, binding ou telemetria retorna dado de
+    outro tenant.
+
+Na bancada Control iD, para confirmar que nada regrediu:
+
+11. Temperatura exibe ~87,6 °C, igual na telemetria e no card.
+12. Memória total exibe "117 MB", com unidade, vinda de 1.3.6.1.2.1.25.2.2.0.
+13. cpu_usage é a média dos 4 núcleos e concorda com o OID proprietário.
+14. net_in_rate e net_out_rate mostram valores DIFERENTES entre si, em bps.
+15. Nenhuma métrica referencia a interface "lo".
+16. Tempo ligado mostra o mesmo valor no card e no painel de descoberta.
+
+NÃO faça: adicionar OIDs fixos para contornar descoberta quebrada; criar
+caminho de normalização paralelo; fixar índice de interface, processador ou
+storage no código; condicionar comportamento a fabricante, modelo ou IP fora
+da Camada C.

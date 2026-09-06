@@ -1,0 +1,4 @@
+interface:
+  display_name: "Database Schema"
+  short_description: "Schema Supabase do BlueBee IoT"
+  default_prompt: "Use $database-schema to apply the BlueBee IoT database-schema standards."

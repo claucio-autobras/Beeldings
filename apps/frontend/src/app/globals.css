@@ -1,0 +1,922 @@
+@import "tailwindcss";
+
+/* Variante `dark:` ativada por classe no <html> (controlada pelo usuário,
+   não pelo SO — a preferência "system" espelha o SO na classe). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Tokens de cor SEM `inline`: as utilities compilam para var(--color-*),
+   permitindo o override sob `.dark` abaixo. */
+@theme {
+  /* ── Backgrounds ──────────────────────────────────────────────── */
+  --color-background:        #EDF3F7;
+  --color-card:              #FFFFFF;
+  --color-popover:           #FFFFFF;
+  --color-muted:             #F1F5F9;
+
+  /* ── Foregrounds ──────────────────────────────────────────────── */
+  --color-foreground:        #0F172A;
+  --color-card-foreground:   #0F172A;
+  --color-muted-foreground:  #64748B;
+
+  /* ── Borders ──────────────────────────────────────────────────── */
+  --color-border:            #D9E4EA;
+  --color-input:             #D9E4EA;
+  --color-ring:              #0E7490;
+
+  /* ── Brand / Primary (cyan-700, WCAG AA 7:1) ─────────────────── */
+  --color-primary:           #0E7490;
+  --color-primary-foreground: #FFFFFF;
+
+  /* ── Secondary ────────────────────────────────────────────────── */
+  --color-secondary:         #F1F5F9;
+  --color-secondary-foreground: #0F172A;
+
+  /* ── Accent (hover) ───────────────────────────────────────────── */
+  --color-accent:            #E2E8F0;
+  --color-accent-foreground: #0F172A;
+
+  /* ── Destructive ──────────────────────────────────────────────── */
+  --color-destructive:       #DC2626;
+  --color-destructive-foreground: #FFFFFF;
+
+  /* ── Device status ────────────────────────────────────────────── */
+  --color-status-online:     #166534;
+  --color-status-offline:    #64748B;
+  --color-status-warning:    #92400E;
+  --color-status-alarm:      #B91C1C;
+
+  /* ── Alarm severities ─────────────────────────────────────────── */
+  --color-alarm-critical:    #B91C1C;
+  --color-alarm-high:        #C2410C;
+  --color-alarm-medium:      #92400E;
+  --color-alarm-low:         #1D4ED8;
+  --color-alarm-info:        #6D28D9;
+
+  /* ── Radius ───────────────────────────────────────────────────── */
+  --radius:    0.5rem;
+  --radius-sm: 0.25rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+}
+
+/* Fontes seguem `inline` porque referenciam variáveis do next/font. */
+@theme inline {
+  --font-sans: var(--font-inter), system-ui, sans-serif;
+  --font-mono: var(--font-fira-code), ui-monospace, monospace;
+}
+
+/* ── Tema escuro ─────────────────────────────────────────────────────────────
+   Sobrescreve os tokens semânticos e os tons claros da paleta usados como
+   fundo/hover/borda/realce nas telas principais. Tons escuros (slate-700+)
+   NÃO são tocados — sidebar e editor SCADA já são escuros por design. */
+.dark {
+  /* Tokens semânticos */
+  --color-background:        #0B1220;
+  --color-card:              #111A2C;
+  --color-popover:           #111A2C;
+  --color-muted:             #1B2740;
+  --color-foreground:        #E6EDF7;
+  --color-card-foreground:   #E6EDF7;
+  --color-muted-foreground:  #8CA0BF;
+  --color-border:            #24334F;
+  --color-input:             #24334F;
+  --color-ring:              #22D3EE;
+  --color-secondary:         #1B2740;
+  --color-secondary-foreground: #E6EDF7;
+  --color-accent:            #24334F;
+  --color-accent-foreground: #E6EDF7;
+
+  /* Neutros claros usados como superfície/hover/borda em telas claras */
+  --color-slate-50:          #16213A;
+  --color-slate-100:         #1B2740;
+  --color-slate-200:         #24334F;
+  --color-slate-300:         #35476B;
+  --color-slate-400:         #64748B;
+  --color-slate-500:         #8CA0BF;
+  --color-slate-600:         #B7C4DA;
+
+  /* Realces (tints -50/-100/-200) → equivalentes escuros */
+  --color-cyan-50:           #0C2E3D;
+  --color-cyan-100:          #0E3A4D;
+  --color-cyan-200:          #155E75;
+
+  --color-red-50:            #331318;
+  --color-red-100:           #47181E;
+  --color-red-200:           #7F1D1D;
+
+  --color-emerald-50:        #0A2A20;
+  --color-emerald-100:       #0D3A2C;
+  --color-emerald-200:       #065F46;
+
+  --color-amber-50:          #33230A;
+  --color-amber-100:         #45300D;
+  --color-amber-200:         #92400E;
+
+  --color-orange-50:         #351D0C;
+  --color-orange-100:        #47270F;
+  --color-orange-200:        #9A3412;
+
+  --color-blue-50:           #101E3C;
+  --color-blue-100:          #152750;
+  --color-blue-200:          #1E40AF;
+
+  --color-purple-50:         #221238;
+  --color-purple-100:        #2D1849;
+  --color-purple-200:        #6B21A8;
+}
+
+/* Controles nativos (select/option, scrollbars, inputs de data) seguem o tema:
+   sem isso o dropdown do <select> abre claro sobre painéis escuros. */
+.dark {
+  color-scheme: dark;
+}
+
+/* Todos os seletores nativos usam a mesma superfície da tela. O navegador
+   pode ignorar o tema do documento no popup de <select>, por isso o fundo e a
+   cor também são definidos no próprio controle e em cada <option>. */
+select {
+  color: var(--color-foreground);
+  background-color: var(--color-background);
+  color-scheme: light;
+}
+
+select option {
+  background-color: var(--color-card);
+  color: var(--color-foreground);
+}
+
+select option:checked {
+  background-color: var(--color-primary);
+  color: var(--color-primary-foreground);
+}
+
+.dark select {
+  color: #E6EDF7;
+  background-color: #0B1220;
+  color-scheme: dark;
+}
+
+.dark select option {
+  background-color: #111A2C !important;
+  color: #E6EDF7 !important;
+}
+
+.dark select option:checked {
+  background-color: #0E7490 !important;
+  color: #FFFFFF !important;
+}
+
+/* Avisos âmbar antigos usam apenas text-amber-600..900. Esses tons ficam
+   escuros demais sobre os fundos âmbar remapeados do dark mode. A exceção
+   preserva componentes que já definem uma variante dark específica. */
+.dark [class~="text-amber-600"]:not([class*="dark:text-amber-"]) {
+  color: #FBBF24;
+}
+.dark [class~="text-amber-700"]:not([class*="dark:text-amber-"]) {
+  color: #FCD34D;
+}
+.dark [class~="text-amber-800"]:not([class*="dark:text-amber-"]) {
+  color: #FDE68A;
+}
+.dark [class~="text-amber-900"]:not([class*="dark:text-amber-"]) {
+  color: #FEF3C7;
+}
+
+/* Selects do modal SCADA mantêm a mesma superfície do modal. */
+.scada-project-select {
+  color-scheme: light;
+}
+.scada-project-select option {
+  background-color: var(--color-card);
+  color: var(--color-foreground);
+}
+.dark .scada-project-select {
+  color-scheme: dark;
+}
+
+/* A sidebar tem fundo escuro fixo nos dois temas — dentro dela, os tons
+   slate voltam aos valores originais para o texto ficar legível no dark. */
+.dark .app-sidebar {
+  --color-slate-50:  #f8fafc;
+  --color-slate-100: #f1f5f9;
+  --color-slate-200: #e2e8f0;
+  --color-slate-300: #cbd5e1;
+  --color-slate-400: #94a3b8;
+  --color-slate-500: #64748b;
+  --color-slate-600: #475569;
+}
+
+/* ── SCADA: chrome escuro por design ─────────────────────────────────────────
+   O editor SCADA, o viewer e a bancada flutuante têm fundo escuro fixo nos
+   DOIS temas do app. Este escopo:
+   1. força color-scheme: dark → o dropdown nativo dos <select> (Controladora,
+      operadores, ícones…) abre escuro e legível, mesmo com o app no tema claro;
+   2. sob `.dark`, devolve os tons slate claros aos valores originais (o
+      override global os escurece p/ telas claras — aqui viraria cinza sobre
+      cinza / texto invisível). */
+.scada-dark-chrome {
+  color-scheme: dark;
+}
+
+.dark .scada-dark-chrome {
+  --color-slate-50:  #f8fafc;
+  --color-slate-100: #f1f5f9;
+  --color-slate-200: #e2e8f0;
+  --color-slate-300: #cbd5e1;
+  --color-slate-400: #94a3b8;
+  --color-slate-500: #64748b;
+  --color-slate-600: #475569;
+
+  /* Realces usados no chrome escuro (avisos, badges) voltam aos tints claros
+     p/ manter o contraste calculado sobre fundos slate-800/900. */
+  --color-cyan-50:  #ecfeff;
+  --color-cyan-100: #cffafe;
+  --color-cyan-200: #a5f3fc;
+  --color-amber-50: #fffbeb;
+  --color-amber-100: #fef3c7;
+  --color-amber-200: #fde68a;
+  --color-red-50:   #fef2f2;
+  --color-red-100:  #fee2e2;
+  --color-red-200:  #fecaca;
+  --color-emerald-50:  #ecfdf5;
+  --color-emerald-100: #d1fae5;
+  --color-emerald-200: #a7f3d0;
+}
+
+/* Preview decorativo dos cards de telas. A composição é deliberadamente
+   estática: comunica a linguagem SCADA sem fingir uma miniatura ao vivo. */
+.scada-screen-preview {
+  background-color: #0f172a;
+  background-image:
+    linear-gradient(rgba(34, 211, 238, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34, 211, 238, 0.08) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.dark .scada-screen-preview {
+  background-color: #080f1d;
+  background-image:
+    linear-gradient(rgba(34, 211, 238, 0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34, 211, 238, 0.1) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* ══ Identidade colmeia ══════════════════════════════════════════════════════
+   A colmeia continua usando hexágonos próprios. Cards e controles usam
+   superfícies retangulares padrão.
+   ------------------------------------------------------------------------- */
+
+:root {
+  --hex-clip: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
+}
+
+.hex {
+  clip-path: var(--hex-clip);
+}
+
+/* A Hive owns its geometry. The explicit shape and important declaration keep
+   broad legacy surface selectors from turning KPI cells back into rectangles. */
+.hive-hex {
+  clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%) !important;
+}
+
+.chamfer {
+  border-radius: 4px !important;
+  clip-path: none;
+}
+
+.chamfer-in {
+  clip-path: none;
+}
+
+.chamfer-sm {
+  border-radius: 4px !important;
+  clip-path: none;
+}
+
+/* Elevação estável para superfícies clicáveis da dashboard. O alvo fica
+   parado e recebe a mesma sombra das células da Hive, sem deslocar o layout
+   nem fazer o ponteiro entrar/sair durante a animação. */
+.dashboard-clickable,
+.chamfer-clickable {
+  isolation: isolate;
+  transition: filter 280ms ease-out;
+}
+
+.dashboard-clickable:hover,
+.dashboard-clickable:focus-visible,
+.dashboard-clickable:focus-within,
+.chamfer-clickable:hover,
+.chamfer-clickable:focus-within {
+  filter: drop-shadow(0 9px 8px rgb(15 23 42 / 0.28));
+}
+
+.dark .dashboard-clickable:hover,
+.dark .dashboard-clickable:focus-visible,
+.dark .dashboard-clickable:focus-within,
+.dark .chamfer-clickable:hover,
+.dark .chamfer-clickable:focus-within {
+  filter: drop-shadow(0 9px 8px rgb(15 23 42 / 0.28));
+}
+
+.chamfer-hover-content {
+  transition: transform 280ms ease-out, filter 280ms ease-out;
+}
+
+.chamfer-clickable:hover > .chamfer-hover-content,
+.chamfer-clickable:focus-within > .chamfer-hover-content {
+  transform: translateY(-1px);
+  filter: drop-shadow(0 9px 8px rgb(15 23 42 / 0.28));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chamfer-hover-content {
+    transition: none;
+  }
+}
+
+/* ── Dashboard: item do feed de alarmes ─────────────────────────────────────
+   Este card combina a superfície clara da referência com o console escuro.
+   Não usa os tokens slate/red remapeados globalmente: eles representam
+   superfícies no tema escuro e ficam escuros demais quando aplicados ao texto. */
+.recent-alarm-item {
+  border-color: #e2e8f0;
+  background-color: rgb(248 250 252 / 0.7);
+}
+
+.recent-alarm-item:hover {
+  border-color: #cbd5e1;
+  background-color: #ffffff;
+}
+
+.dark .recent-alarm-item {
+  border-color: #35476b;
+  background-color: #172335;
+}
+
+.dark .recent-alarm-item:hover {
+  border-color: #52698f;
+  background-color: #1b2a40;
+}
+
+/* Pontos Críticos usa o mesmo destaque dos itens de alarme ao passar o mouse:
+   contraste maior, borda reforçada e elevação pelo chamfer-clickable. */
+.critical-asset-item:hover,
+.critical-asset-item:focus-visible {
+  border-color: #cbd5e1;
+  background-color: #ffffff;
+}
+
+.dark .critical-asset-item:hover,
+.dark .critical-asset-item:focus-visible {
+  border-color: #52698f;
+  background-color: #1b2a40;
+}
+
+/* Linhas do ranking por cliente: superfície clara no tema claro e azul-marinho
+   no escuro, mantendo a barra de prioridade e o texto legíveis nos dois temas. */
+.tenant-ranking-row {
+  border-color: #e2e8f0;
+  background-color: #f8fafc;
+}
+
+.tenant-ranking-row:hover,
+.tenant-ranking-row:focus-visible {
+  border-color: #cbd5e1;
+  background-color: #ffffff;
+}
+
+.dark .tenant-ranking-row {
+  border-color: #35476b;
+  background-color: #1b2a40;
+}
+
+.dark .tenant-ranking-row:hover,
+.dark .tenant-ranking-row:focus-visible {
+  border-color: #52698f;
+  background-color: #223451;
+}
+
+/* O card mantém altura fixa; somente a lista interna cresce e rola quando
+   necessário. Sem excesso de itens, nenhuma barra de rolagem é exibida. */
+.critical-assets-scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.recent-alarm-context,
+.recent-alarm-time {
+  color: #64748b;
+}
+
+.dark .recent-alarm-context,
+.dark .recent-alarm-time {
+  color: #b7c4da;
+}
+
+.recent-alarm-status-failure {
+  border-color: #fecdd3;
+  background-color: #fff1f2;
+  color: #be123c;
+}
+
+.dark .recent-alarm-status-failure {
+  border-color: #5b3652;
+  background-color: #38243a;
+  color: #fda4af;
+}
+
+.recent-alarm-status-ack {
+  border-color: #fde68a;
+  background-color: #fffbeb;
+  color: #b45309;
+}
+
+.dark .recent-alarm-status-ack {
+  border-color: #fbbf24;
+  background-color: #4a3210;
+  color: #fde68a;
+}
+
+.recent-alarm-action {
+  border-color: #e2e8f0;
+  background-color: #f8fafc;
+  color: #64748b;
+}
+
+.recent-alarm-action:hover {
+  border-color: #22d3ee;
+  color: #0e7490;
+}
+
+.dark .recent-alarm-action {
+  border-color: #2d4162;
+  background-color: #1a2a40;
+  color: #9aa9bf;
+}
+
+.dark .recent-alarm-action:hover {
+  border-color: #486589;
+  color: #d7e1ef;
+}
+
+.surface-comb {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='100' viewBox='0 0 56 100'%3E%3Cpath d='M28 66L0 50L0 16L28 0L56 16L56 50L28 66L28 100M28 0L28 34L0 50M28 34L56 50' fill='none' stroke='%230891B2' stroke-width='1.2' stroke-opacity='0.07'/%3E%3C/svg%3E");
+}
+
+.dark .surface-comb {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='100' viewBox='0 0 56 100'%3E%3Cpath d='M28 66L0 50L0 16L28 0L56 16L56 50L28 66L28 100M28 0L28 34L0 50M28 34L56 50' fill='none' stroke='%230891B2' stroke-width='1.2' stroke-opacity='0.10'/%3E%3C/svg%3E");
+}
+
+/* O tema claro usa cards brancos sobre um canvas frio e levemente elevado.
+   A variante escura mantém o tratamento profundo já definido para o console. */
+.dashboard-panel {
+  border-color: #D5E1E8;
+  box-shadow: 0 10px 28px rgb(15 23 42 / 0.08);
+}
+
+.dark .dashboard-panel {
+  border-color: var(--color-border);
+  box-shadow: inset 0 1px 0 rgb(157 218 231 / 0.045), 0 22px 48px rgb(0 0 0 / 0.22);
+}
+
+/* Cada gateway é uma unidade visual dentro do painel, não uma linha solta.
+   As laterais ficam nas células porque border em <tr> não é consistente entre
+   browsers. A sombra é exclusivamente inferior para sugerir elevação. */
+.gateway-health-row > td {
+  background: var(--color-muted);
+  border-top: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+  transition:
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.gateway-health-row > td:first-child {
+  border-left: 1px solid var(--color-border);
+  border-top-left-radius: 0.65rem;
+  border-bottom-left-radius: 0.65rem;
+}
+
+.gateway-health-row > td:last-child {
+  border-right: 1px solid var(--color-border);
+  border-top-right-radius: 0.65rem;
+  border-bottom-right-radius: 0.65rem;
+}
+
+.gateway-health-row:hover {
+  transform: translateY(-2px);
+}
+
+.gateway-health-row:hover > td {
+  background: var(--color-accent);
+  box-shadow: 0 8px 14px -11px rgb(15 23 42 / 0.7);
+}
+
+.dark .gateway-health-row:hover > td {
+  box-shadow: 0 8px 16px -11px rgb(0 0 0 / 0.9);
+}
+
+.hive-dashboard-panel {
+  background: linear-gradient(180deg, #FFFFFF 0%, #F7FBFD 100%);
+}
+
+.dark .hive-dashboard-panel {
+  background: var(--color-card);
+}
+
+:where(
+  [class~="rounded-xl"][class~="border"][class~="border-border"][class~="bg-card"],
+  [class~="rounded-lg"][class~="border"][class~="border-border"][class~="bg-card"],
+  [class~="rounded-2xl"][class~="border"][class~="border-border"][class~="bg-card"],
+  [class~="rounded-md"][class~="border"][class~="border-border"][class~="bg-card"],
+  [class~="rounded-md"][class~="border"]:not([class~="p-1"]),
+  [class~="rounded-lg"][class~="border"]:not([class~="rounded-full"]),
+  [class~="rounded-xl"][class~="border"],
+  [class~="rounded-md"][class*="bg-"]:not([class~="rounded-full"]),
+  [class~="rounded-lg"][class*="bg-"]:not([class~="rounded-full"]),
+  [class~="rounded-xl"][class*="bg-"]:not([class~="rounded-full"]),
+  [class~="rounded-md"][class~="bg-cyan-600"],
+  [class~="rounded-md"][class~="bg-primary"],
+  [class~="rounded-lg"][class~="bg-cyan-600"],
+  [class~="rounded-lg"][class~="bg-cyan-700"],
+  [class~="rounded-lg"][class~="bg-primary"],
+  [class~="rounded-lg"][class~="bg-muted"],
+  [class~="rounded-md"][class~="bg-muted"]
+ ):not([class~="bg-card"]) {
+  border-radius: 4px !important;
+  clip-path: none !important;
+}
+
+/* Compatibilidade visual para superfícies legadas: o raio discreto mantém
+   cards e painéis retangulares sem reintroduzir recortes diagonais. */
+:where(
+  [class~="rounded-md"][class~="border"][class~="border-border"],
+  [class~="rounded-lg"][class~="border"][class~="border-border"],
+  [class~="rounded-xl"][class~="border"][class~="border-border"],
+  [class~="rounded-2xl"][class~="border"][class~="border-border"]
+):not([class~="rounded-full"]) {
+  border-radius: 4px !important;
+  clip-path: none !important;
+  filter: none !important;
+}
+
+:where(
+  [class~="rounded-xl"][class~="bg-card"],
+  [class~="rounded-2xl"][class~="bg-card"]
+):not([class~="rounded-full"]) {
+  border-radius: 4px !important;
+  clip-path: none !important;
+  filter: none !important;
+}
+
+:where(
+  [class~="rounded-xl"][class~="border"],
+  [class~="rounded-2xl"][class~="border"]
+):not([class~="rounded-full"]) {
+  border-radius: 4px !important;
+  clip-path: none !important;
+  filter: none !important;
+}
+
+:where(
+  [class~="rounded-full"][class~="border"][class~="px-2"],
+  [class~="rounded-full"][class~="px-2.5"]
+) {
+  border-radius: 9999px !important;
+  clip-path: none !important;
+}
+
+/* Ações de navegação só aparecem no hover de ponteiros com mouse. O
+   focus-within do componente continua permitindo acesso completo pelo
+   teclado, inclusive em dispositivos sem hover. */
+@media (hover: hover) and (pointer: fine) {
+  .scada-screen-card:hover .scada-card-actions {
+    opacity: 1;
+  }
+}
+
+/* Em touch não há hover persistente: as ações ficam visíveis em vez de criar
+   uma área clicável transparente sobre a prévia. */
+@media (hover: none), (pointer: coarse) {
+  .scada-card-actions {
+    opacity: 1;
+  }
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans);
+}
+
+/* O popup do Assistente é uma superfície própria: preserva o raio amplo
+   mesmo com a compatibilidade de cards retangulares aplicada globalmente. */
+div.bluebee-assistant-panel {
+  border-radius: 1rem !important;
+}
+
+@media (max-width: 767px) {
+  div.bluebee-assistant-panel {
+    border-radius: 1rem 1rem 0 0 !important;
+  }
+}
+
+/* O shell autenticado controla o scroll nos seus próprios containers. */
+html.private-layout-lock,
+body.private-layout-lock {
+  overflow: hidden;
+}
+
+/* Tabular numbers para todos os valores de telemetria */
+.data-value {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* Pulso de fundo para alarmes ativos — apenas background, texto não é afetado */
+@keyframes alarm-pulse {
+  0%, 100% { background-color: #fef2f2; }
+  50%       { background-color: #fecaca; }
+}
+
+.animate-alarm-pulse {
+  animation: alarm-pulse 2s ease-in-out infinite;
+}
+
+/* Pulso de fundo para alarmes a reconhecer (normalizados, aguardando ACK) — laranja */
+@keyframes alarm-pulse-ack {
+  0%, 100% { background-color: #fff7ed; }
+  50%       { background-color: #fed7aa; }
+}
+
+.animate-alarm-pulse-ack {
+  animation: alarm-pulse-ack 2s ease-in-out infinite;
+}
+
+/* Versões escuras dos pulsos (os keyframes acima usam tons claros fixos) */
+@keyframes alarm-pulse-dark {
+  0%, 100% { background-color: #331318; }
+  50%       { background-color: #5B1A1F; }
+}
+
+.dark .animate-alarm-pulse {
+  animation-name: alarm-pulse-dark;
+}
+
+@keyframes alarm-pulse-ack-dark {
+  0%, 100% { background-color: #33230A; }
+  50%       { background-color: #5C3A10; }
+}
+
+.dark .animate-alarm-pulse-ack {
+  animation-name: alarm-pulse-ack-dark;
+}
+
+/* ── Toast ───────────────────────────────────────────────────────────────────  */
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Painel de notificações (drawer) ─────────────────────────────────────── */
+
+@keyframes notif-drawer-in {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+.animate-notif-drawer-in {
+  animation: notif-drawer-in 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes notif-overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.animate-notif-overlay-in {
+  animation: notif-overlay-in 0.25s ease-out;
+}
+
+@keyframes notif-item-in {
+  from { opacity: 0; transform: translateX(16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.animate-notif-item-in {
+  animation: notif-item-in 0.35s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes bell-badge-pulse {
+  0%   { transform: scale(1); }
+  30%  { transform: scale(1.35); }
+  60%  { transform: scale(0.95); }
+  100% { transform: scale(1); }
+}
+.animate-bell-badge-pulse {
+  animation: bell-badge-pulse 0.6s ease-in-out 2;
+}
+
+/* ── Barra de progresso indeterminada (busca em andamento) ──────────────── */
+
+@keyframes indeterminate-bar {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
+.animate-indeterminate {
+  animation: indeterminate-bar 1.3s ease-in-out infinite;
+}
+
+/* ── SCADA widget animations ────────────────────────────────────────────── */
+
+@keyframes scada-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.15; }
+}
+
+@keyframes scada-pulse {
+  0%, 100% { transform: scale(1);    opacity: 1; }
+  50%       { transform: scale(1.12); opacity: 0.8; }
+}
+
+@keyframes scada-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes scada-fade {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.1; }
+}
+
+/* Balançar — pêndulo suave de lado a lado */
+@keyframes scada-sway {
+  0%, 100% { transform: rotate(-6deg); }
+  50%       { transform: rotate(6deg); }
+}
+
+/* Ondular — sobe/desce com leve cisalhamento */
+@keyframes scada-wave {
+  0%, 100% { transform: translateY(0)     skewX(0deg); }
+  25%       { transform: translateY(-9%)  skewX(5deg); }
+  75%       { transform: translateY(9%)   skewX(-5deg); }
+}
+
+/* Brilho/glow — brilho pulsante ao redor do elemento */
+@keyframes scada-glow {
+  0%, 100% { filter: brightness(1)   drop-shadow(0 0 2px rgba(255,255,255,0.25)); }
+  50%       { filter: brightness(1.5) drop-shadow(0 0 11px rgba(255,255,255,0.95)); }
+}
+
+/* Deslizar — desliza para os lados */
+@keyframes scada-slide {
+  0%, 100% { transform: translateX(-12%); }
+  50%       { transform: translateX(12%); }
+}
+
+/* Tremer — vibração rápida */
+@keyframes scada-shake {
+  0%, 100% { transform: translateX(0)     rotate(0deg); }
+  20%       { transform: translateX(-3px) rotate(-2.5deg); }
+  40%       { transform: translateX(3px)  rotate(2.5deg); }
+  60%       { transform: translateX(-2px) rotate(-1.5deg); }
+  80%       { transform: translateX(2px)  rotate(1.5deg); }
+}
+
+/* Borda de status por valor (regra "border" em StatusBinding.effects). Usa as
+   MESMAS superfícies nativas do hover abaixo — nunca um retângulo genérico no
+   wrapper, senão perde raio/geometria (e duplica com a borda de hover). Widgets
+   sem superfície nativa (fora de HOVER_BORDER_TYPES) continuam com o fallback
+   outline/boxShadow no wrapper (ver WidgetRenderer), pois nunca tiveram uma
+   superfície própria para herdar.
+   Prioridade: quando o hover de borda também está ativo no mesmo widget, o
+   hover vence — as regras `[data-scada-hover-border="true"] ...` abaixo têm a
+   mesma especificidade e vêm depois no arquivo, então a cascata as favorece. */
+[data-scada-status-border="true"] [data-scada-hover-border-surface="true"] {
+  border-color: var(--scada-status-border) !important;
+  stroke: var(--scada-status-border) !important;
+}
+[data-scada-status-border="true"] [data-scada-hover-stroke-surface="true"] {
+  background-color: var(--scada-status-border) !important;
+}
+[data-scada-status-border="true"] [data-scada-shape] > * {
+  stroke: var(--scada-status-border) !important;
+}
+[data-scada-status-border="true"] svg[data-scada-hover-border-surface="true"] > * {
+  stroke: var(--scada-status-border) !important;
+}
+[data-scada-status-border="true"] [data-scada-hover-border-surface="true"] svg > * {
+  stroke: var(--scada-status-border) !important;
+}
+[data-scada-status-border="true"] [data-scada-line] > *,
+[data-scada-status-border="true"] [data-scada-separator] > * {
+  stroke: var(--scada-status-border) !important;
+}
+[data-scada-status-border="true"] [data-scada-pipe] > * {
+  stroke: var(--scada-status-border) !important;
+}
+
+/* Hover configurável do SCADA. O wrapper compartilhado só guarda o estado e
+   as variáveis; o destaque é aplicado às superfícies marcadas pelo renderer.
+   Nunca se desenha uma moldura no wrapper, pois isso perde raio/geometria de
+   formas, cards e controles. */
+.scada-hover-target {
+  transition:
+    opacity var(--scada-hover-duration) var(--scada-hover-easing);
+}
+
+[data-scada-hover-border="true"] [data-scada-hover-border-surface="true"],
+[data-scada-hover-content="true"] [data-scada-hover-content-surface="true"],
+[data-scada-hover-content="true"] [data-scada-hover-fill-surface="true"],
+[data-scada-hover-content="true"] [data-scada-hover-content-stroke-surface="true"],
+[data-scada-hover-text="true"] [data-scada-hover-text-surface="true"] {
+  transition:
+    background-color var(--scada-hover-duration) var(--scada-hover-easing),
+    background var(--scada-hover-duration) var(--scada-hover-easing),
+    color var(--scada-hover-duration) var(--scada-hover-easing),
+    border-color var(--scada-hover-duration) var(--scada-hover-easing),
+    fill var(--scada-hover-duration) var(--scada-hover-easing),
+    stroke var(--scada-hover-duration) var(--scada-hover-easing),
+    box-shadow var(--scada-hover-duration) var(--scada-hover-easing);
+}
+
+[data-scada-hover-border="true"] [data-scada-hover-border-surface="true"] {
+  border-color: var(--scada-hover-border) !important;
+  stroke: var(--scada-hover-border) !important;
+}
+[data-scada-hover-border="true"] [data-scada-hover-stroke-surface="true"] {
+  background-color: var(--scada-hover-border) !important;
+}
+
+/* `data-scada-hover-content-surface` é reservado a caixas HTML reais (div,
+   fieldset, span com background próprio) cujo `border-radius` já bate com a
+   geometria visível — pintar `background` nelas é seguro. NUNCA usar esse
+   marcador na raiz de um `<svg>`: a viewport do SVG é sempre um retângulo,
+   então o background cobriria cantos arredondados/formas não retangulares
+   (gauge, termômetro, barra de progresso, forma preenchida) com uma caixa
+   quadrada. Para essas, o preenchimento recolore via `fill` — ver os
+   marcadores `data-scada-hover-fill-surface` e `[data-scada-shape] > *`. */
+[data-scada-hover-content="true"] [data-scada-hover-content-surface="true"] {
+  background: var(--scada-hover-content) !important;
+  background-color: var(--scada-hover-content) !important;
+}
+
+/* Elemento vetorial específico (líquido/bulbo do termômetro, barra do
+   progress-bar) que representa o "conteúdo" do widget via `fill`: nunca
+   `background`, para não desenhar uma caixa sobre a geometria real. */
+[data-scada-hover-content="true"] [data-scada-hover-fill-surface="true"] {
+  fill: var(--scada-hover-content) !important;
+}
+/* Mesma ideia, mas para elementos cujo "conteúdo" é pintado via `stroke`
+   (ex.: o arco de valor do gauge, que usa fill="none"). */
+[data-scada-hover-content="true"] [data-scada-hover-content-stroke-surface="true"] {
+  stroke: var(--scada-hover-content) !important;
+}
+
+/* Superfícies SVG (formas, linhas, tubulação e separadores) precisam trocar
+   seus paints, pois não exibem a cor de fundo do wrapper. O combinador
+   descendente atravessa o overlay de offline inserido pelo renderer. */
+[data-scada-hover-content="true"] [data-scada-shape] > * {
+  fill: var(--scada-hover-content) !important;
+}
+[data-scada-hover-content="true"] [data-scada-pipe] > * {
+  stroke: var(--scada-hover-content) !important;
+}
+[data-scada-hover-border="true"] [data-scada-shape] > * {
+  stroke: var(--scada-hover-border) !important;
+}
+[data-scada-hover-border="true"] svg[data-scada-hover-border-surface="true"] > * {
+  stroke: var(--scada-hover-border) !important;
+}
+[data-scada-hover-border="true"] [data-scada-hover-border-surface="true"] svg > * {
+  stroke: var(--scada-hover-border) !important;
+}
+[data-scada-hover-border="true"] [data-scada-line] > *,
+[data-scada-hover-border="true"] [data-scada-separator] > * {
+  stroke: var(--scada-hover-border) !important;
+}
+
+/* Textos são marcados separadamente para não recolorir ícones, badges,
+   telemetria interna ou o popup de câmera. */
+[data-scada-hover-text="true"] [data-scada-hover-text-surface="true"] {
+  color: var(--scada-hover-text) !important;
+  fill: var(--scada-hover-text) !important;
+}
+[data-scada-hover-text="true"] [data-scada-hover-text-surface="true"] :where(span, p, div) {
+  color: var(--scada-hover-text) !important;
+}
+
+/* Fluxo da tubulação SCADA: animado via Web Animations API no PipeWidget
+   (element.animate) — CSS var dentro de @keyframes não resolve em algumas
+   composições/navegadores e congelava o tracejado. */
+
+/* Reduzir animações quando o usuário preferir */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

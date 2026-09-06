@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>Beeldings — opções de portal institucional</title>
+  <style>
+    @page { size: A4 landscape; margin: 0; }
+    :root {
+      --ink: #102d4b;
+      --muted: #5d7180;
+      --line: #d8e5e9;
+      --wash: #f4fafb;
+      --cyan: #13a9bc;
+      --teal: #087f99;
+      --amber: #f7b51b;
+      --navy: #092c49;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--ink);
+      background: white;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .page {
+      position: relative;
+      width: 297mm;
+      height: 210mm;
+      padding: 18mm 19mm 14mm;
+      page-break-after: always;
+      overflow: hidden;
+      background: white;
+    }
+    .page:last-child { page-break-after: auto; }
+    .page::after {
+      content: "";
+      position: absolute;
+      width: 120mm;
+      height: 120mm;
+      right: -54mm;
+      top: -60mm;
+      border: 1px solid rgba(19, 169, 188, .14);
+      transform: rotate(30deg);
+      pointer-events: none;
+    }
+    .eyebrow {
+      color: var(--teal);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 {
+      max-width: 210mm;
+      margin: 18mm 0 7mm;
+      color: var(--ink);
+      font-size: 37px;
+      line-height: 1.03;
+      letter-spacing: -1.3px;
+    }
+    h1 span { color: var(--cyan); }
+    h2 {
+      margin-bottom: 4mm;
+      font-size: 24px;
+      letter-spacing: -.5px;
+    }
+    h3 {
+      margin: 0 0 2mm;
+      font-size: 13px;
+    }
+    .lede {
+      max-width: 170mm;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-size: 20px;
+      font-weight: 700;
+    }
+    .brand-mark {
+      display: inline-grid;
+      place-items: center;
+      width: 30px;
+      height: 30px;
+      border: 3px solid var(--cyan);
+      border-radius: 10px;
+      color: var(--amber);
+      font-size: 17px;
+      line-height: 1;
+      transform: rotate(30deg);
+    }
+    .brand-mark b { transform: rotate(-30deg); }
+    .brand em { color: var(--cyan); font-style: normal; }
+    .cover-grid {
+      display: grid;
+      grid-template-columns: 1.25fr .75fr;
+      gap: 16mm;
+      align-items: end;
+      height: 150mm;
+    }
+    .cover-note {
+      align-self: center;
+      padding: 8mm;
+      border-radius: 14px;
+      background: var(--navy);
+      color: white;
+      box-shadow: 0 15px 35px rgba(9, 44, 73, .14);
+    }
+    .cover-note .eyebrow { color: #83e4ea; }
+    .cover-note p { margin: 5mm 0 0; color: #cce6ea; font-size: 13px; line-height: 1.55; }
+    .cover-note strong { color: #fff; }
+    .cover-bottom {
+      position: absolute;
+      bottom: 14mm;
+      left: 19mm;
+      right: 19mm;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: var(--muted);
+      font-size: 10px;
+      border-top: 1px solid var(--line);
+      padding-top: 4mm;
+    }
+    .common-title { margin-top: 0; }
+    .common-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 5mm;
+      margin: 8mm 0 8mm;
+    }
+    .common-card, .compare-card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 5mm;
+      background: #fff;
+    }
+    .common-card { min-height: 33mm; }
+    .common-card .number {
+      color: var(--amber);
+      font-size: 16px;
+      font-weight: 700;
+    }
+    .common-card p, .compare-card p {
+      margin: 2mm 0 0;
+      color: var(--muted);
+      font-size: 10.5px;
+      line-height: 1.45;
+    }
+    .decision-box {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 5mm 6mm;
+      border-radius: 12px;
+      background: var(--wash);
+      border: 1px solid #cfe8eb;
+    }
+    .decision-box strong { font-size: 13px; }
+    .decision-box span { color: var(--muted); font-size: 12px; }
+    .option-layout {
+      display: grid;
+      grid-template-columns: 1.3fr .7fr;
+      gap: 11mm;
+      height: 162mm;
+      align-items: start;
+    }
+    .shot {
+      width: 100%;
+      height: 112mm;
+      object-fit: cover;
+      object-position: top;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      box-shadow: 0 11px 26px rgba(16, 45, 75, .12);
+      display: block;
+    }
+    .caption {
+      margin-top: 3mm;
+      color: var(--muted);
+      font-size: 9px;
+    }
+    .option-copy {
+      padding-top: 2mm;
+    }
+    .option-copy h2 {
+      margin: 2mm 0 3mm;
+      font-size: 28px;
+      line-height: 1.08;
+    }
+    .option-copy h2 span { color: var(--cyan); }
+    .option-copy .intro {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.48;
+      margin-bottom: 6mm;
+    }
+    .label {
+      display: inline-block;
+      margin-bottom: 3mm;
+      padding: 1.8mm 3mm;
+      border-radius: 99px;
+      background: #e7f7f8;
+      color: var(--teal);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: .7px;
+      text-transform: uppercase;
+    }
+    ul {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    li {
+      position: relative;
+      margin: 0 0 3mm;
+      padding-left: 5mm;
+      color: var(--ink);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+    li::before {
+      content: "✓";
+      position: absolute;
+      left: 0;
+      color: var(--cyan);
+      font-weight: 700;
+    }
+    .best-for {
+      margin-top: 6mm;
+      padding: 4mm;
+      border-left: 3px solid var(--amber);
+      background: #fff9e8;
+      color: var(--ink);
+      font-size: 11px;
+      line-height: 1.4;
+    }
+    .best-for strong { display: block; margin-bottom: 1mm; }
+    .page-footer {
+      position: absolute;
+      left: 19mm;
+      right: 19mm;
+      bottom: 8mm;
+      display: flex;
+      justify-content: space-between;
+      color: #78909a;
+      font-size: 8px;
+      letter-spacing: .2px;
+    }
+    .tag-narrative { color: #087f99; }
+    .tag-proof { color: #0a866e; }
+    .tag-institutional { color: #274c76; }
+    .tag-consolidated { color: #078da8; }
+  </style>
+</head>
+<body>
+  <section class="page">
+    <div class="brand">
+      <span class="brand-mark"><b>◈</b></span>
+      <span>Beeld<em>ings</em></span>
+    </div>
+    <div class="cover-grid">
+      <div>
+        <div class="eyebrow">Documento para decisão • Agosto de 2026</div>
+        <h1>Quatro caminhos para apresentar o <span>Beeldings</span>.</h1>
+        <p class="lede">Alternativas de layout para um portal institucional e comercial, com o BlueBee como agente de inteligência operacional.</p>
+      </div>
+      <div class="cover-note">
+        <div class="eyebrow">Objetivo do material</div>
+          <p>Comparar quatro direções visuais antes da construção do portal definitivo, facilitando a escolha da narrativa que melhor representa a empresa.</p>
+          <p><strong>As imagens mostram a abertura de cada proposta.</strong> As quatro páginas foram pensadas para continuar com seções, demonstrações e chamadas para contato.</p>
+      </div>
+    </div>
+    <div class="cover-bottom">
+      <span>Protótipo visual • não é ainda o portal final</span>
+      <span>Beeldings + BlueBee</span>
+    </div>
+  </section>
+
+  <section class="page">
+    <div class="eyebrow">Visão geral</div>
+     <h2 class="common-title">O que as quatro opções têm em comum</h2>
+    <p class="lede">Todas partem da mesma identidade e podem evoluir para o portal definitivo sem perder consistência.</p>
+    <div class="common-grid">
+      <div class="common-card"><div class="number">01</div><h3>Marca e narrativa</h3><p>Beeldings como marca principal e BlueBee como agente de IA que traduz sinais operacionais em contexto e próximos passos.</p></div>
+      <div class="common-card"><div class="number">02</div><h3>Identidade visual</h3><p>Azul operacional, ciano, âmbar e geometria hexagonal discreta, mantendo conexão com a identidade já criada.</p></div>
+      <div class="common-card"><div class="number">03</div><h3>Experiência</h3><p>Landing pages ricas e roláveis, com CTAs, demonstrações visuais, navegação clara e comportamento responsivo.</p></div>
+      <div class="common-card"><div class="number">04</div><h3>Aplicação prática</h3><p>Telemetria, alarmes, disponibilidade, ativos críticos e resposta operacional aparecem como benefícios concretos.</p></div>
+      <div class="common-card"><div class="number">05</div><h3>Tom de comunicação</h3><p>Português do Brasil, linguagem acessível para gestores e equipes técnicas, sem reduzir a complexidade do produto.</p></div>
+      <div class="common-card"><div class="number">06</div><h3>Próximo passo</h3><p>Escolher uma direção para aprofundar conteúdo, provas, navegação, conversão e a construção do portal final.</p></div>
+    </div>
+    <div class="decision-box">
+      <div><strong>Preferência para aprofundamento</strong><br><span>Marque uma opção para orientar a próxima etapa.</span></div>
+       <span>□ 1 — Narrativa &nbsp;&nbsp;&nbsp; □ 2 — Prova operacional &nbsp;&nbsp;&nbsp; □ 3 — Institucional &nbsp;&nbsp;&nbsp; □ 4 — Consolidada</span>
+    </div>
+    <div class="page-footer"><span>Beeldings — comparação de direções</span><span>02</span></div>
+  </section>
+
+  <section class="page">
+    <div class="eyebrow tag-narrative">Opção 1 • BlueBee como parceiro de decisão</div>
+    <div class="option-layout">
+      <div>
+        <img class="shot" src="portal-narrative.jpg" alt="Prévia do layout narrativo do portal Beeldings">
+        <div class="caption">Prévia do hero — a operação ganha clareza ao lado do BlueBee.</div>
+      </div>
+      <div class="option-copy">
+        <span class="label">Direção narrativa</span>
+        <h2>BlueBee <span>protagonista</span></h2>
+        <p class="intro">Apresenta o produto como uma transformação de dados dispersos em decisões claras.</p>
+        <ul>
+          <li>BlueBee conduz a narrativa da página.</li>
+          <li>Linguagem mais humana e consultiva.</li>
+          <li>Demonstra como a IA interpreta, explica e sugere ações.</li>
+          <li>Transmite inovação sem parecer apenas um chatbot.</li>
+        </ul>
+        <div class="best-for"><strong>Ponto forte</strong>Diferencia melhor o Beeldings pela inteligência artificial.</div>
+        <div class="best-for"><strong>Indicado para</strong>Apresentações que precisam explicar a proposta de valor e gerar curiosidade pela tecnologia.</div>
+      </div>
+    </div>
+    <div class="page-footer"><span>Beeldings — opção 1</span><span>03</span></div>
+  </section>
+
+  <section class="page">
+    <div class="eyebrow tag-proof">Opção 2 • Foco em resultados e controle</div>
+    <div class="option-layout">
+      <div>
+        <img class="shot" src="portal-proof.jpg" alt="Prévia do layout de prova operacional do portal Beeldings">
+        <div class="caption">Prévia do hero — menos ruído, mais resposta, com evidências no painel.</div>
+      </div>
+      <div class="option-copy">
+        <span class="label">Direção comercial</span>
+        <h2>Prova <span>operacional</span></h2>
+        <p class="intro">Mostra primeiro os resultados e a aplicação prática da plataforma no dia a dia.</p>
+        <ul>
+          <li>Indicadores, alarmes e disponibilidade em destaque.</li>
+          <li>Demonstração visual do fluxo entre sinal, análise e ação.</li>
+          <li>BlueBee integrado à rotina operacional.</li>
+          <li>Comunicação direta para gestores e equipes técnicas.</li>
+        </ul>
+        <div class="best-for"><strong>Ponto forte</strong>Facilita apresentações comerciais baseadas em benefícios concretos.</div>
+        <div class="best-for"><strong>Indicado para</strong>Reuniões com clientes que querem entender rapidamente o ganho operacional e o retorno da solução.</div>
+      </div>
+    </div>
+    <div class="page-footer"><span>Beeldings — opção 2</span><span>04</span></div>
+  </section>
+
+  <section class="page">
+    <div class="eyebrow tag-institutional">Opção 3 • Visão institucional premium</div>
+    <div class="option-layout">
+      <div>
+        <img class="shot" src="portal-institutional.jpg" alt="Prévia do layout institucional premium do portal Beeldings">
+        <div class="caption">Prévia do hero — o prédio fala, a equipe entende.</div>
+      </div>
+      <div class="option-copy">
+        <span class="label">Direção institucional</span>
+        <h2>Visão <span>institucional</span></h2>
+        <p class="intro">Posiciona o Beeldings como a camada de inteligência dos edifícios.</p>
+        <ul>
+          <li>Apresentação mais ampla e premium.</li>
+          <li>Conecta infraestrutura, operação, manutenção e segurança.</li>
+          <li>BlueBee aparece como inteligência contextual da plataforma.</li>
+          <li>Linguagem adequada para clientes, parceiros e apresentações institucionais.</li>
+        </ul>
+        <div class="best-for"><strong>Ponto forte</strong>Fortalece a marca Beeldings e passa maior percepção de empresa e plataforma.</div>
+        <div class="best-for"><strong>Indicado para</strong>Um posicionamento corporativo de longo prazo, com foco em autoridade, escala e visão de mercado.</div>
+      </div>
+    </div>
+    <div class="page-footer"><span>Beeldings — opção 3</span><span>05</span></div>
+  </section>
+
+  <section class="page">
+    <div class="eyebrow tag-consolidated">Opção 4 • Direção consolidada</div>
+    <div class="option-layout">
+      <div>
+        <img class="shot" src="portal-consolidated.jpg" alt="Prévia do layout consolidado do portal Beeldings">
+        <div class="caption">Prévia do hero — o prédio fala, o BlueBee organiza a resposta e o resultado aparece na operação.</div>
+      </div>
+      <div class="option-copy">
+        <span class="label">Direção recomendada</span>
+        <h2>Institucional com <span>prova</span></h2>
+        <p class="intro">Une a autoridade da visão institucional à demonstração concreta de como a inteligência operacional gera valor para o cliente.</p>
+        <ul>
+          <li>Preserva a base premium e corporativa da Opção 3.</li>
+          <li>Mostra o BlueBee como parceiro de decisão, não apenas como IA.</li>
+          <li>Conecta sinais, evidências, prioridade e próximo passo.</li>
+          <li>Coloca Redução de Custo como consequência potencial da operação mais previsível.</li>
+        </ul>
+        <div class="best-for"><strong>Ponto forte</strong>Equilibra posicionamento de marca, inovação e valor percebido em uma única narrativa.</div>
+        <div class="best-for"><strong>Indicado para</strong>O portal definitivo, apresentações executivas e conversas comerciais que precisam unir visão de longo prazo com evidência operacional.</div>
+      </div>
+    </div>
+    <div class="page-footer"><span>Beeldings — direção consolidada</span><span>06</span></div>
+  </section>
+</body>
+</html>

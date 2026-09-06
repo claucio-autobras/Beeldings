@@ -1,0 +1,4 @@
+interface:
+  display_name: "Alarm Engine"
+  short_description: "Padroes do motor de alarmes IoT"
+  default_prompt: "Use $alarm-engine to design or implement alarm lifecycle, rules, escalation, ACK, and notification behavior."

@@ -1,0 +1,201 @@
+{
+    "hikMemoryUsage": {
+        "description": "the Usage of hikvision products Memory, value scope is (0-100)", 
+        "oid": "1.3.6.1.4.1.50001.1.221", 
+        "nodetype": "", 
+        "name": "hikMemoryUsage", 
+        "class": ""
+    }, 
+    "hikDiskFreeSpace": {
+        "description": "the size of local disk entry free space, if we get 100, means free space is 100M", 
+        "oid": "1.3.6.1.4.1.50001.1.241.1.4", 
+        "nodetype": "column", 
+        "name": "hikDiskFreeSpace", 
+        "class": ""
+    }, 
+    "hikDiskStatus": {
+        "description": "local disk status", 
+        "oid": "1.3.6.1.4.1.50001.1.241.1.3", 
+        "nodetype": "column", 
+        "name": "hikDiskStatus", 
+        "class": ""
+    }, 
+    "hikCPUNum": {
+        "description": "the number of hikvision products cpu", 
+        "oid": "1.3.6.1.4.1.50001.1.200", 
+        "nodetype": "", 
+        "name": "hikCPUNum", 
+        "class": ""
+    }, 
+    "imports": {
+        "SNMPv2-SMI": [], 
+        "SNMPv2-TC": [], 
+        "class": "imports", 
+        "RFC1155-SMI": []
+    }, 
+    "hikDeviceStatus": {
+        "description": "display hikvision product status", 
+        "oid": "1.3.6.1.4.1.50001.1.230", 
+        "nodetype": "", 
+        "name": "hikDeviceStatus", 
+        "class": ""
+    }, 
+    "hikDiskCapability": {
+        "description": "the size of local disk entry all space, if we get 100, means all space is 100M", 
+        "oid": "1.3.6.1.4.1.50001.1.241.1.5", 
+        "nodetype": "column", 
+        "name": "hikDiskCapability", 
+        "class": ""
+    }, 
+    "hikEntityIndex": {
+        "description": "hikvision device unique index, for DVR this is serial NO.", 
+        "oid": "1.3.6.1.4.1.50001.1.3", 
+        "nodetype": "", 
+        "name": "hikEntityIndex", 
+        "class": ""
+    }, 
+    "hikOnline": {
+        "description": "display hikvision product online status", 
+        "oid": "1.3.6.1.4.1.50001.1.102", 
+        "nodetype": "", 
+        "name": "hikOnline", 
+        "class": ""
+    }, 
+    "hikCPUFrequency": {
+        "description": "the frequency of hikvision products cpu, format like 2000MHZ", 
+        "oid": "1.3.6.1.4.1.50001.1.201", 
+        "nodetype": "", 
+        "name": "hikCPUFrequency", 
+        "class": ""
+    }, 
+    "meta": {
+        "module": "HIKVISION-MIB", 
+        "comments": []
+    }, 
+    "hikMemoryCapability": {
+        "description": "the size of Memory", 
+        "oid": "1.3.6.1.4.1.50001.1.220", 
+        "nodetype": "", 
+        "name": "hikMemoryCapability", 
+        "class": ""
+    }, 
+    "hikDiskIndex": {
+        "description": "An unique value for each local disk entry. Its value ranges between 1 and the value of ifNumber.", 
+        "oid": "1.3.6.1.4.1.50001.1.241.1.1", 
+        "nodetype": "column", 
+        "name": "hikDiskIndex", 
+        "class": ""
+    }, 
+    "hikDiskVolume": {
+        "description": "A textual string containing information about local disk", 
+        "oid": "1.3.6.1.4.1.50001.1.241.1.2", 
+        "nodetype": "column", 
+        "name": "hikDiskVolume", 
+        "class": ""
+    }, 
+    "hikDiskTable": {
+        "description": "A list of disk entries. The number of entries is given by the value of hikDiskNum.", 
+        "oid": "1.3.6.1.4.1.50001.1.241", 
+        "nodetype": "table", 
+        "name": "hikDiskTable", 
+        "class": ""
+    }, 
+    "hikDiskNum": {
+        "description": "the number of hikvision device local disks", 
+        "oid": "1.3.6.1.4.1.50001.1.240", 
+        "nodetype": "", 
+        "name": "hikDiskNum", 
+        "class": ""
+    }, 
+    "hikObjectID": {
+        "description": "display hikvision product object ID, now dvr do not need this will return 0", 
+        "oid": "1.3.6.1.4.1.50001.1.105", 
+        "nodetype": "", 
+        "name": "hikObjectID", 
+        "class": ""
+    }, 
+    "hikPort": {
+        "description": "hikvision device valid manager port,default is 8000", 
+        "oid": "1.3.6.1.4.1.50001.1.2", 
+        "nodetype": "", 
+        "name": "hikPort", 
+        "class": ""
+    }, 
+    "hikDeviceLanguage": {
+        "description": "display hikvision product language", 
+        "oid": "1.3.6.1.4.1.50001.1.231", 
+        "nodetype": "", 
+        "name": "hikDeviceLanguage", 
+        "class": ""
+    }, 
+    "hikDiskEntry": {
+        "description": "A disk entry containing objects at local disk status.", 
+        "oid": "1.3.6.1.4.1.50001.1.241.1", 
+        "nodetype": "row", 
+        "name": "hikDiskEntry", 
+        "class": ""
+    }, 
+    "hikService": {
+        "description": "display hikvision product service type, now dvr will return Unknown", 
+        "oid": "1.3.6.1.4.1.50001.1.103", 
+        "nodetype": "", 
+        "name": "hikService", 
+        "class": ""
+    }, 
+    "hikCMSDefType": {
+        "description": "display hikvision product defined CMS type, now dvr will return Unknown", 
+        "oid": "1.3.6.1.4.1.50001.1.104", 
+        "nodetype": "", 
+        "name": "hikCMSDefType", 
+        "class": ""
+    }, 
+    "hikTrapHostIp1": {
+        "description": "display hikvision product 1st trap host ip address", 
+        "oid": "1.3.6.1.4.1.50001.1.110", 
+        "nodetype": "", 
+        "name": "hikTrapHostIp1", 
+        "class": ""
+    }, 
+    "hikEntityType": {
+        "description": "hikvision products type", 
+        "oid": "1.3.6.1.4.1.50001.1.100", 
+        "nodetype": "", 
+        "name": "hikEntityType", 
+        "class": ""
+    }, 
+    "hikEntitySubType": {
+        "description": "hikvision product sub type", 
+        "oid": "1.3.6.1.4.1.50001.1.101", 
+        "nodetype": "", 
+        "name": "hikEntitySubType", 
+        "class": ""
+    }, 
+    "hikIp": {
+        "description": "hikvision device valid ip address", 
+        "oid": "1.3.6.1.4.1.50001.1.1", 
+        "nodetype": "", 
+        "name": "hikIp", 
+        "class": ""
+    }, 
+    "hikObjectName": {
+        "description": "display hikvision product object Name, now dvr do not need this will return nothing", 
+        "oid": "1.3.6.1.4.1.50001.1.106", 
+        "nodetype": "", 
+        "name": "hikObjectName", 
+        "class": ""
+    }, 
+    "hikEntity": {
+        "description": "", 
+        "oid": "1.3.6.1.4.1.50001.1", 
+        "nodetype": "", 
+        "name": "hikEntity", 
+        "class": ""
+    }, 
+    "hikvision": {
+        "description": "", 
+        "oid": "1.3.6.1.4.1.50001", 
+        "nodetype": "", 
+        "name": "hikvision", 
+        "class": ""
+    }
+}

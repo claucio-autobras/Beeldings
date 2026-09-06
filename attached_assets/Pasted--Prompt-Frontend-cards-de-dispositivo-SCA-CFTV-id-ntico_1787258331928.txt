@@ -1,0 +1,929 @@
+# Prompt — Frontend: cards de dispositivo (SCA + CFTV), idênticos em light e dark
+
+> Cole este prompt inteiro no agente. Ele complementa os tickets do motor SNMP (gateway) e da API de diagnóstico (backend) — **este aqui é só o frontend**.
+>
+> **Já existe uma tentativa anterior deste layout no código, e ela está incorreta.** Este documento traz o código-fonte **completo e literal** da versão correta. Não adapte, não redesenhe, não "melhore" classes, espaçamentos, rótulos ou cores: copie. O objetivo é resultado **idêntico**, não equivalente ou inspirado.
+
+---
+
+## −1. Correções obrigatórias da versão atual
+
+A implementação que está no código hoje tem os defeitos abaixo. Cada um é resolvido pelo código deste documento — a lista existe para você saber **o que precisa deixar de acontecer**, e para servir de checklist visual no fim.
+
+| Defeito atual | Correto | Causa raiz |
+|---|---|---|
+| `MEMÓRIA TOTAL 122290176` | `MEMÓRIA RAM 117 MB` | valor cru sem passar por `formatMb`; a UI **nunca** mostra bytes nem kB |
+| `PERDA DE PACOTES 0%` com barra de progresso | `PACOTES PERDIDOS 0 pkts`, **sem barra** | `ifInDiscards` é **contador em pacotes**, não percentual. Só CPU, memória usada, perda de ping e armazenamento têm barra |
+| `TEMPERATURA — sem leitura` | `não suportado` **ou** `sem dados`, conforme o caso | são dois estados distintos: `unsupported` no ponto → "não suportado"; sem leitura ainda → "sem dados" |
+| Equipamento **offline** exibindo `0.0°C`, `0 MB`, `0%`, selo `Normal` | todas as tiles em `sem dados` | `Number(null)` é `0`. É obrigatório o guard `entry?.value !== null && entry?.value !== undefined && Number.isFinite(n)` **antes** de usar o número. Zero inventado em equipamento offline é defeito grave |
+| Card do SCA e do CFTV com rótulos/tiles diferentes (`MEMÓRIA (%)` × `MEMÓRIA USADA (%)`, tile `TEMPO LIGADO` só num deles) | **um único componente** renderiza os dois | os dois módulos importam `HealthMetricsGrid`; nenhum layout de tile duplicado |
+| Tema light quebrado: superfície escura fixa com texto claro por cima (título e rótulos ilegíveis) | superfície por token semântico | ver seção 0 — nenhuma cor de fundo fixa no card ou nas tiles |
+| Percentual repetido na ponta da barra (`21%` ao lado da barra além do valor) | valor aparece **uma vez**, acima da barra | a barra não tem rótulo próprio |
+
+**Antes de começar:** localize e **apague** qualquer componente de tile/ação de card criado na tentativa anterior (procure por arquivos e trechos que rendereizem essas métricas em `apps/frontend/src/components/` e dentro dos dois módulos). Não deixe dois componentes concorrentes no repositório — os únicos que devem existir são os três das seções 1 a 3.
+
+---
+
+## 0. Regras de tema — leia antes de escrever qualquer classe
+
+O projeto usa **Tailwind v4** com tokens em `@theme` (`apps/frontend/src/app/globals.css`) e tema escuro por **classe** (`@custom-variant dark (&:where(.dark, .dark *))`, com um bloco `.dark` que sobrescreve os tokens).
+
+Três fatos que determinam como escrever as classes:
+
+1. **Tokens semânticos viram do tema sozinhos.** `bg-card`, `bg-background`, `bg-muted`, `text-foreground`, `text-muted-foreground`, `border-border`, `text-primary`, `bg-primary` já têm valor próprio em light e em dark. **Use sempre estes** para superfície, texto e borda.
+
+2. **O bloco `.dark` remapeia os tints claros da paleta.** `--color-emerald-100`, `--color-red-100`, `--color-amber-100`, `--color-slate-50..600`, `cyan/blue/orange/purple -50/-100/-200` recebem equivalentes escuros sob `.dark`. Por isso `bg-emerald-100` continua legível no tema escuro. Mesmo assim, o padrão do código nas *pills* de status é declarar o par explícito — **copie exatamente**:
+   - online → `bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400`
+   - offline → `bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-400`
+   - alerta → `text-amber-600 dark:text-amber-400`
+   - sem dados → `bg-muted text-muted-foreground` (sem variante dark: o token já vira)
+
+3. **Tons sólidos médios NÃO são remapeados** — `bg-emerald-500`, `bg-red-500`, `bg-amber-500`, `bg-slate-400`, `bg-primary` têm o mesmo valor nos dois temas. Isso é intencional: são usados no ponto do status e nas barras de progresso, onde o contraste funciona em light e dark.
+
+**Proibido** (quebra um dos dois temas): `bg-white`, `bg-black`, `text-black`, `bg-gray-*`, `text-gray-*`, `bg-slate-800/900`, qualquer hex/rgb literal em `className`, e `style` com cor. A única propriedade aceitável em `style` é a **largura da barra de progresso** (`width: ${pct}%`), porque é valor dinâmico, não cor.
+
+**O erro cometido na tentativa anterior foi exatamente este:** o card e as tiles receberam uma superfície escura fixa. No tema escuro parece certo; no tema claro o texto — que usa token semântico e portanto vira para escuro — fica escuro sobre fundo escuro, e título e rótulos somem. Se você precisa escrever a cor de um fundo, **está errado**: use `bg-card` no card e `bg-muted/30` na tile, e não declare mais nada.
+
+Como verificar: abra as duas telas, alterne o tema pela interface e confirme que **todo** texto continua legível. Não considere o item pronto tendo olhado só um tema.
+
+Todos os componentes novos precisam de `'use client'` na primeira linha (usam estado/eventos e são renderizados dentro de páginas client).
+
+---
+
+## 1. Arquivo novo — `apps/frontend/src/components/health-metrics.ts`
+
+Builder **puro** (sem JSX) que transforma os pontos do dispositivo nas tiles do card. É o que torna o card dinâmico e é compartilhado por SCA e CFTV. Crie exatamente assim:
+
+```ts
+/**
+ * Builder das tiles de saúde de hardware de um dispositivo SNMP.
+ *
+ * Compartilhado entre SCA (controladoras) e CFTV (câmeras/NVRs) — qualquer
+ * dispositivo monitorado via SNMP usa as mesmas métricas canônicas. O builder
+ * é DINÂMICO: gera tiles só para as métricas que o dispositivo tem ponto,
+ * deriva "memória usada %" quando dá (disponível + total presentes) e
+ * preserva os estados "sem dados" / "não suportado" por tile.
+ *
+ * Puro e testável: recebe os pontos + uma função de leitura de telemetria.
+ */
+
+/** Ponto mínimo necessário para montar as tiles (shape de SCA e CFTV). */
+export interface HealthPointLike {
+  tag: string;
+  metric: string;
+  unit: string;
+  unsupported?: boolean;
+}
+
+/** Leitura de telemetria de um ponto (subset do retorno de liveOrSeed). */
+export interface HealthReading {
+  value: number | string | null;
+  unreliable?: boolean;
+}
+
+/** Tile pronta para renderização. */
+export interface HealthTile {
+  key: string;
+  label: string;
+  /** Valor formatado ("20%", "31,0 MB") — ou null quando sem valor. */
+  text: string | null;
+  /** Estado quando text === null. */
+  emptyState: 'sem dados' | 'não suportado' | null;
+  /** Percentual 0–100 para a barra de progresso (null = sem barra). */
+  pct: number | null;
+  unreliable: boolean;
+  /** Tooltip opcional (ex.: "31,0 MB livres de 117 MB"). */
+  title?: string;
+}
+
+/** Formata megabytes com auto-escala ("31,0 MB", "1,2 GB"). */
+export function formatMb(mb: number): string {
+  if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
+  return `${mb >= 100 ? Math.round(mb) : mb.toFixed(1)} MB`;
+}
+
+/** Limita a [0, 100] para a barra de progresso. */
+function clampPct(v: number): number {
+  return Math.max(0, Math.min(100, v));
+}
+
+interface MetricValue {
+  point: HealthPointLike;
+  value: number | null;
+  unreliable: boolean;
+}
+
+/**
+ * Monta as tiles na ordem canônica:
+ *   CPU → Memória usada % → Memória RAM (total) → Memória disp. →
+ *   Temperatura → Pacotes perdidos → Perda ping → Armazenamento.
+ *
+ * "Memória usada %" é derivada de disponível (kB) + total (MB) quando ambos
+ * existem — ou vem direta quando o ponto memory é percentual (Hikvision).
+ * Nesse caso a tile "Memória disp." é omitida para não duplicar informação.
+ */
+export function buildHealthTiles(
+  points: HealthPointLike[],
+  read: (tag: string) => HealthReading | null | undefined,
+): HealthTile[] {
+  const metricOf = (metric: string): MetricValue | null => {
+    const point = points.find((p) => p.metric === metric);
+    if (!point) return null;
+    const entry = read(point.tag);
+    const n = Number(entry?.value);
+    const has = entry?.value !== null && entry?.value !== undefined && Number.isFinite(n);
+    return { point, value: has ? n : null, unreliable: has && entry?.unreliable === true };
+  };
+
+  const tile = (
+    key: string,
+    label: string,
+    m: MetricValue,
+    text: string | null,
+    pct: number | null = null,
+    title?: string,
+  ): HealthTile => ({
+    key,
+    label,
+    text,
+    emptyState: text !== null ? null : m.point.unsupported ? 'não suportado' : 'sem dados',
+    pct,
+    unreliable: m.unreliable,
+    title,
+  });
+
+  const tiles: HealthTile[] = [];
+
+  // ── CPU ────────────────────────────────────────────────────────────────────
+  const cpu = metricOf('cpu');
+  if (cpu) {
+    tiles.push(
+      tile(
+        'cpu',
+        'Uso de CPU',
+        cpu,
+        cpu.value !== null ? `${Math.round(cpu.value)}%` : null,
+        cpu.value !== null ? clampPct(cpu.value) : null,
+      ),
+    );
+  }
+
+  // ── Memória ────────────────────────────────────────────────────────────────
+  const memory = metricOf('memory');
+  const ramTotal = metricOf('ram_total');
+  const memoryIsPct = memory !== null && memory.point.unit.trim() === '%';
+  const totalMb = ramTotal?.value ?? null;
+  const availMb =
+    memory && !memoryIsPct && memory.value !== null
+      ? memory.point.unit.trim().toLowerCase() === 'kb'
+        ? memory.value / 1024
+        : memory.value // já em MB
+      : null;
+
+  if (memoryIsPct && memory) {
+    // Firmware reporta uso de memória em % direto (ex.: Hikvision).
+    tiles.push(
+      tile(
+        'memory_used',
+        'Memória usada',
+        memory,
+        memory.value !== null ? `${Math.round(memory.value)}%` : null,
+        memory.value !== null ? clampPct(memory.value) : null,
+      ),
+    );
+  } else if (memory && availMb !== null && totalMb !== null && totalMb > 0) {
+    // Derivada: usada% = 1 − disponível/total.
+    const usedPct = clampPct(100 * (1 - availMb / totalMb));
+    tiles.push(
+      tile(
+        'memory_used',
+        'Memória usada',
+        memory,
+        `${Math.round(usedPct)}%`,
+        usedPct,
+        `${formatMb(availMb)} livres de ${formatMb(totalMb)}`,
+      ),
+    );
+  } else if (memory) {
+    // Sem total conhecido — mostra a disponível formatada.
+    tiles.push(
+      tile(
+        'memory_avail',
+        'Memória disp.',
+        memory,
+        availMb !== null ? formatMb(availMb) : null,
+      ),
+    );
+  }
+
+  if (ramTotal) {
+    tiles.push(
+      tile(
+        'ram_total',
+        'Memória RAM',
+        ramTotal,
+        totalMb !== null ? formatMb(totalMb) : null,
+      ),
+    );
+  }
+
+  // ── Temperatura ────────────────────────────────────────────────────────────
+  const temperature = metricOf('temperature');
+  if (temperature) {
+    tiles.push(
+      tile(
+        'temperature',
+        'Temperatura',
+        temperature,
+        temperature.value !== null ? `${temperature.value.toFixed(1)}°C` : null,
+      ),
+    );
+  }
+
+  // ── Rede ───────────────────────────────────────────────────────────────────
+  const packetLoss = metricOf('packet_loss');
+  if (packetLoss) {
+    tiles.push(
+      tile(
+        'packet_loss',
+        'Pacotes perdidos',
+        packetLoss,
+        packetLoss.value !== null ? `${Math.round(packetLoss.value)} pkts` : null,
+      ),
+    );
+  }
+
+  const pingLoss = metricOf('ping_loss');
+  if (pingLoss) {
+    tiles.push(
+      tile(
+        'ping_loss',
+        'Perda ping',
+        pingLoss,
+        pingLoss.value !== null ? `${Math.round(pingLoss.value)}%` : null,
+        pingLoss.value !== null ? clampPct(pingLoss.value) : null,
+      ),
+    );
+  }
+
+  // ── Armazenamento (câmeras/NVRs) ───────────────────────────────────────────
+  const storage = metricOf('storage');
+  if (storage) {
+    tiles.push(
+      tile(
+        'storage',
+        'Armazenamento',
+        storage,
+        storage.value !== null ? `${Math.round(storage.value)}%` : null,
+        storage.value !== null ? clampPct(storage.value) : null,
+      ),
+    );
+  }
+
+  return tiles;
+}
+```
+
+### Regras de negócio embutidas (não altere)
+
+- **Dinâmico de verdade:** métrica sem ponto cadastrado **não gera tile**. Nunca renderize slot vazio para métrica que o equipamento não tem.
+- **Memória usada é derivada**, não lida: `100 × (1 − disponível/total)`. O ponto `memory` vem em **kB** (UCD) e o `ram_total` em **MB** — a conversão está no builder.
+- **Exceção Hikvision:** quando o ponto `memory` tem unidade `%`, o valor é uso direto; nesse caso **não** existe tile "Memória disp." (seria informação duplicada).
+- **kB nunca aparece na UI.** `formatMb` escala para MB/GB.
+- `unsupported` do ponto → texto **"não suportado"**; sem leitura ainda → **"sem dados"**. São estados diferentes e ambos precisam existir.
+
+---
+
+## 2. Arquivo novo — `apps/frontend/src/components/HealthMetricsGrid.tsx`
+
+```tsx
+'use client';
+
+/**
+ * HealthMetricsGrid — grade de tiles de saúde de hardware de um dispositivo
+ * SNMP (controladora, câmera, NVR). Compartilhada entre SCA e CFTV.
+ *
+ * Cada tile: ícone + rótulo, valor em destaque e barra de progresso para
+ * métricas percentuais (CPU, memória usada, perdas). A cor da barra reage ao
+ * nível (normal → âmbar ≥75% → vermelho ≥90%). Estados "sem dados" e
+ * "não suportado" preservados por tile, com tooltip explicativo.
+ */
+
+import {
+  Cpu,
+  Gauge,
+  HardDrive,
+  MemoryStick,
+  Network,
+  Thermometer,
+  Wifi,
+  type LucideIcon,
+} from 'lucide-react';
+import type { HealthTile } from './health-metrics';
+
+const TILE_ICONS: Record<string, LucideIcon> = {
+  cpu: Cpu,
+  memory_used: Gauge,
+  memory_avail: MemoryStick,
+  ram_total: MemoryStick,
+  temperature: Thermometer,
+  packet_loss: Network,
+  ping_loss: Wifi,
+  storage: HardDrive,
+};
+
+/** Cor da barra por nível de uso/perda. */
+function barColor(pct: number): string {
+  if (pct >= 90) return 'bg-red-500';
+  if (pct >= 75) return 'bg-amber-500';
+  return 'bg-primary';
+}
+
+export function HealthMetricsGrid({ tiles }: { tiles: HealthTile[] }) {
+  if (tiles.length === 0) return null;
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      {tiles.map((tile) => {
+        const Icon = TILE_ICONS[tile.key] ?? Gauge;
+        const has = tile.text !== null;
+        return (
+          <div
+            key={tile.key}
+            className="rounded-lg border border-border bg-muted/30 px-2.5 py-2 min-w-0"
+            title={
+              tile.unreliable
+                ? 'Dado não confiável — o firmware responde um valor fixo neste OID.'
+                : tile.emptyState === 'não suportado'
+                  ? 'O equipamento não expõe esta métrica via SNMP (último diagnóstico).'
+                  : tile.title
+            }
+          >
+            <div className="flex items-center gap-1.5 min-w-0">
+              <Icon
+                className={`h-3.5 w-3.5 shrink-0 ${has ? 'text-primary' : 'text-muted-foreground/60'}`}
+              />
+              <p className="truncate text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                {tile.label}
+              </p>
+            </div>
+            <p
+              className={[
+                'mt-0.5 truncate text-sm font-semibold',
+                tile.unreliable
+                  ? 'text-amber-600 dark:text-amber-400'
+                  : has
+                    ? 'text-foreground'
+                    : 'text-muted-foreground font-normal text-xs',
+              ].join(' ')}
+            >
+              {has ? `${tile.text}${tile.unreliable ? ' ⚠' : ''}` : tile.emptyState}
+            </p>
+            {tile.pct !== null && (
+              <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                  className={`h-full rounded-full transition-all ${barColor(tile.pct)}`}
+                  style={{ width: `${tile.pct}%` }}
+                />
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+```
+
+Detalhes que **não** podem mudar: grade de **2 colunas** (`grid-cols-2 gap-2`); fundo do tile `bg-muted/30` (funciona nos dois temas por ser o token com alfa); ícone `text-primary` quando há valor e `text-muted-foreground/60` quando não há; barra de **1px de altura** (`h-1`) com trilho `bg-muted`.
+
+---
+
+## 3. Arquivo novo — `apps/frontend/src/components/DeviceCardActionBar.tsx`
+
+```tsx
+'use client';
+
+/**
+ * DeviceCardActionBar — rodapé de ações dos cards de dispositivo (SCA/CFTV).
+ *
+ * Botões com ícone + rótulo (em vez de ícones soltos), tom neutro com
+ * destaque no hover; ações destrutivas em vermelho. Compartilhado para os
+ * cards de controladoras, câmeras e futuros tipos manterem o mesmo padrão.
+ */
+
+import type { LucideIcon } from 'lucide-react';
+
+export interface CardAction {
+  key: string;
+  label: string;
+  icon: LucideIcon;
+  onClick: () => void;
+  /** 'danger' = ação destrutiva (Remover). */
+  tone?: 'default' | 'danger';
+  disabled?: boolean;
+  title?: string;
+  /** Classe extra no ícone (ex.: sino preenchido quando há alarme). */
+  iconClassName?: string;
+}
+
+export function DeviceCardActionBar({ actions }: { actions: CardAction[] }) {
+  if (actions.length === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1 border-t border-border pt-2">
+      {actions.map((a) => {
+        const Icon = a.icon;
+        return (
+          <button
+            key={a.key}
+            type="button"
+            onClick={a.onClick}
+            disabled={a.disabled}
+            title={a.title ?? a.label}
+            className={[
+              'inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-colors',
+              'disabled:cursor-not-allowed disabled:opacity-40',
+              a.tone === 'danger'
+                ? 'text-red-500 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-500/10'
+                : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+            ].join(' ')}
+          >
+            <Icon className={`h-3.5 w-3.5 ${a.iconClassName ?? ''}`} />
+            <span className="hidden sm:inline">{a.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+```
+
+O rótulo é `hidden sm:inline` de propósito: em telas estreitas o rodapé volta a ser só ícones, sem quebrar linha.
+
+---
+
+## 4. Card do SCA — `apps/frontend/src/modules/sca/pages/sca.page.tsx`
+
+### 4.1 Imports a acrescentar
+
+```tsx
+import { Fingerprint } from 'lucide-react'; // junto dos ícones já importados
+import { HealthMetricsGrid } from '@/components/HealthMetricsGrid';
+import { buildHealthTiles, formatMb } from '@/components/health-metrics';
+import { DeviceCardActionBar } from '@/components/DeviceCardActionBar';
+import { type TelemetryMap } from '@/hooks/useBacnetTelemetry';
+// de '@/modules/cftv/utils/telemetry-format' acrescente:
+//   formatPointLiveValue, formatReadTime, POINT_STATE_LABELS
+```
+
+Novo estado na página: `const [controllerForTelemetry, setControllerForTelemetry] = useState<Controller | null>(null);`
+
+### 4.2 Tiles (dentro do `.map` dos controllers, antes do `return`)
+
+```tsx
+// Tiles de saúde (dinâmicas — só métricas com ponto cadastrado).
+const healthTiles = buildHealthTiles(controller.points, (tag) => {
+  const e = liveOrSeed(asCamera(controller), tag, byDevice);
+  return e ? { value: e.value, unreliable: e.unreliable } : null;
+});
+```
+
+### 4.3 Cabeçalho — avatar + identificação
+
+O bloco de identificação passa a ter um **avatar de 36×36** com o ícone `Fingerprint`, colorido pelo status, e um selo `SNMP`. Substitua o header pelo seguinte:
+
+```tsx
+{/* Header — avatar do tipo de equipamento + identificação */}
+<div className="flex items-start justify-between gap-2">
+  <div className="flex items-start gap-2.5 min-w-0">
+    <div
+      className={[
+        'flex h-9 w-9 shrink-0 items-center justify-center rounded-md',
+        isOnline
+          ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-500/15 dark:text-emerald-400'
+          : health === 'unknown'
+            ? 'bg-muted text-muted-foreground'
+            : 'bg-red-100 text-red-600 dark:bg-red-500/15 dark:text-red-400',
+      ].join(' ')}
+    >
+      <Fingerprint className="h-4.5 w-4.5" />
+    </div>
+    <div className="min-w-0">
+      <div className="flex items-center gap-2 min-w-0">
+        {isAdmin && (
+          <CriticalStarButton
+            critical={controller.critical ?? false}
+            onToggle={() =>
+              void apiPatch(`/devices/${controller.id}`, { critical: !(controller.critical ?? false) }).then(
+                () => void refetch(),
+              )
+            }
+          />
+        )}
+        <p className="truncate text-sm font-semibold text-foreground">
+          {controller.name}
+        </p>
+        <span className="shrink-0 rounded border border-border px-1 py-px text-[10px] font-medium uppercase text-muted-foreground">
+          SNMP
+        </span>
+      </div>
+      {controller.site && (
+        <p className="text-xs text-muted-foreground truncate mt-0.5">
+          {controller.site}
+        </p>
+      )}
+      <p className="text-[11px] text-muted-foreground font-mono mt-0.5">
+        {controller.ip}:{controller.port}
+        {controller.manufacturer ? ` · ${controller.manufacturer}` : ''}
+      </p>
+    </div>
+  </div>
+
+  {/* Status pill — MANTER como já está (pill + uptime abaixo) */}
+  …
+</div>
+```
+
+A *pill* de status e o uptime à direita **permanecem como já estão**; não mexa neles.
+
+### 4.4 Métricas e rodapé
+
+Substitua a grade antiga de 4 colunas de texto por:
+
+```tsx
+{/* Métricas de saúde — tiles dinâmicas compartilhadas com CFTV */}
+<div className="border-t border-border pt-2.5">
+  <HealthMetricsGrid tiles={healthTiles} />
+</div>
+
+{/* Ações — barra rotulada compartilhada com CFTV */}
+<DeviceCardActionBar
+  actions={[
+    {
+      key: 'telemetry',
+      label: t('Telemetria'),
+      icon: Activity,
+      onClick: () => setControllerForTelemetry(controller),
+    },
+    ...(isAdmin
+      ? [
+          {
+            key: 'alarms',
+            label: t('Alarmes'),
+            icon: Bell,
+            title: t('Alarmes e trends'),
+            onClick: () => {
+              setControllerForAlarm(controller);
+              void refreshPointConfig(controller.id);
+            },
+          },
+          {
+            key: 'diagnose',
+            label: t('Diagnóstico'),
+            icon: Stethoscope,
+            title: t('Diagnóstico SNMP'),
+            onClick: () => setControllerToDiagnose(controller),
+          },
+          {
+            key: 'edit',
+            label: t('Editar'),
+            icon: Pencil,
+            onClick: () => setControllerToEdit(controller),
+          },
+          {
+            key: 'delete',
+            label: t('Remover'),
+            icon: Trash2,
+            tone: 'danger' as const,
+            title: t('Excluir'),
+            onClick: () => setControllerToDelete(controller),
+          },
+        ]
+      : []),
+  ]}
+/>
+```
+
+**Telemetria é visível para todos os perfis**; as demais ações só para admin (`isAdmin`). Essa diferença é intencional.
+
+---
+
+## 5. Modal de Telemetria da controladora (novo)
+
+Acrescente ao final de `sca.page.tsx` e renderize junto dos outros modais:
+
+```tsx
+{controllerForTelemetry && (
+  <ControllerTelemetryModal
+    controller={controllerForTelemetry}
+    live={byDevice}
+    showIp={isAdmin}
+    onClose={() => setControllerForTelemetry(null)}
+  />
+)}
+```
+
+```tsx
+/**
+ * Modal de telemetria da controladora — lista todos os pontos com o valor
+ * vivo formatado e a hora da leitura (mesma experiência do modal de câmeras).
+ */
+function ControllerTelemetryModal({
+  controller,
+  live,
+  showIp,
+  onClose,
+}: {
+  controller: Controller;
+  live: TelemetryMap;
+  /** IP:porta é informação de rede — só perfis administrativos veem. */
+  showIp: boolean;
+  onClose: () => void;
+}) {
+  const t = useT();
+  const camera = asCamera(controller);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-xl space-y-4 max-h-[85vh] overflow-y-auto">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-foreground">
+            {t('Telemetria —')} {controller.name}
+          </h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md p-1 text-muted-foreground hover:bg-muted"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {[
+            showIp ? `${controller.ip}:${controller.port}` : null,
+            controller.manufacturer || null,
+            controller.profileLabel || null,
+          ]
+            .filter(Boolean)
+            .join(' — ')}
+        </p>
+        <ul className="divide-y divide-border rounded-lg border border-border">
+          {controller.points.map((p) => {
+            const entry = liveOrSeed(camera, p.tag, live);
+            const raw = entry?.value ?? null;
+            const n = Number(raw);
+            // Memória em kB e RAM em MB ganham auto-escala (kB é ilegível).
+            const value =
+              raw !== null && Number.isFinite(n) && p.metric === 'memory' && p.unit.trim().toLowerCase() === 'kb'
+                ? formatMb(n / 1024)
+                : raw !== null && Number.isFinite(n) && p.metric === 'ram_total'
+                  ? formatMb(n)
+                  : formatPointLiveValue(p, raw);
+            const readAt = formatReadTime(entry?.timestamp ?? null);
+            const stateLabel = entry?.state ? POINT_STATE_LABELS[entry.state] : undefined;
+            return (
+              <li key={p.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                <span className="min-w-0">
+                  <span className="block truncate text-sm text-foreground">{p.objectName}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {p.tag}
+                    {p.unit ? ` · ${p.unit}` : ''}
+                  </span>
+                </span>
+                <span className="shrink-0 text-right">
+                  <span
+                    className={
+                      value !== null
+                        ? 'block text-sm font-medium text-foreground'
+                        : 'block text-xs text-muted-foreground'
+                    }
+                  >
+                    {value ?? stateLabel ?? t('sem dados')}
+                  </span>
+                  {readAt && (
+                    <span className="block text-[11px] text-muted-foreground">
+                      {t('lido às')} {readAt}
+                    </span>
+                  )}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+        <div className="flex justify-end pt-1">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted"
+          >
+            {t('Fechar')}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+```
+
+O overlay `bg-black/40` é o mesmo dos outros modais do projeto e é correto nos dois temas.
+
+---
+
+## 6. Card do CFTV — `apps/frontend/src/modules/cftv/pages/cftv.page.tsx`
+
+### 6.1 Botão "Ao vivo" no canto superior direito
+
+Hoje o botão só aparece quando `camera.liveViewAvailable` é verdadeiro, e some nos demais casos — o que confunde. O novo comportamento: **sempre visível**, com três estados.
+
+Substitua todo o agrupamento de ícones do topo direito por:
+
+```tsx
+<div className="flex items-center gap-1.5 shrink-0">
+  {/* Ver ao vivo — SEMPRE visível no topo direito; desabilitado
+      quando a câmera está offline ou sem credenciais de vídeo. */}
+  <button
+    onClick={() => setCameraForLive(camera)}
+    disabled={!camera.liveViewAvailable || health !== 'online'}
+    title={
+      !camera.liveViewAvailable
+        ? t('Configure as credenciais de vídeo (ONVIF/RTSP) no cadastro para habilitar')
+        : health === 'online'
+          ? t('Ver ao vivo')
+          : t('Disponível quando a câmera estiver online')
+    }
+    className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+  >
+    <MonitorPlay className="h-3.5 w-3.5 text-primary" />
+    <span className="hidden sm:inline">{t('Ao vivo')}</span>
+  </button>
+  {isAdmin && (
+    <CriticalStarButton
+      critical={cameraCritical(camera)}
+      size={14}
+      onToggle={() => handleToggleCameraCritical(camera)}
+    />
+  )}
+</div>
+```
+
+Os três estados, todos com tooltip próprio:
+1. **online + com credenciais** → habilitado, abre `CameraLiveViewModal` (o fluxo de vídeo ao vivo **já existe** e não deve ser alterado).
+2. **offline** → desabilitado, tooltip "Disponível quando a câmera estiver online".
+3. **sem credenciais ONVIF/RTSP** → desabilitado, tooltip ensinando a habilitar no cadastro.
+
+### 6.2 Tiles e rodapé
+
+As métricas de saúde SNMP (bloco `camera.monitoringProtocol === 'snmp' || camera.snmpHealth?.enabled`) passam a usar o componente compartilhado — apague as grades antigas `HEALTH_METRICS` / `EXTRA_HEALTH_METRICS` do card:
+
+```tsx
+<div className="border-t border-border pt-2.5">
+  <HealthMetricsGrid
+    tiles={buildHealthTiles(camera.points, (tag) => {
+      const e = liveOrSeed(camera, tag, byDevice);
+      return e ? { value: e.value, unreliable: e.unreliable } : null;
+    })}
+  />
+</div>
+```
+
+O ramo **ONVIF puro** (eventos movimento/tamper/perda de vídeo) **fica como está** — não é métrica SNMP.
+
+Antes do `return` do card, calcule o alarme para o sino:
+
+```tsx
+// Sino preenchido no rodapé quando algum ponto tem alarme configurado.
+const cameraAlarmRule = camera.points
+  .map((p) => alarmRuleByPoint.get(p.id))
+  .find(Boolean);
+```
+
+E acrescente o rodapé (depois do bloco de métricas/eventos, ainda dentro do card):
+
+```tsx
+<DeviceCardActionBar
+  actions={[
+    {
+      key: 'telemetry',
+      label: 'Telemetria',
+      icon: Activity,
+      title: 'Ver telemetria',
+      onClick: () => setCameraForTelemetry(camera),
+    },
+    ...(isAdmin
+      ? [
+          {
+            key: 'alarms',
+            label: 'Alarmes',
+            icon: Bell,
+            title: cameraAlarmRule
+              ? 'Alarmes e trends (há alarme configurado)'
+              : 'Alarmes e trends',
+            iconClassName: cameraAlarmRule
+              ? `fill-current ${alarmSeverityColor[cameraAlarmRule.severity] ?? 'text-amber-500'}`
+              : undefined,
+            onClick: () => setCameraForAlarm(camera),
+          },
+          ...(camera.monitoringProtocol === 'snmp' || camera.snmpHealth?.enabled
+            ? [
+                {
+                  key: 'diagnose',
+                  label: 'Diagnóstico',
+                  icon: Stethoscope,
+                  title: 'Diagnosticar SNMP',
+                  onClick: () => setCameraToDiagnose(camera),
+                },
+              ]
+            : []),
+          {
+            key: 'edit',
+            label: 'Editar',
+            icon: Pencil,
+            onClick: () => setCameraToEdit(camera),
+          },
+          ...(canDelete
+            ? [
+                {
+                  key: 'delete',
+                  label: 'Remover',
+                  icon: Trash2,
+                  tone: 'danger' as const,
+                  title: 'Excluir',
+                  onClick: () => setCameraToDelete(camera),
+                },
+              ]
+            : []),
+        ]
+      : []),
+  ]}
+/>
+```
+
+O botão de diagnóstico só existe para câmeras com canal SNMP; o de remover respeita `canDelete`. A estrela de crítico **saiu do rodapé e foi para o topo direito**, ao lado do "Ao vivo".
+
+---
+
+## 7. Modal de diagnóstico — valor do candidato convertido
+
+Em `apps/frontend/src/modules/cftv/components/SnmpDiagnoseModal.tsx`, o valor lido de cada candidato precisa ser **multiplicado pela escala do candidato** antes de formatar. Sem isso, temperatura em mili-°C aparece como `45230` em vez de `45.2°C`:
+
+```tsx
+{formatDiagValue(
+  m.metric,
+  c.value !== null ? c.value * c.scale : null,
+  c.unit,
+) ?? c.raw ?? '—'}
+```
+
+A seleção passa a carregar `{ oid, scale, unit }` (não só a string do OID), tanto na pré-seleção quanto no checkbox — é o que o endpoint de aplicar espera no formato novo:
+
+```tsx
+const [selected, setSelected] = useState<Partial<Record<DiagMetric, AppliedOidSelection>>>({});
+// checkbox:
+checked={selected[m.metric]?.oid === c.oid}
+onChange={(e) =>
+  setSelected((prev) => {
+    const next = { ...prev };
+    if (e.target.checked) next[m.metric] = { oid: c.oid, scale: c.scale, unit: c.unit };
+    else delete next[m.metric];
+    return next;
+  })
+}
+```
+
+Tipo novo exportado em `cftv.service.ts` (e reexportado em `sca.service.ts`):
+
+```ts
+export interface AppliedOidSelection {
+  oid: string;
+  scale: number;
+  unit: string;
+}
+```
+
+com as assinaturas de `applySnmpOids` mudando de `Partial<Record<DiagMetric, string>>` para `Partial<Record<DiagMetric, AppliedOidSelection>>`.
+
+---
+
+## 8. Teste obrigatório
+
+Crie `apps/frontend/src/components/health-metrics.spec.ts` cobrindo o builder (roda com `npx jest` em `apps/frontend`):
+
+1. **Controladora completa** — pontos `cpu=20`, `memory=31780 kB`, `ram_total=116.6 MB`, `temperature` sem valor e `unsupported`, `packet_loss=0` → tile `cpu` com `text='20%'` e `pct=20`; tile `memory_used` com `text='73%'` e título contendo `31.0 MB` e `117 MB`; tile `ram_total` com `text='117 MB'`; tile `temperature` com `emptyState='não suportado'`.
+2. **Sem RAM total** → gera `memory_avail` com `'27.2 MB'` (de 27844 kB) e `pct=null`.
+3. **Hikvision (memória em %)** → gera `memory_used` com `pct=77` e **não** gera `memory_avail`.
+4. **Dinâmico** — só `storage` e `ping_loss` cadastrados → gera exatamente `['ping_loss','storage']`.
+5. **Estados** — ponto sem leitura → `emptyState='sem dados'`; leitura `unreliable` propaga `unreliable=true`.
+6. **formatMb** — `31.04→'31.0 MB'`, `116.6→'117 MB'`, `2048→'2.0 GB'`.
+
+---
+
+## 9. Critérios de aceite
+
+- [ ] `npx tsc --noEmit` limpo em `apps/frontend`; `npx jest` verde (incluindo o spec novo).
+- [ ] Card do SCA e card do CFTV usam **os mesmos** `HealthMetricsGrid` e `DeviceCardActionBar`. Rótulo idêntico nos dois módulos para a mesma métrica. Nenhum componente de tile remanescente da tentativa anterior no repositório.
+- [ ] Controladora **online** mostra exatamente: `USO DE CPU 20%` (com barra), `MEMÓRIA USADA 73%` (com barra, tooltip "31.0 MB livres de 117 MB"), `MEMÓRIA RAM 117 MB` (sem barra), `TEMPERATURA não suportado`, `PACOTES PERDIDOS 0 pkts` (sem barra).
+- [ ] **Nenhum** valor em bytes ou kB na interface. `122290176` não pode aparecer em lugar nenhum.
+- [ ] Equipamento **offline**: todas as tiles em `sem dados`. Nenhum `0`, `0%`, `0.0°C`, `0 MB` ou selo `Normal` para dispositivo que não respondeu.
+- [ ] Rodapé com **Telemetria · Alarmes · Diagnóstico · Editar · Remover**, rótulos visíveis em `sm+`, Remover em vermelho, tudo em **uma linha** quando couber.
+- [ ] CFTV: botão **"Ao vivo"** presente no topo direito nos três estados, com tooltip correspondente; câmera offline mantém o botão visível e desabilitado.
+- [ ] **Os dois temas conferidos na interface**, alternando light/dark: título, rótulos das tiles, valores e rótulos das ações legíveis em ambos. Nenhuma classe `bg-white`/`bg-gray-*`/`bg-slate-800`/hex literal no código novo.
+- [ ] Métrica sem ponto cadastrado não renderiza tile vazia.
+- [ ] O valor de cada métrica aparece **uma única vez** — sem repetir o percentual na ponta da barra.

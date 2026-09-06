@@ -1,0 +1,274 @@
+Plano de correção da descoberta e coleta SNMP, com base em investigação feita em campo num Control iD iDFlex V2 (firmware 5.19.3, serial 0G0300/00062F). Objetivo: coletar métricas de hardware com valores, unidades e escalas corretas, em qualquer equipamento SNMP.
+
+Instrução ao agente: não corrija adicionando OIDs fixos. O problema é de estratégia, não de cobertura. Leia a seção "Diagnóstico" antes de tocar no código e confirme cada bug listado antes de alterá-lo.
+
+Fora de escopo: motor de alarmes, regras de severidade, geração de ordem de serviço, retenção e testes. São tratados em outro lugar. Aqui trata-se apenas de descobrir, mapear, normalizar e armazenar os dados corretamente.
+
+1. Diagnóstico do estado atual
+Cinco defeitos confirmados empiricamente. Todos precisam de correção antes de qualquer feature nova.
+
+1.1 Normalização de tipo aplicada em dois lugares diferentes
+O card do equipamento mostra tempo ativo 1h 6m; o painel de descoberta mostra 402963 s para o mesmo sysUpTime. O valor bruto é TimeTicks — centésimos de segundo. 402963 ticks = 4029,6 s = 1h 07m.
+
+O card converte, o painel não. Existem dois caminhos de normalização no código, e só um está correto.
+
+Correção: um único normalizador, aplicado na fronteira de entrada, antes de qualquer consumidor. Nenhuma camada de apresentação deve converter unidade.
+
+1.2 Temperatura e CPU trocadas no perfil Control iD
+O sistema exibia TEMP 22.5 °C e CPU: não suportado. O OID lido como temperatura era, na verdade, uso de CPU.
+
+Comprovado por correlação em duas amostras separadas por 26 dias e duas versões de firmware:
+
+load average	.1.1.4.0	.1.1.5.0
+5.13.9, 2 min após boot	1.42 / 1.17 / 0.73	23.436	91991
+5.19.3, regime	0.81 / 0.92 / 0.88	18.671	92594
+A carga caiu 43%; .1.1.4.0 acompanhou; .1.1.5.0 variou 0,6%. Uso de CPU segue a carga, temperatura é inerte.
+
+Confirmação independente: hrProcessorLoad retorna 15, 15, 15, 30 — média 18,75%, contra 18,7% do .1.1.4.0. Duas fontes, uma padrão e uma proprietária, concordando.
+
+Correção: .1.1.4.0 = cpu_usage (%), .1.1.5.0 = cpu_temperature com escala 0.001.
+
+1.3 Escala ausente na temperatura
+A MIB documenta: "Temperature of the CPU. Unit: T * 1000 degrees Celsius." O valor 92594 são 92,594 °C, não 92.594 unidades.
+
+Correção: escala pertence à definição da métrica, junto de unidade e limites — o mesmo modelo já usado nos pontos Modbus. Não criar caminho paralelo para SNMP.
+
+1.4 Interface de loopback sendo monitorada
+O card mostra PACOTES PERDIDOS — LO. lo é loopback: tráfego interno do próprio Linux, que nunca tem erro e nunca sai do equipamento.
+
+Assinatura no walk: a interface com ifInOctets = ifOutOctets = 471755 B é o loopback (entrada igual à saída). A ethernet real tem 535164 B de entrada contra 6043483 B de saída.
+
+Correção: descartar ifType = softwareLoopback(24); descartar interfaces com ifOperStatus = down; rotular por ifDescr/ifName, nunca por índice.
+
+1.5 Counters exibidos como valores instantâneos
+ifInOctets = 471755 B aparece como se fosse uma medida. É um acumulador desde o boot. Sem conversão em taxa, o gráfico vira uma escada que zera sozinha a cada reinício.
+
+Correção: Counter32/Counter64 viram taxa (delta ÷ intervalo), com detecção de wrap e de reset. Exige guardar a amostra anterior.
+
+2. Arquitetura alvo
+O erro estrutural de hoje é tratar descoberta e coleta como o mesmo fluxo. São cargas e frequências diferentes. Separar em três camadas.
+
+Camada 1 — Descoberta
+Walk completo da árvore. Roda sob demanda no cadastro e, depois, no máximo uma vez por dia. Produz um snapshot bruto persistido.
+
+Varrer 1981 OIDs aqui é correto e desejável: é o inventário do que o equipamento sabe dizer.
+
+Raízes obrigatórias, nesta ordem:
+
+1.3.6.1.2.1.1 — grupo system. Sempre primeiro. É daqui que sai o sysObjectID, identificador canônico de fabricante e modelo, que seleciona o perfil.
+1.3.6.1.2.1.2 e 1.3.6.1.2.1.31 — IF-MIB (interfaces e nomes)
+1.3.6.1.2.1.25 — HOST-RESOURCES-MIB (CPU, memória, storage)
+1.3.6.1.4.1.2021 — UCD-SNMP-MIB (presente em quase todo agente net-snmp)
+Raízes proprietárias do perfil casado
+Mecânica obrigatória do walk — três bugs clássicos que precisam de guarda explícita:
+
+Limite de subárvore. Parar quando o OID retornado deixar de ter o prefixo da raiz. Vários agentes continuam entregando OIDs fora da subárvore e o walk sai varrendo a MIB inteira.
+Guarda de OID não-crescente. Abortar se o próximo OID não for estritamente maior que o anterior. Agente com defeito devolve o mesmo OID indefinidamente e o walk entra em laço infinito.
+Degradação de GETBULK. Em tooBig, reduzir max-repetitions e repetir; se o agente for v1, cair para GETNEXT. Tratar endOfMibView, noSuchObject e noSuchInstance como fim normal, não como erro.
+Camada 2 — Perfil
+Mapeamento curado OID → métrica canônica → unidade → escala → categoria, versionado por fabricante + modelo + faixa de firmware.
+
+É a camada que hoje não existe, e é ela que transforma 1981 OIDs anônimos em ~12 métricas nomeadas.
+
+Camada 3 — Coleta
+GET em lote apenas dos OIDs resolvidos no perfil, a cada 30–60 s. Nunca executar walk no ciclo de coleta.
+
+Sem essa separação, 200 equipamentos com walk a cada minuto derrubam o coletor e saturam a rede do cliente.
+
+3. Normalização por tipo ASN.1
+Ponto único, na entrada. Nenhuma outra camada converte.
+
+Tipo SNMP	Tratamento
+TimeTicks	÷ 100 → segundos
+Counter32	taxa: (v₂ − v₁) ÷ Δt; wrap em 2³²; queda abrupta = reset, descartar a amostra
+Counter64	idem, wrap em 2⁶⁴
+Gauge32 / Unsigned32	valor direto; aplicar scale do perfil
+INTEGER enumerado	guardar valor bruto e rótulo resolvido pela MIB (2 → false)
+OCTET STRING numérica	coerção para float — "18.671" é número, não texto
+OCTET STRING composta	parser declarado no perfil (ex.: load average é um trio)
+IpAddress, OID	string canônica
+Desconhecido	preservar bruto, marcar unknown, nunca descartar
+Sobre a coerção de string numérica: o iDFlex entrega loadAverage e cpuUsage como OCTET STRING. Sem coerção, o valor é gravado como texto e não é possível plotar nem comparar. Isso não é exceção de um fabricante — é regra geral.
+
+4. Catálogo de métricas canônicas
+O sistema opera sobre métricas lógicas, não sobre OIDs. Cada métrica tem uma cadeia ordenada de candidatos; o primeiro que responder vence e fica persistido no vínculo do equipamento.
+
+Isso é a generalização do mecanismo "alternativas que funcionaram" que já existe hoje para pacotes perdidos — aplicado a todas as métricas.
+
+metric: cpu_usage
+  unit: "%"
+  category: performance
+  candidates:
+    - { oid: 1.3.6.1.2.1.25.3.3.1.2, source: hrProcessorLoad, table: true, agg: avg }
+    - { oid: 1.3.6.1.4.1.2021.11.11.0, source: ucdSsCpuIdle, transform: "100 - x" }
+    - { oid: 1.3.6.1.4.1.49617.1.1.4.0, source: controlIdCpuUsage, parse: float }
+
+metric: cpu_temperature
+  unit: "°C"
+  category: hardware
+  candidates:
+    - { oid: 1.3.6.1.4.1.49617.1.1.5.0, source: controlIdCpuTemp, scale: 0.001 }
+
+metric: memory_used_percent
+  unit: "%"
+  category: performance
+  candidates:
+    - { source: hrStorageTable, filter: "hrStorageType = hrStorageRam",
+        compute: "hrStorageUsed / hrStorageSize * 100" }
+    - { source: ucdMemory, compute: "(memTotalReal - memAvailReal) / memTotalReal * 100" }
+
+metric: memory_total
+  unit: "kB"
+  candidates:
+    - { oid: 1.3.6.1.2.1.25.2.2.0, source: hrMemorySize }
+
+metric: storage_used_percent
+  unit: "%"
+  category: hardware
+  candidates:
+    - { source: hrStorageTable, filter: "hrStorageType = hrStorageFixedDisk",
+        compute: "hrStorageUsed / hrStorageSize * 100", per_volume: true }
+
+metric: uptime
+  unit: "s"
+  candidates:
+    - { oid: 1.3.6.1.2.1.1.3.0, source: sysUpTime, transform: "x / 100" }
+
+metric: net_in_rate / net_out_rate
+  unit: "bps"
+  candidates:
+    - { source: ifTable, oid_in: ifInOctets, oid_out: ifOutOctets,
+        counter: true, per_interface: true }
+
+metric: net_error_rate / net_discard_rate
+  unit: "pkt/s"
+  candidates:
+    - { source: ifTable, oids: [ifInErrors, ifOutErrors, ifInDiscards, ifOutDiscards],
+        counter: true, per_interface: true }
+
+metric: interface_status
+  candidates:
+    - { source: ifTable, oid: ifOperStatus, per_interface: true, enum: true }
+Métricas mínimas obrigatórias para considerar um equipamento monitorado: uptime, cpu_usage, memory_used_percent, reachability. As demais são oportunísticas.
+
+reachability não vem do SNMP — é produzida pelo próprio coletor: sucesso/timeout por ciclo, latência de resposta, taxa de falha na janela. É a métrica mais importante do conjunto e não depende de nenhum OID.
+
+5. Regras de tabelas
+5.1 Interfaces
+Descartar ifType = 24 (softwareLoopback) e ifOperStatus = 2 (down) do fluxo de recomendação.
+Rotular pelo ifName/ifDescr, nunca pelo índice — índices mudam entre reboots em alguns agentes.
+ifSpeed/ifHighSpeed entra como metadado, para calcular utilização percentual do link.
+Uma métrica lógica por interface relevante, não uma por OID.
+5.2 CPU multi-núcleo
+hrProcessorLoad é tabela: no iDFlex retorna quatro instâncias (15, 15, 15, 30). Hoje o painel mostra quatro cards idênticos e o usuário não sabe qual marcar.
+
+Colapsar em uma métrica lógica, com duas agregações declaradas: avg para o gráfico, max para análise de pico. Guardar as instâncias individuais como detalhe, fora do fluxo de recomendação.
+
+5.3 Storage
+hrStorageTable separa RAM, flash e tmpfs no mesmo formato. Usar hrStorageUsed ÷ hrStorageSize × 100, com hrStorageAllocationUnits para converter em bytes reais.
+
+Isso substitui leitura proprietária de memória e funciona em qualquer equipamento Linux — a maior parte do parque em campo.
+
+6. Perfil validado: Control iD iDFlex V2
+Este perfil foi derivado de walk real, não da MIB publicada. A MIB da Control iD descreve a família, não este modelo.
+
+O iDFlex não implementa SIP, câmera nem hasProVersion, e os grupos seguintes são renumerados para preencher os buracos. Confirmado idêntico em 5.13.9 e 5.19.3 — é característica de modelo, não de versão de firmware. Nenhum update corrige.
+
+MIB publicada	Realidade no iDFlex V2
+.6 cidSip	não existe
+.7 cidApplication	está em .5 (a confirmar)
+.8 cidStreaming	não existe
+.9 cidAlarm	está em .6
+.10 cidSecbox	está em .7
+cidSystem.3 hasProVersion	não existe — desloca .4 a .9 em um
+6.1 Sistema — prefixo 1.3.6.1.4.1.49617.1.1
+OID	Métrica	Tipo	Tratamento
+.1.0	firmware_version	STRING	metadado
+.2.0	serial_number	STRING	chave do equipamento
+.3.0	load_average	STRING	split → load_1m, load_5m, load_15m
+.4.0	cpu_usage	STRING	coerção float, %
+.5.0	cpu_temperature	Gauge32	escala 0.001, °C
+.6.0	device_datetime	STRING	formato dd-MM-yyyy HH-mm-ss
+.7.0	ntp_enabled	INTEGER	1=true, 2=false
+.8.0	ntp_server	STRING	metadado
+6.2 Alarme — prefixo 1.3.6.1.4.1.49617.1.6
+OID	Objeto	Natureza
+.1.0	alarmDoorSensorEnabled	configuração
+.2.0	alarmDoorSensorDelay (s)	configuração
+.3.0	alarmForcedAccess	estado ao vivo
+.4.0	alarmPanicFingerEnabled	configuração
+.5.0	alarmPanicFingerDelay (s)	configuração
+.6.0	alarmPanicCardEnabled	configuração
+.7.0	alarmDeviceViolationEnabled	estado ao vivo (tamper)
+.8.0	alarmBuzzerEnabled	configuração
+.9.0	alarmPlayingTimeout (s)	configuração
+.3.0 e .7.0 são estado, não configuração. Coletá-los como série temporal; o que fazer com eles é do motor de alarmes, fora deste plano.
+
+6.3 SecBox — prefixo 1.3.6.1.4.1.49617.1.7
+Tabela indexada. .1.0 = contagem; .3.x = id; .4.x = habilitada; .5.x = versão de firmware; .6.x = timeout de relé (ms); .7.x a .9.x = sensor de porta, normally open/closed, auto-close.
+
+6.4 Pendências de validação
+Dois experimentos fecham o ramo .5, cujos tipos indicam cidApplication (não cidBuzzer, como diz a MIB):
+
+Cadastrar um usuário no equipamento. Se .5.1.0 for de 0 para 1, é appNumberOfUsers.
+Desabilitar identificação por biometria na web do equipamento. O booleano entre .5.2.0 e .5.5.0 que virar de 1 para 2 é appBiometriIdentification, e isso ancora a ordem dos outros três.
+6.5 Sem traps
+A MIB da Control iD não define nenhum NOTIFICATION-TYPE nem TRAP-TYPE. Não implementar receptor de trap para este fabricante — não haverá nada para receber. Para outras marcas, o receptor na 162 é válido e deve ser previsto no perfil.
+
+7. Modelo de dados
+Toda tabela carrega tenant_id e todo query filtra por ele. Sem exceção.
+
+Tabela	Conteúdo
+snmp_credential	versão, community, e para v3: securityName, authProtocol/authKey, privProtocol/privKey, contextName. Criptografado em repouso, nunca retornado em resposta de API.
+device_profile	fabricante, modelo, sysObjectID (padrão de match), faixa de firmware, raízes a varrer
+profile_metric	metric_key, cadeia de candidatos, agregação, escala, unidade, categoria
+device_metric_binding	equipamento, metric_key, OID resolvido, fonte vencedora, confiança, data da resolução
+discovery_run	equipamento, início, duração, total de OIDs, descartados, erros, referência ao snapshot
+discovery_object	run, OID, tipo, valor bruto, nome resolvido pela MIB
+SNMPv3 desde já. Metade do parque moderno exige. Adicionar depois significa migração de schema e retrabalho na tela de cadastro.
+
+8. Diagnóstico e observabilidade
+A tela de diagnóstico atual já está no caminho certo. Complementar com:
+
+Snapshot versionado de cada descoberta, com diff contra a anterior. Quando o firmware mudar, o diff aponta os OIDs que sumiram, apareceram ou mudaram de tipo. Sem isso, uma renumeração de árvore vira métrica errada silenciosa — exatamente o que aconteceu com temperatura e CPU trocadas neste equipamento.
+Alerta de binding quebrado: "equipamento X mudou de firmware e 3 métricas mapeadas não respondem mais".
+Motivo do descarte por OID, já previsto, mantido.
+Confiança do binding: exata (casou com MIB), inferida (heurística), manual (confirmada por humano).
+Fluxo de tela no cadastro
+Inverter a ordem de apresentação de hoje:
+
+Descoberta roda e casa os OIDs contra MIBs e heurísticas.
+A tela mostra as métricas propostas — 8 a 12 linhas —, não os 1981 objetos.
+O usuário confirma ou corrige uma vez.
+O sistema salva como perfil daquele modelo + faixa de firmware.
+O próximo equipamento do mesmo modelo nasce mapeado, sem curadoria manual.
+Os OIDs crus ficam atrás de "Avançado", como já estão.
+O passo 4 é o que faz o sistema escalar: a curadoria acontece uma vez por modelo, não uma vez por equipamento.
+
+OID sem MIB continua armazenado como Unknown OID, mas fora da lista de recomendadas — recomendação exige semântica conhecida.
+
+9. MIBs
+Empacotar um bundle e resolver nomes offline, no momento da exibição. É o que elimina os OIDs numéricos sem nome.
+
+Mínimo: SNMPv2-MIB, IF-MIB, IP-MIB, TCP-MIB, UDP-MIB, HOST-RESOURCES-MIB, UCD-SNMP-MIB, ENTITY-MIB, mais as de fabricante, começando pela CONTROLID-MIB.
+
+A MIB serve para nome, tipo, unidade e descrição — nunca para posição. O mapeamento semântico é sempre ancorado em walk real. Esta é a lição central desta investigação.
+
+10. Ordem de implementação
+Fase 1 — Corrigir o que está errado. Normalizador único por tipo; escala de temperatura; troca de CPU e temperatura no perfil Control iD; filtro de loopback; counters em taxa. Sem isso, todo dado coletado até aqui está contaminado.
+
+Fase 2 — Separar as camadas. Descoberta com as guardas de walk; coleta restrita ao perfil; tabelas de perfil e binding.
+
+Fase 3 — Catálogo canônico. Cadeias de candidatos, agregação de tabelas, regras de interface e storage. Substituir a lista de OIDs por lista de métricas na tela.
+
+11. Critérios de aceitação
+Cadastrar o iDFlex 10.201.10.120 (v2c, community public) descobre aproximadamente o mesmo conjunto de OIDs que o snmpwalk manual, com zero descartes silenciosos.
+A tela de cadastro apresenta entre 8 e 12 métricas nomeadas, não milhares de OIDs.
+cpu_usage mostra ~18,7% e cpu_temperature mostra ~92,6 °C — e não o inverso.
+Tempo ativo exibe o mesmo valor no card e no painel de descoberta.
+Nenhuma métrica de rede referencia a interface lo.
+Tráfego de interface é exibido em taxa, não em contador acumulado.
+Memória é exibida em percentual em uso, derivado da hrStorageTable.
+Um segundo equipamento do mesmo modelo é cadastrado sem curadoria manual, herdando o perfil.
+Um equipamento de outro fabricante, sem MIB proprietária, ainda entrega uptime, cpu_usage, memory_used_percent e reachability via MIB-2 e HOST-RESOURCES.
+Nenhuma consulta de descoberta, binding ou telemetria retorna dado de outro tenant.

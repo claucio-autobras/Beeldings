@@ -1,0 +1,34 @@
+== FASE A: 5 msg/s x 20s (200 pts/s) ==
+connected; publishing 5 msg/s for 20 s 
+{"sent":95,"errors":0,"elapsedMs":21530}
+baseline=0 after=3800 inserted=3800 expected=4000
+== FASE B: 25 msg/s x 30s (1000 pts/s) ==
+connected; publishing 25 msg/s for 30 s 
+cpu/rss backend:  0.0   900
+cpu/rss backend:  0.0   900
+cpu/rss backend:  0.0   900
+cpu/rss backend:  0.0   900
+cpu/rss backend:  0.0   900
+cpu/rss backend:  0.0   900
+{"sent":725,"errors":0,"elapsedMs":31534}
+mqtt error read ECONNRESET
+inserted=29000 expected=30000
+ingestion: {'telemetryMessages': 907, 'telemetryPoints': 33331, 'commandResults': 0, 'statusMessages': 18, 'parseErrors': 0, 'telemetryMessagesPerMinute': 861, 'telemetryPointsPerMinute': 32372, 'lastTelemetryAt': '2026-07-28T12:03:22.059Z', 'startedAt': '2026-07-28T12:01:56.913Z'}
+== FASE C: idempotência — mesma mensagem 2x (5 msg/s x 10s dup) ==
+connected; publishing 5 msg/s for 10 s (dup test)
+{"sent":45,"errors":0,"elapsedMs":11521}
+inserted=1800 unique_msgs_pts=2000 (se ~2x => sem dedup)
+pares (trend,timestamp) duplicados: 3040
+== FASE D: multi-instância — 2ª instância + 10 msg/s x 15s ==
+{"isLeader":false,"instanceId":"repl-1690"}
+connected; publishing 10 msg/s for 15 s 
+{"sent":140,"errors":0,"elapsedMs":16518}
+inserted=11200 expected_1x=6000 (se ~2x => cada instância grava)
+== FASE D2: graceful shutdown — SIGTERM na instância 4001 ==
+[32m[Nest] 1690  - [39m07/28/2026, 12:04:06 PM [32m    LOG[39m [38;5;3m[GatewayStatusService] [39m[32mGateway gw-escritorio-mooca-iluminacao-6dc7bc68 → online[39m
+[95m[Nest] 1690  - [39m07/28/2026, 12:04:07 PM [95m  DEBUG[39m [38;5;3m[BacnetMqttSubscriber] [39m[95mTelemetry received — topic: bluebee/17656272-0f77-4481-8d77-9d756a738aff/gateway/gw-escritorio-mooca-iluminacao-6dc7bc68/telemetry, device: 2b6515fd-a0a1-4da0-b8c2-039abcae1d78, points: 6[39m
+[95m[Nest] 1690  - [39m07/28/2026, 12:04:07 PM [95m  DEBUG[39m [38;5;3m[BacnetMqttSubscriber] [39m[95mGateway health received — gateway: gw-teste-2-teste-8899a148, pending: 0, dropped: 0[39m
+[95m[Nest] 1690  - [39m07/28/2026, 12:04:08 PM [95m  DEBUG[39m [38;5;3m[BacnetMqttSubscriber] [39m[95mTelemetry received — topic: bluebee/17656272-0f77-4481-8d77-9d756a738aff/gateway/gw-escritorio-mooca-iluminacao-6dc7bc68/telemetry, device: 2b6515fd-a0a1-4da0-b8c2-039abcae1d78, points: 6[39m
+[95m[Nest] 1690  - [39m07/28/2026, 12:04:09 PM [95m  DEBUG[39m [38;5;3m[BacnetMqttSubscriber] [39m[95mTelemetry received — topic: bluebee/17656272-0f77-4481-8d77-9d756a738aff/gateway/gw-escritorio-mooca-iluminacao-6dc7bc68/telemetry, device: 2b6515fd-a0a1-4da0-b8c2-039abcae1d78, points: 6[39m
+processo encerrou
+DONE

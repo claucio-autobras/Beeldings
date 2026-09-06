@@ -1,0 +1,462 @@
+uploads = []
+
+[[generated]]
+id = "xqIisFBQhVgK_-2qg3Esp"
+uri = "file://attached_assets/generated_images/iso_chiller.png"
+type = "image"
+title = "isometric chiller"
+
+[[generated]]
+id = "TYa1wZmvxfpE4ZQBHxdRZ"
+uri = "file://attached_assets/generated_images/iso_ahu.png"
+type = "image"
+title = "isometric AHU"
+
+[[generated]]
+id = "cmtF6RD-u90OJbc1cH3EP"
+uri = "file://attached_assets/generated_images/iso_pump.png"
+type = "image"
+title = "isometric pump"
+
+[[generated]]
+id = "yJutkZLSukqgdHCiipODe"
+uri = "file://attached_assets/generated_images/iso_fan.png"
+type = "image"
+title = "isometric fan"
+
+[[generated]]
+id = "lM_eNaPfJciuzOGGCu7ko"
+uri = "file://attached_assets/generated_images/iso_valve.png"
+type = "image"
+title = "isometric valve"
+
+[[generated]]
+id = "GA46Z0yNZn0dJaLKfL9m9"
+uri = "file://attached_assets/generated_images/iso_generator.png"
+type = "image"
+title = "isometric generator"
+
+[[generated]]
+id = "9gtf5qAEZrYsAa0RSOT9B"
+uri = "file://attached_assets/generated_images/iso_meter.png"
+type = "image"
+title = "isometric meter"
+
+[[generated]]
+id = "h3gKuI1Mi1KaK4eBvkOlM"
+uri = "file://attached_assets/generated_images/iso_controller.png"
+type = "image"
+title = "isometric controller (no brand)"
+
+[[generated]]
+id = "GHD7-jZIunQ0eRE56rUhK"
+uri = "file://attached_assets/generated_images/iso_compressor.png"
+type = "image"
+title = "isometric compressor"
+
+[[generated]]
+id = "VgTGszN1UyEhql3ajZIBy"
+uri = "file://attached_assets/generated_images/iso_cooling_tower.png"
+type = "image"
+title = "isometric cooling-tower"
+
+[[generated]]
+id = "-zKcen_cT_2SsJMwJ6DqS"
+uri = "file://attached_assets/generated_images/iso_fan_coil.png"
+type = "image"
+title = "isometric fan-coil"
+
+[[generated]]
+id = "rASgIqLP3a2Z85gxJnSfT"
+uri = "file://attached_assets/generated_images/iso_electrical_panel.png"
+type = "image"
+title = "isometric electrical-panel"
+
+[[generated]]
+id = "1YK137G0I5Gf72jIn_1bD"
+uri = "file://attached_assets/generated_images/iso_tank.png"
+type = "image"
+title = "isometric tank"
+
+[[generated]]
+id = "-qneQagS6L8qtJVFlUUIF"
+uri = "file://attached_assets/generated_images/iso_sensor.png"
+type = "image"
+title = "isometric sensor"
+
+[[generated]]
+id = "ogVINZ7wZXQVO6m_VIjWF"
+uri = "file://attached_assets/generated_images/iso_smoke_detector.png"
+type = "image"
+title = "isometric smoke-detector"
+
+[[generated]]
+id = "UOHaTiytReD4OPpEoawq-"
+uri = "file://apps/frontend/public/scada-equipment/camera.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "E5JP1oFS3tDvjj2_smHGF"
+uri = "file://apps/frontend/public/scada-equipment/camera-dome.png"
+type = "image"
+title = "generated_image"
+
+[[generated]]
+id = "pzqv1zRgGgtB0QmAh4VjV"
+uri = "file://apps/frontend/public/scada-equipment/lighting.png"
+type = "image"
+title = "generated_image"
+
+[[outputs]]
+id = "2Ea3LTEHM0eu4fBOdVgoE"
+uri = "file://backups/bluebee-backup-2026-06-30.tar.gz"
+type = "unspecified"
+title = "Backup BlueBee — 30/06/2026"
+logical_id = "f0e9281e-f3e9-479b-a181-e7847e2d7696"
+
+[[outputs]]
+id = "qkVKGAQkWlLu5z20dOz8u"
+uri = "file://backups/bluebee-source-2026-07-01.tar.gz"
+type = "unspecified"
+title = "Código-fonte — backup 01/07/2026"
+logical_id = "538e1876-82e3-4126-894e-534266a27f71"
+
+[[outputs]]
+id = "IJ6UM6MmAICBwmTPjtPV-"
+uri = "file://backups/bluebee-db-2026-07-01.sql.gz"
+type = "unspecified"
+title = "Banco de dados — backup 01/07/2026"
+logical_id = "6097dd75-3306-4eb6-ac7a-fa3a65d5661f"
+
+[[outputs]]
+id = "aL7sVumFo-TVPOoOPkgGJ"
+uri = "file://exports/levantamento-melhorias-06-08-jul-2026.pdf"
+type = "pdf"
+title = "Levantamento de Melhorias — BlueBee (06 a 08/07/2026)"
+logical_id = "316904b5-5de0-4f6d-b204-f96d099b6703"
+
+[[outputs]]
+id = "X3N9l3yjySUcIsePDh8jE"
+uri = "file://exports/levantamento-melhorias-bluebee.pdf"
+type = "pdf"
+title = "Levantamento de Melhorias — BlueBee"
+logical_id = "c8c4be39-6b4a-4538-9722-ffb32698a2ba"
+
+[[outputs]]
+id = "deZBAgesEO2A-xA4ecSTz"
+uri = "file://exports/levantamento-melhorias-2-semanas.pdf"
+type = "pdf"
+title = "Levantamento de Melhorias — BlueBee (29/06 a 08/07/2026)"
+logical_id = "c2c1b4c5-7f9a-4ba4-b00b-daab1d5898fe"
+
+[[outputs]]
+id = "n1RX6t-5psTC1reE_o-az"
+uri = "file://artifacts/video-comercial/public/audio/vo_intro.mp3"
+type = "audio"
+title = "narração intro"
+logical_id = "1ee7aae7-b2c5-40c5-9951-5e446db08649"
+
+[[outputs]]
+id = "cGCTObqlg9JwpiVRD3y2Y"
+uri = "file://artifacts/video-comercial/public/audio/vo_dashboard.mp3"
+type = "audio"
+title = "narração dashboard"
+logical_id = "e36c27e3-dc5e-4308-b63c-ad6fe175898a"
+
+[[outputs]]
+id = "HVynfAYH053IQsWmPKsXQ"
+uri = "file://artifacts/video-comercial/public/audio/vo_alarms.mp3"
+type = "audio"
+title = "narração alarms"
+logical_id = "7df16a20-a2da-4462-bff3-880404afd6b7"
+
+[[outputs]]
+id = "hFdLGM0hMzkPHsiSELtbd"
+uri = "file://artifacts/video-comercial/public/audio/vo_devices.mp3"
+type = "audio"
+title = "narração devices"
+logical_id = "e4a8a5db-5f1f-45d2-b0fe-80b89e4f2b9b"
+
+[[outputs]]
+id = "tRBTrJJ_3HLRJppCgrnyY"
+uri = "file://artifacts/video-comercial/public/audio/vo_cftv.mp3"
+type = "audio"
+title = "narração cftv"
+logical_id = "bff2c910-1115-4751-9a7f-204625824416"
+
+[[outputs]]
+id = "24jh9REoNCWHHfX0EVxz-"
+uri = "file://artifacts/video-comercial/public/audio/vo_scada.mp3"
+type = "audio"
+title = "narração scada"
+logical_id = "781606f5-bd72-4060-800a-a42e20457d3c"
+
+[[outputs]]
+id = "3XUA37ufogVrUKaGD2K5Z"
+uri = "file://artifacts/video-comercial/public/audio/vo_trends.mp3"
+type = "audio"
+title = "narração trends"
+logical_id = "c154ac63-ccb2-4ee3-9b95-9031ab1700c3"
+
+[[outputs]]
+id = "6ds6s3JgZ6s_pp2z7VajB"
+uri = "file://artifacts/video-comercial/public/audio/vo_reports.mp3"
+type = "audio"
+title = "narração reports"
+logical_id = "2c7a3394-bfa4-40c3-8c42-52e8791e4da0"
+
+[[outputs]]
+id = "pciM65FpTDr4hCqhiYdfV"
+uri = "file://artifacts/video-comercial/public/audio/vo_automations.mp3"
+type = "audio"
+title = "narração automations"
+logical_id = "5fb5c75a-7ee8-4424-9cda-406237c9bd56"
+
+[[outputs]]
+id = "jjiitvpzt9Up4we224MEF"
+uri = "file://artifacts/video-comercial/public/audio/vo_ai.mp3"
+type = "audio"
+title = "narração ai"
+logical_id = "9d044440-4a5a-4c11-a854-dd18d80b4725"
+
+[[outputs]]
+id = "4sXrXpKBk1Fx5txiJlinQ"
+uri = "file://artifacts/video-comercial/public/audio/vo_outro.mp3"
+type = "audio"
+title = "narração outro"
+logical_id = "330dab12-033e-47f0-b6c8-2e10d3be4baf"
+
+[[outputs]]
+id = "gdYBhJmis6Ia_crMb6Fp9"
+uri = "file://artifacts/video-comercial/public/audio/bg_music.mp3"
+type = "audio"
+title = "música de fundo"
+logical_id = "a45fa710-4d23-4c37-af73-2646066c52da"
+
+[[outputs]]
+id = "fd8jyg3Jt6SnRs3LWKAkY"
+uri = "file://exports/bluebee-comercial.mp4"
+type = "video"
+title = "Vídeo Comercial BlueBee (corrigido, 1080p)"
+logical_id = "f63e3e00-46a5-4278-8523-6e322248518a"
+
+[[outputs]]
+id = "budyrOa4WN36X8TEwmyLV"
+uri = "file://exports/bluebee-comercial-quadrado.mp4"
+type = "video"
+title = "Vídeo comercial 1:1 (Instagram feed)"
+logical_id = "d315dbb2-94fa-46db-a020-695f9a29827e"
+
+[[outputs]]
+id = "NivzNjpe1ZVUWA9c-CnG_"
+uri = "file://exports/bluebee-comercial-vertical.mp4"
+type = "video"
+title = "Vídeo comercial 9:16 (Reels/Stories)"
+logical_id = "d13b7efa-80ae-4fbd-9bf1-0202d62cdd3f"
+
+[[outputs]]
+id = "Dca2pw1H1yFa2dQMWR7_e"
+uri = "file://.local/exports/Plano-Integracao-WhatsApp-Email-TI.pdf"
+type = "pdf"
+title = "Plano de Integração — WhatsApp e E-mail (T.I.)"
+description = "Passo a passo completo para o T.I.: Meta Cloud API + Resend, conectores do Replit, custos, prazos e checklist de entregáveis."
+logical_id = "82e34137-d284-4278-9379-746d50cbe1c2"
+
+[[outputs]]
+id = "Kbhdbm-jdjyPvCRsrLFjd"
+uri = "file://exports/Relatorio-Seguranca-Beeldings.pdf"
+type = "pdf"
+title = "Relatório de Segurança — Beeldings"
+description = "Relatório detalhado em PDF (4 páginas), pronto para enviar ao cliente: resumo executivo, metodologia, vulnerabilidades corrigidas, controles implementados e conclusão."
+logical_id = "7a006d46-ee26-46ea-b316-cd3533a1ceb3"
+
+[[outputs]]
+id = "CEFfuwG_0rXgvX-E7kURA"
+uri = "file://exports/Relatorio-Seguranca-Beeldings-v2.pdf"
+type = "pdf"
+title = "Relatório de Segurança — Beeldings v2 (com varredura externa ZAP)"
+description = "Versão 2 do relatório (5 páginas): varreduras internas + varredura externa OWASP ZAP contra a produção, com todas as correções aplicadas — pronto para enviar ao cliente."
+logical_id = "655b5700-557e-49ff-9b6a-4db9909e8ae7"
+
+[[outputs]]
+id = "AIkbfKEtJbzwLdL5B9k3O"
+uri = "file://backups/beeldings-source-2026-08-20.tar.gz"
+type = "unspecified"
+title = "Backup da main — 20/08/2026"
+description = "Snapshot da main local no commit 46877c71fd8d63cb26ec09a63f7c9eb9fa2dfcae. Arquivo também está visível em backups/beeldings-source-2026-08-20.tar.gz. Não inclui .git, node_modules, .next nem arquivos .env. SHA-256: c71293751210a0fad2554ea8d29b8e447d6ac7a995ac8296fdcdbf0935b33af3"
+logical_id = "cfdb1153-b6ec-44c2-95fd-971b287530c1"
+
+[[outputs]]
+id = "lqSc1R_p9PmakMHBiG8zc"
+uri = "file://artifacts/mockup-sandbox/exports/beeldings-opcoes-portal-institucional.pdf"
+type = "pdf"
+title = "Beeldings — opções de portal institucional"
+description = "PDF executivo com as três propostas de layout, imagens representativas, pontos em comum, pontos fortes e indicação de uso de cada alternativa."
+logical_id = "8414f403-1e62-4960-9351-6b75faf2c7c2"
+
+[[outputs]]
+id = "F2ShiWZgzyjpHDdMjUoIz"
+uri = "file://artifacts/mockup-sandbox/exports/beeldings-opcoes-portal-institucional-consolidado.pdf"
+type = "pdf"
+title = "PDF — Beeldings: opções de portal institucional consolidadas"
+description = "Comparativo atualizado com as três propostas originais e a nova direção consolidada, incluindo o mockup com BlueBee, prova operacional e Redução de Custo."
+logical_id = "a3a304be-fde6-4d86-a264-7abcba9ed8cd"
+
+[[outputs]]
+id = "mIL2C_hJF2k-fYhbX6WtD"
+uri = "file://artifacts/mockup-sandbox/exports/portal-beeldings-consolidado-completo.pdf"
+type = "pdf"
+title = "PDF completo — Mockup consolidado Beeldings"
+description = "PDF com somente a última direção consolidada do portal Beeldings: hero, BlueBee como parceiro de decisão, plataforma, resultados, Redução de Custo, perfis de operação, CTA e rodapé."
+logical_id = "f57cde28-46d5-494c-b7f7-247f6e4ea008"
+
+[[outputs]]
+id = "30KU9TFeqZhQPfvI2gNcy"
+uri = "file://artifacts/mockup-sandbox/exports/portal-beeldings-consolidado-leitura-facil.pdf"
+type = "pdf"
+title = "PDF visual — Mockups do portal Beeldings"
+description = "PDF somente com o mockup consolidado, organizado para leitura fácil: capa e seis telas/seções em viewport desktop amplo, uma composição por página."
+logical_id = "a36c05c2-5506-4dd3-8ff8-07993d48e328"
+
+[[outputs]]
+id = "RUvbk-kr4P2qhqYtnkMuZ"
+uri = "file://artifacts/video-comercial/public/audio/vo_alarms_2.mp3"
+type = "audio"
+title = "narracao vo_alarms"
+description = "Text-to-speech audio: Os alarmes chegam em tempo real, com severidade, status e histórico completo — do disparo ao reconhecimento e à normalização."
+logical_id = "842d4523-89c7-4a5f-ac94-872d1220185f"
+
+[[outputs]]
+id = "F_OeoVLXQeQb6PauoeBht"
+uri = "file://artifacts/video-comercial/public/audio/vo_scada_2.mp3"
+type = "audio"
+title = "narracao vo_scada"
+description = "Text-to-speech audio: Crie telas SCADA personalizadas, com sinóticos animados e comandos diretos na tela. Supervisão de verdade, direto pelo navegador."
+logical_id = "ac5c1687-015e-43de-bfd2-d010df6bba8b"
+
+[[outputs]]
+id = "9vRA6gF5tstTgNd51JdDn"
+uri = "file://artifacts/video-comercial/public/audio/vo_reports_2.mp3"
+type = "audio"
+title = "narracao vo_reports"
+description = "Text-to-speech audio: Gere relatórios profissionais, acompanhe indicadores e transforme o histórico da operação em informação útil para o seu dia a dia."
+logical_id = "4f14750b-7a44-4c20-bef6-9cb6bdc0265e"
+
+[[outputs]]
+id = "0iqFX5g777vsTyu-524y5"
+uri = "file://artifacts/video-comercial/public/audio/vo_trends_2.mp3"
+type = "audio"
+title = "narracao vo_trends"
+description = "Text-to-speech audio: Mas monitorar é apenas o começo. Com o módulo de Trends, você analisa o histórico das variáveis, compara tendências e identifica comportamentos para tomar decisões com base em d…"
+logical_id = "fc935e37-89dd-4645-9cbf-48b2c24596d0"
+
+[[outputs]]
+id = "DbVuHZu4raAvqMFTa4PUr"
+uri = "file://artifacts/video-comercial/public/audio/vo_cftv_2.mp3"
+type = "audio"
+title = "narracao vo_cftv"
+description = "Text-to-speech audio: E a inteligência não para por aí. O CFTV também pode fazer parte da plataforma, com monitoramento de câmeras, detecção de eventos e alarmes instantâneos para situações de movime…"
+logical_id = "cb43dd94-2979-4b0e-a85a-c8412fe7e3f2"
+
+[[outputs]]
+id = "iZ09bPMH7OGPiFMfvh41b"
+uri = "file://artifacts/video-comercial/public/audio/vo_intro_2.mp3"
+type = "audio"
+title = "narracao vo_intro"
+description = "Text-to-speech audio: Seu prédio está falando o tempo todo. Temperatura. Energia. Equipamentos. Ocupação. Eventos. Alarmes. Desempenho. Todos os dias, milhares de informações são geradas pela operaçã…"
+logical_id = "423427c4-9194-417d-b52c-68f78d295962"
+
+[[outputs]]
+id = "vj3ZpRcTY5wBQ-LqdRHj2"
+uri = "file://artifacts/video-comercial/public/audio/vo_devices_2.mp3"
+type = "audio"
+title = "narracao vo_devices"
+description = "Text-to-speech audio: A Beeldings se conecta aos principais protocolos de mercado, permitindo integrar diferentes equipamentos e sistemas em um único ecossistema. BACnet. Modbus. MQTT. Com descoberta…"
+logical_id = "4e5d30fa-c83e-43e4-a704-ef9baca0aa86"
+
+[[outputs]]
+id = "0vU1C025jKYvJ0MDmQVJH"
+uri = "file://artifacts/video-comercial/public/audio/vo_automations_2.mp3"
+type = "audio"
+title = "narracao vo_automations"
+description = "Text-to-speech audio: E quando uma ação pode ser automatizada, a Beeldings pode agir por você. Crie regras e agendamentos para automatizar rotinas e tornar sua operação mais eficiente. Tudo isso segu…"
+logical_id = "ee03fe0d-491f-435e-acf8-8e1d4dd2a718"
+
+[[outputs]]
+id = "RlEUnrtARWDvjhjEiP_U-"
+uri = "file://artifacts/video-comercial/public/audio/vo_dashboard_2.mp3"
+type = "audio"
+title = "narracao vo_dashboard"
+description = "Text-to-speech audio: Conheça a Beeldings. Um ecossistema inteligente que conecta dados, sistemas e operação para transformar a maneira como os edifícios são percebidos, gerenciados e automatizados. …"
+logical_id = "ba579a53-1518-4fec-b934-894743c13f7b"
+
+[[outputs]]
+id = "fSU6qGED0AznsKKXhoGwG"
+uri = "file://artifacts/video-comercial/public/audio/vo_outro_2.mp3"
+type = "audio"
+title = "narracao vo_outro"
+description = "Text-to-speech audio: Com a Beeldings, os dados deixam de ser apenas informações. Eles passam a gerar inteligência para uma operação mais preparada, previsível, eficiente e ágil. Mais visibilidade. M…"
+logical_id = "1bde81f1-c76f-46e2-88d5-d5d1c8d7f7b2"
+
+[[outputs]]
+id = "FuaAswLmix1OM1RRVYNOi"
+uri = "file://artifacts/video-comercial/public/audio/vo_ai_2.mp3"
+type = "audio"
+title = "narracao vo_ai"
+description = "Text-to-speech audio: Mas existe algo ainda mais poderoso. Você não precisa mais procurar a informação. Pode simplesmente perguntar. Olá, eu sou a Bluebee, a inteligência da Beeldings que conversa co…"
+logical_id = "cd01bdb0-068a-4dca-a0db-7b9aa012ff44"
+
+[[outputs]]
+id = "u5sY9Vd_8JsXFSQmlm5Ag"
+uri = "file://artifacts/video-comercial/exports/bluebee-comercial.mp4"
+type = "video"
+title = "Vídeo comercial BlueBee — IA sincronizada"
+description = "Versão final em 1920×1080 e 24 fps, com os textos da cena da IA alinhados aos timestamps reais da locução, além da BlueBee voando e das correções de legibilidade."
+logical_id = "0ee8afe6-f883-4122-a970-4de5fe3a497d"
+content_hash = "sha256:e3caa9ec8e558001ce859ce92b895ae07fb33da0c715784794a1940f44b6c746"
+size = 47521916
+mtime_ms = 1788256026240
+storage_uri = "gcs://replit-rams-assets-kirk/rams/assets/repl:b4bd0d60-0986-4313-96a0-049d0fe5a030/0ee8afe6-f883-4122-a970-4de5fe3a497d/9f0e7da7-3cc6-4ee9-96cc-52697dfd1017"
+storage_version_token = "1788256118258061"
+content_type = "video/mp4"
+
+[[outputs]]
+id = "G5kM5b9bGqaWAXtZeZzj2"
+uri = "file://artifacts/video-comercial/public/audio/vo_devices_pronunciation.mp3"
+type = "audio"
+title = "pronuncia Bildings devices"
+description = "Text-to-speech audio: A Bildings se conecta aos principais protocolos de mercado, permitindo integrar diferentes equipamentos e sistemas em um único ecossistema. BACnet. Modbus. MQTT. Com descoberta …"
+logical_id = "c479447a-0767-450d-b32e-4f66e0aea3f1"
+
+[[outputs]]
+id = "rXbzi4VTn4gVYPFTtfxMQ"
+uri = "file://artifacts/video-comercial/public/audio/vo_dashboard_pronunciation.mp3"
+type = "audio"
+title = "pronuncia Bildings dashboard"
+description = "Text-to-speech audio: Conheça a Bildings. Um ecossistema inteligente que conecta dados, sistemas e operação para transformar a maneira como os edifícios são percebidos, gerenciados e automatizados. E…"
+logical_id = "6555ea75-7d4c-4865-9c06-0747eba32f70"
+
+[[outputs]]
+id = "j9H-yvHJfV9ylZjRU4pXn"
+uri = "file://artifacts/video-comercial/public/audio/vo_automations_pronunciation.mp3"
+type = "audio"
+title = "pronuncia Bildings automations"
+description = "Text-to-speech audio: E quando uma ação pode ser automatizada, a Bildings pode agir por você. Crie regras e agendamentos para automatizar rotinas e tornar sua operação mais eficiente. Tudo isso segui…"
+logical_id = "07f20ee7-e739-47c6-9e73-d16beaaff2f2"
+
+[[outputs]]
+id = "93smla2EaIqy88-9o9w12"
+uri = "file://artifacts/video-comercial/public/audio/vo_outro_pronunciation.mp3"
+type = "audio"
+title = "pronuncia Bildings outro"
+description = "Text-to-speech audio: Com a Bildings, os dados deixam de ser apenas informações. Eles passam a gerar inteligência para uma operação mais preparada, previsível, eficiente e ágil. Mais visibilidade. Ma…"
+logical_id = "eb17051b-75d6-427f-af7b-4e66014e3f5d"
+
+[[outputs]]
+id = "vYaeLi2K_DDYtAYslEOqb"
+uri = "file://artifacts/video-comercial/public/audio/vo_ai_pronunciation.mp3"
+type = "audio"
+title = "pronuncia Bildings ai"
+description = "Text-to-speech audio: Mas existe algo ainda mais poderoso. Você não precisa mais procurar a informação. Pode simplesmente perguntar. Olá. Eu sou a BlueBee, a inteligência da Bildings. Eu transformo a…"
+logical_id = "fe731a7c-a941-4764-8fc4-eedd66163935"

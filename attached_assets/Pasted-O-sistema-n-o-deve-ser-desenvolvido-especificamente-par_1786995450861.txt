@@ -1,0 +1,35 @@
+O sistema não deve ser desenvolvido especificamente para Control iD/iDFlex. Control iD é apenas um dos fabricantes que serão monitorados. O SNMP Engine deve ser totalmente genérico e independente de fabricante/modelo.
+
+A arquitetura deve separar:
+
+SNMP Transport
+Discovery Engine
+OID/MIB Resolver
+Device Profile
+Metric Normalization
+Health Engine
+Threshold Engine
+Historical Data
+Alert Engine
+
+O SNMP Transport deve suportar arquiteturalmente SNMPv1, SNMPv2c e SNMPv3, GET, WALK e GETBULK.
+
+O Discovery Engine deve trabalhar com OIDs numéricos mesmo quando não existir MIB. MIBs devem ser utilizadas para enriquecer a descoberta, não como requisito para coleta.
+
+O sistema não deve descartar OIDs desconhecidos. Todos os objetos descobertos devem poder ser armazenados e posteriormente classificados.
+
+O sistema deve suportar objetos escalares e tabelas SNMP, incluindo OIDs com índices. Não assumir que OIDs terminam em .0.
+
+Deve existir suporte às MIBs padrão quando aplicável, especialmente SNMPv2-MIB, IF-MIB, HOST-RESOURCES-MIB e ENTITY-MIB.
+
+As métricas devem ser normalizadas para um modelo interno independente do fabricante. Exemplo: diferentes fabricantes podem possuir OIDs diferentes para CPU, mas ambos devem ser capazes de mapear para a métrica normalizada cpu_usage.
+
+Device Profiles devem ser utilizados apenas para adicionar conhecimento específico de determinado fabricante/modelo, sem alterar o SNMP Engine.
+
+Health Monitoring deve trabalhar sobre métricas normalizadas e permitir thresholds, unidades, histórico, tendência, severidade e alertas.
+
+O sistema deve diferenciar falha de autenticação, timeout, OID inexistente, falta de permissão e equipamento indisponível.
+
+Para contadores SNMP, como bytes/packets de interfaces, o sistema deve calcular taxas a partir de deltas entre coletas, permitindo métricas como bytes/sec, packets/sec e utilização de interface.
+
+A implementação deve possuir testes automatizados usando o iDFlex V2 como equipamento de referência, mas os testes não devem introduzir código específico ou hardcoded para esse equipamento.

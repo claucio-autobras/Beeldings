@@ -1,0 +1,324 @@
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Prisma, TrendQuality } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service.js';
+
+/** Payload de telemetria consumido (subconjunto do BacnetTelemetryPayload). */
+export interface TelemetrySample {
+  deviceId: string;
+  timestamp?: string;
+  points: { tag: string; value: number | boolean | string }[];
+}
+
+interface TrendCfg {
+  trendId: string;
+  tenantId: string;
+  mode: 'ON_CHANGE' | 'INTERVAL';
+  intervalSeconds: number;
+  /** ON_CHANGE: deadband — só grava se |Δ| >= covThreshold (0 = qualquer mudança). */
+  covThreshold: number;
+  /** ON_CHANGE: heartbeat — grava no máx. a cada X s mesmo sem variação (0 = desligado). */
+  maxIntervalSeconds: number;
+}
+
+/** Contadores da gravação em lote — expostos em /health/comms e no log periódico. */
+export interface TrendWriterStats {
+  /** Registros aguardando flush neste instante. */
+  pending: number;
+  /** Lotes gravados com sucesso desde o boot. */
+  batchesWritten: number;
+  /** Registros gravados com sucesso desde o boot. */
+  recordsWritten: number;
+  /** Tentativas extras de gravação (retries) desde o boot. */
+  retries: number;
+  /** Registros descartados (retries esgotados ou teto de fila) desde o boot. */
+  recordsDropped: number;
+  /** Instante do último flush bem-sucedido (ISO), ou null. */
+  lastFlushAt: string | null;
+  /** Instante do último erro de gravação (ISO), ou null. */
+  lastErrorAt: string | null;
+  /** Mensagem do último erro de gravação, ou null. */
+  lastError: string | null;
+}
+
+const SEP = ' ';
+const EPS = 1e-9;
+
+// ─── Parâmetros do gravador em lote ──────────────────────────────────────────
+/** Janela de acúmulo: registros de várias mensagens MQTT viram 1 INSERT. */
+export const FLUSH_INTERVAL_MS = 1_000;
+/** Tamanho máximo de um lote; atingido antes da janela → flush imediato. */
+export const MAX_BATCH_SIZE = 1_000;
+/** Teto de registros pendentes em memória; excedente descarta os mais antigos. */
+export const MAX_PENDING_RECORDS = 50_000;
+/** Tentativas totais de gravar um lote (1 original + retries). */
+export const MAX_WRITE_ATTEMPTS = 3;
+/** Backoff entre tentativas (curto: falha transitória, não indisponibilidade). */
+export const RETRY_BACKOFF_MS = [500, 2_000];
+/** Intervalo do log periódico de contadores. */
+const STATS_LOG_INTERVAL_MS = 60_000;
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Grava histórico (TrendRecord) a partir do stream de telemetria — só para pontos
+ * com Trend habilitada. Mantém config em cache (deviceId+tag → trends) e o último
+ * valor/timestamp por trend em memória, recarregado em qualquer CRUD de Trend.
+ *
+ * Gravação em lote: os registros qualificados (deadband/heartbeat/intervalo já
+ * aplicados) entram numa fila em memória e são gravados num único createMany por
+ * janela (~1s) ou por tamanho. Falha transitória → retry curto com backoff; ao
+ * esgotar, o lote é descartado CONTABILIZADO e logado em erro (nunca silencioso).
+ * A fila tem teto: sob indisponibilidade prolongada do banco, descarta os mais
+ * antigos em vez de crescer sem limite.
+ */
+@Injectable()
+export class TrendRecorderService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(TrendRecorderService.name);
+  private byDeviceTag = new Map<string, TrendCfg[]>();
+  private runtime = new Map<string, { lastValue: number; lastAt: number }>();
+
+  // ─── Estado do gravador em lote ────────────────────────────────────────────
+  private pending: Prisma.TrendRecordCreateManyInput[] = [];
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private statsTimer: ReturnType<typeof setInterval> | null = null;
+  private flushing = false;
+  private destroyed = false;
+
+  private batchesWritten = 0;
+  private recordsWritten = 0;
+  private retries = 0;
+  private recordsDropped = 0;
+  private lastFlushAt: string | null = null;
+  private lastErrorAt: string | null = null;
+  private lastError: string | null = null;
+  /** Snapshot dos contadores no último log periódico (loga só quando há atividade). */
+  private lastLogged = { batches: 0, records: 0, retries: 0, dropped: 0 };
+
+  constructor(private readonly prisma: PrismaService) {}
+
+  async onModuleInit(): Promise<void> {
+    // Não derruba o boot se a migração ainda não foi aplicada.
+    try {
+      await this.reload();
+    } catch (err) {
+      this.logger.warn(`Trends ainda não disponível (migração pendente?): ${(err as Error).message}`);
+    }
+    this.statsTimer = setInterval(() => this.logStats(), STATS_LOG_INTERVAL_MS);
+    this.statsTimer.unref?.();
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    this.destroyed = true;
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    if (this.statsTimer) {
+      clearInterval(this.statsTimer);
+      this.statsTimer = null;
+    }
+    // Melhor esforço no shutdown: uma tentativa única, sem retry/backoff.
+    if (this.pending.length > 0 && !this.flushing) {
+      const batch = this.pending;
+      this.pending = [];
+      try {
+        await this.prisma.trendRecord.createMany({ data: batch });
+        this.batchesWritten += 1;
+        this.recordsWritten += batch.length;
+      } catch (err) {
+        this.recordsDropped += batch.length;
+        this.logger.error(
+          `Shutdown com ${batch.length} trend record(s) não gravado(s): ${(err as Error).message}`,
+        );
+      }
+    }
+  }
+
+  /** Recarrega a config de trends ativas (chamado no boot e em CRUD de Trend). */
+  async reload(): Promise<void> {
+    const trends = await this.prisma.trend.findMany({
+      where: { enabled: true },
+      include: { point: { select: { deviceId: true, tag: true } } },
+    });
+    const map = new Map<string, TrendCfg[]>();
+    for (const t of trends) {
+      const key = `${t.point.deviceId}${SEP}${t.point.tag}`;
+      const arr = map.get(key) ?? [];
+      arr.push({
+        trendId: t.id,
+        tenantId: t.tenantId,
+        mode: t.mode,
+        intervalSeconds: t.intervalSeconds ?? 60,
+        covThreshold: t.covThreshold ?? 0,
+        maxIntervalSeconds: t.maxIntervalSeconds ?? 0,
+      });
+      map.set(key, arr);
+    }
+    this.byDeviceTag = map;
+    const live = new Set(trends.map((t) => t.id));
+    for (const id of [...this.runtime.keys()]) if (!live.has(id)) this.runtime.delete(id);
+    this.logger.log(`Config de trends recarregada — ${trends.length} trend(s) ativa(s)`);
+  }
+
+  /** Consome um ciclo de telemetria e enfileira os pontos que tiverem trend. */
+  consume(sample: TelemetrySample): void {
+    if (this.byDeviceTag.size === 0 || !sample.deviceId) return;
+    const ts = sample.timestamp ? new Date(sample.timestamp) : new Date();
+    const now = Date.now();
+    const toInsert: Prisma.TrendRecordCreateManyInput[] = [];
+
+    for (const p of sample.points ?? []) {
+      const cfgs = this.byDeviceTag.get(`${sample.deviceId}${SEP}${p.tag}`);
+      if (!cfgs) continue;
+      const value = typeof p.value === 'boolean' ? (p.value ? 1 : 0) : Number(p.value);
+      if (Number.isNaN(value)) continue;
+
+      for (const cfg of cfgs) {
+        const rt = this.runtime.get(cfg.trendId);
+        let record = false;
+        if (cfg.mode === 'ON_CHANGE') {
+          // Deadband (COV): grava quando varia além do limite; 0 = qualquer mudança.
+          const deadband = cfg.covThreshold > 0 ? cfg.covThreshold : EPS;
+          const changed = !rt || Math.abs(rt.lastValue - value) >= deadband;
+          // Heartbeat: mesmo sem variação, grava se passou do intervalo máximo.
+          const heartbeat = !!rt && cfg.maxIntervalSeconds > 0 && now - rt.lastAt >= cfg.maxIntervalSeconds * 1000;
+          record = changed || heartbeat;
+        } else {
+          record = !rt || now - rt.lastAt >= cfg.intervalSeconds * 1000;
+        }
+        if (record) {
+          toInsert.push({ trendId: cfg.trendId, tenantId: cfg.tenantId, timestamp: ts, value, quality: TrendQuality.GOOD });
+          this.runtime.set(cfg.trendId, { lastValue: value, lastAt: now });
+        }
+      }
+    }
+
+    if (toInsert.length > 0) this.enqueue(toInsert);
+  }
+
+  /** Snapshot dos contadores do gravador (health/observabilidade). */
+  getWriterStats(): TrendWriterStats {
+    return {
+      pending: this.pending.length,
+      batchesWritten: this.batchesWritten,
+      recordsWritten: this.recordsWritten,
+      retries: this.retries,
+      recordsDropped: this.recordsDropped,
+      lastFlushAt: this.lastFlushAt,
+      lastErrorAt: this.lastErrorAt,
+      lastError: this.lastError,
+    };
+  }
+
+  // ─── Fila + flush em lote ──────────────────────────────────────────────────
+
+  private enqueue(records: Prisma.TrendRecordCreateManyInput[]): void {
+    this.pending.push(...records);
+
+    // Teto de memória: descarta os MAIS ANTIGOS (contabilizado) — sob banco
+    // indisponível por muito tempo, os recentes valem mais que os antigos.
+    const excess = this.pending.length - MAX_PENDING_RECORDS;
+    if (excess > 0) {
+      this.pending.splice(0, excess);
+      this.recordsDropped += excess;
+      this.lastErrorAt = new Date().toISOString();
+      this.lastError = `Fila de trends no teto (${MAX_PENDING_RECORDS}) — ${excess} registro(s) antigo(s) descartado(s)`;
+      this.logger.error(this.lastError);
+    }
+
+    if (this.pending.length >= MAX_BATCH_SIZE) {
+      // Lote cheio antes da janela → flush imediato.
+      void this.flush();
+    } else {
+      this.scheduleFlush();
+    }
+  }
+
+  private scheduleFlush(): void {
+    if (this.flushTimer || this.destroyed) return;
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null;
+      void this.flush();
+    }, FLUSH_INTERVAL_MS);
+    this.flushTimer.unref?.();
+  }
+
+  /**
+   * Grava um lote (até MAX_BATCH_SIZE) com retry curto. Serializado: nunca há
+   * dois createMany em voo — mensagens novas continuam acumulando na fila.
+   */
+  private async flush(): Promise<void> {
+    if (this.flushing || this.destroyed) return;
+    if (this.pending.length === 0) return;
+    this.flushing = true;
+
+    const batch = this.pending.splice(0, MAX_BATCH_SIZE);
+    try {
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await this.prisma.trendRecord.createMany({ data: batch });
+          this.batchesWritten += 1;
+          this.recordsWritten += batch.length;
+          this.lastFlushAt = new Date().toISOString();
+          break;
+        } catch (err) {
+          const message = (err as Error).message;
+          this.lastErrorAt = new Date().toISOString();
+          this.lastError = message;
+          if (attempt >= MAX_WRITE_ATTEMPTS) {
+            // Retries esgotados: descarta CONTABILIZADO, com contexto no log.
+            this.recordsDropped += batch.length;
+            const times = batch
+              .map((r) => new Date(r.timestamp as Date | string).getTime())
+              .filter((t) => Number.isFinite(t));
+            const range =
+              times.length > 0
+                ? `${new Date(Math.min(...times)).toISOString()} → ${new Date(Math.max(...times)).toISOString()}`
+                : 'desconhecida';
+            this.logger.error(
+              `Lote de trends DESCARTADO após ${MAX_WRITE_ATTEMPTS} tentativas — ${batch.length} registro(s), faixa ${range}: ${message}`,
+            );
+            break;
+          }
+          this.retries += 1;
+          const backoff = RETRY_BACKOFF_MS[Math.min(attempt - 1, RETRY_BACKOFF_MS.length - 1)];
+          this.logger.warn(
+            `Falha ao gravar lote de trends (tentativa ${attempt}/${MAX_WRITE_ATTEMPTS}, ${batch.length} registro(s)) — retry em ${backoff}ms: ${message}`,
+          );
+          await sleep(backoff);
+        }
+      }
+    } finally {
+      this.flushing = false;
+    }
+
+    // Sobrou fila (lote cheio ou chegou coisa durante a gravação)? Continua.
+    if (this.pending.length >= MAX_BATCH_SIZE) {
+      void this.flush();
+    } else if (this.pending.length > 0) {
+      this.scheduleFlush();
+    }
+  }
+
+  /** Log periódico dos contadores — só quando houve atividade desde o último. */
+  private logStats(): void {
+    const delta = {
+      batches: this.batchesWritten - this.lastLogged.batches,
+      records: this.recordsWritten - this.lastLogged.records,
+      retries: this.retries - this.lastLogged.retries,
+      dropped: this.recordsDropped - this.lastLogged.dropped,
+    };
+    if (delta.batches === 0 && delta.records === 0 && delta.retries === 0 && delta.dropped === 0) return;
+    this.lastLogged = {
+      batches: this.batchesWritten,
+      records: this.recordsWritten,
+      retries: this.retries,
+      dropped: this.recordsDropped,
+    };
+    const msg =
+      `Gravação de trends (últimos 60s) — lotes: ${delta.batches}, registros: ${delta.records}, ` +
+      `retries: ${delta.retries}, descartes: ${delta.dropped}, pendentes: ${this.pending.length}`;
+    if (delta.dropped > 0) this.logger.error(msg);
+    else this.logger.log(msg);
+  }
+}

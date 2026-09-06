@@ -1,0 +1,3 @@
+display_name: Config Project Fullstack
+short_description: Cria monorepo Turbo com Next.js, NestJS, envs e namespace opcional.
+default_prompt: Criar um projeto fullstack do zero com Turbo, Next.js, NestJS, CORS e variaveis de ambiente.

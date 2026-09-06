@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nextjs Patterns"
+  short_description: "Padroes frontend Next.js BlueBee"
+  default_prompt: "Use $nextjs-patterns to apply the BlueBee IoT nextjs-patterns standards."

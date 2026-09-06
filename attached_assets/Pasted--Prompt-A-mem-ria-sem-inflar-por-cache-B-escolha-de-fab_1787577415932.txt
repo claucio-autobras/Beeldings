@@ -1,0 +1,285 @@
+# Prompt — (A) memória sem inflar por cache · (B) escolha de fabricante no cadastro
+
+> Duas mudanças independentes. Podem ser aplicadas separadamente, na ordem que preferir.
+>
+> Vale o princípio de sempre: o sistema monitora **muitas marcas e modelos**. Nada pode ficar amarrado a um equipamento — específico de marca vive só em arquivo de perfil declarativo; o motor conhece apenas MIBs padrão e descoberta automática.
+
+---
+
+# PARTE A — Memória usada não pode inflar por causa do cache do Linux
+
+## O problema (medido em equipamento real)
+
+O card mostra **73% de memória usada** numa controladora que está usando **49%**. A conta atual é `total − livre`, e o OID `memAvailReal` do UCD reporta só a memória **totalmente livre**, sem contar o cache de disco. Como o kernel Linux usa toda sobra de RAM como cache e devolve na hora que um processo precisa, esse número fica inflado em **qualquer** Linux saudável.
+
+Medição real (Control iD iDFlex, 116,6 MB de RAM):
+
+| | |
+|---|---|
+| "Usada" pela conta atual (total − livre) | 85,2 MB = **73,0%** |
+| Dentro disso: cache + buffers (recuperável) | 28,1 MB = 24,1% |
+| **Realmente ocupada por processos** | 57,1 MB = **48,9%** |
+
+**Por que isso importa mais do que parece:** um alarme de memória configurado em 80% dispara em equipamento perfeitamente saudável, porque esse valor vive naturalmente na faixa dos 70–85% em Linux. Falso positivo é o pior defeito num módulo de manutenção preditiva — treina o operador a ignorar o alarme.
+
+## A mudança — no gateway, não no frontend
+
+O gateway passa a publicar em `memory` a **memória realmente disponível** (livre + buffers + cache), que é o que o nome do ponto ("Memória disponível") sempre prometeu. Assim a correção vale também para alarmes e trends, não só para o card.
+
+### A.1 Constantes (`apps/gateway/src/drivers/snmp.driver.ts`)
+
+```ts
+/** UCD memAvailReal (kB) — memória livre, sem contar cache de disco. */
+const UCD_MEM_AVAIL_REAL = '1.3.6.1.4.1.2021.4.6.0';
+```
+
+```ts
+/**
+ * Memória recuperável do Linux (buffers + page cache), em kB — UCD-SNMP.
+ *
+ * Por que existe: `memAvailReal` reporta apenas a memória TOTALMENTE LIVRE,
+ * sem contar o cache de disco. Como o kernel usa toda sobra de RAM como cache
+ * e devolve na hora que um processo precisa, a conta "total − livre" infla o
+ * uso em qualquer Linux saudável (medido em campo: 73% aparente vs 49% real).
+ * Alarme de memória calibrado no número inflado dispara em equipamento são.
+ *
+ * Estes OIDs são somados ao valor de memória disponível — mas SOMENTE quando
+ * a leitura veio de `memAvailReal`, cuja semântica conhecemos (ver
+ * `RECLAIMABLE_BASE_OIDS`). Firmware que não responde estes OIDs mantém o
+ * comportamento anterior, sem erro.
+ */
+const UCD_MEM_BUFFER = '1.3.6.1.4.1.2021.4.14.0';
+const UCD_MEM_CACHED = '1.3.6.1.4.1.2021.4.15.0';
+const MEM_RECLAIMABLE_OIDS = [UCD_MEM_BUFFER, UCD_MEM_CACHED];
+
+/**
+ * OIDs de memória cuja semântica é comprovadamente "livre, excluindo cache" —
+ * os únicos onde somar buffers/cache é correto. Um OID proprietário de
+ * fabricante desconhecido NUNCA recebe o ajuste: não sabemos o que ele mede.
+ */
+const RECLAIMABLE_BASE_OIDS = new Set([UCD_MEM_AVAIL_REAL]);
+```
+
+Use `UCD_MEM_AVAIL_REAL` também no fallback universal de `memory`, no lugar da string literal.
+
+### A.2 Os OIDs entram no mesmo GET em lote
+
+Junto da montagem dos `fallbackOids` do ciclo:
+
+```ts
+// Buffers/cache do Linux entram no mesmo GET quando há ponto de memória —
+// usados para descontar a memória recuperável (ver MEM_RECLAIMABLE_OIDS).
+if (providerMetricsInPoints.has('memory')) {
+  fallbackOids.push(...MEM_RECLAIMABLE_OIDS);
+}
+```
+
+Sem requisição extra e sem walk: são dois OIDs a mais no lote que já existe.
+
+### A.3 A cadeia de resolução passa a devolver qual OID resolveu
+
+`resolveProvider` precisa informar o OID e a escala usados, para o ajuste saber se pode ser aplicado:
+
+```ts
+const resolveProvider = (
+  p: SnmpPointConfig,
+): { value: number; source: string; oid?: string; scale?: number } | null => {
+  const own =
+    p.unsupported || this.isLoopbackLossOid(p.oid) ? null : valueOf(p.oid);
+  if (own !== null) {
+    const scale = p.scale ?? 1;
+    return { value: own * scale, source: 'oid', oid: p.oid ?? undefined, scale };
+  }
+  const mapping = profile?.mappings.get(p.metric);
+  if (mapping?.oid && !mapping.httpKind && !this.isLoopbackLossOid(mapping.oid)) {
+    const pv = valueOf(mapping.oid);
+    if (pv !== null) {
+      const scale = mapping.scale ?? 1;
+      return { value: pv * scale, source: mapping.profileLayer, oid: mapping.oid, scale };
+    }
+  }
+  for (const fb of SCALAR_FALLBACK_OIDS[p.metric] ?? []) {
+    const fv = valueOf(fb.oid);
+    if (fv !== null) {
+      return { value: fv * fb.scale, source: 'fallback', oid: fb.oid, scale: fb.scale };
+    }
+  }
+  // … camada de descoberta por walk permanece como está …
+};
+```
+
+### A.4 O ajuste, na construção do ponto de memória
+
+Logo depois de `const resolved = resolveProvider(p);`:
+
+```ts
+// ── Memória disponível: soma buffers + cache do Linux ────────────────
+// `memAvailReal` conta só a memória totalmente livre; o kernel usa a
+// sobra como cache de disco e a devolve assim que um processo precisar.
+// Sem esta soma, "memória usada" fica inflada (73% aparente vs 49% real
+// medido em campo) e um alarme em 80% dispara em equipamento saudável.
+//
+// Aplicado SOMENTE quando a leitura veio de um OID de semântica
+// conhecida (RECLAIMABLE_BASE_OIDS). OID proprietário de fabricante
+// desconhecido fica intocado — não sabemos o que ele mede.
+if (
+  p.metric === 'memory' &&
+  value !== null &&
+  resolved?.oid &&
+  RECLAIMABLE_BASE_OIDS.has(resolved.oid)
+) {
+  const buffers = valueOf(UCD_MEM_BUFFER);
+  const cached = valueOf(UCD_MEM_CACHED);
+  if (buffers !== null || cached !== null) {
+    const reclaimableKb = (buffers ?? 0) + (cached ?? 0);
+    value += reclaimableKb * (resolved.scale ?? 1);
+    source = `${source}+cache`;
+  }
+}
+```
+
+### A.5 Como fica em cada fabricante (é a trava que mantém multi-marca)
+
+| Equipamento | Comportamento |
+|---|---|
+| Linux/UCD completo (Control iD, maioria dos embarcados) | soma buffers + cache → valor real |
+| Linux sem os OIDs de cache (net-snmp mínimo) | valor puro, sem erro — igual a hoje |
+| Hikvision e similares (memória já em `%`) | intocado; caminho separado no cálculo do card |
+| Fabricante desconhecido com OID proprietário | intocado, pela trava `RECLAIMABLE_BASE_OIDS` |
+
+### A.6 Frontend — uma palavra
+
+Em `apps/frontend/src/components/health-metrics.ts`, o tooltip da memória usada passa de "livres" para **"disponíveis"**, que agora é o termo correto:
+
+```ts
+// "disponível" e não "livre": o gateway já soma o cache do Linux, que
+// o kernel devolve na hora que um processo precisar.
+`${formatMb(availMb)} disponíveis de ${formatMb(totalMb)}`,
+```
+
+Nenhuma mudança de cálculo no frontend — ele já deriva `100 × (1 − disponível/total)`, e passa a acertar sozinho porque o dado de entrada ficou correto.
+
+### A.7 Testes obrigatórios (gateway)
+
+1. **Soma buffers + cache**: `memAvailReal=32212`, `memBuffer=4`, `memCached=28784` → `memory = 61000`, `source = 'oid+cache'`.
+2. **Firmware sem OIDs de cache**: só `memAvailReal=32212` → `memory = 32212`, `source = 'oid'` (sem sufixo).
+3. **OID proprietário não recebe ajuste**: ponto com OID Hikvision `1.3.6.1.4.1.39165.1.11.0` = 100 e cache respondendo → `memory = 100`, `source = 'oid'`.
+4. **Ponto sem OID** resolve pelo perfil base (que aponta o mesmo `memAvailReal`) e **também** ganha o desconto → `source = 'base+cache'`.
+5. **Equipamento offline** → `memory = null`, sem inventar zero.
+
+### A.8 Ressalvas de implantação (avise o operador)
+
+- As séries históricas de memória terão **um degrau** no dia da atualização: a métrica passa a medir a coisa certa. Não é falha.
+- Alarme de memória já configurado com limite calibrado no número inflado **precisa ser revisto**. No valor correto, algo em torno de 85–90% faz sentido.
+
+---
+
+# PARTE B — Escolher o fabricante no cadastro, com padrões já aplicados
+
+## O problema atual
+
+No formulário "Adicionar controladora", **Fabricante é um campo de texto livre** ("Ex.: Hikvision, Control iD, Intelbras…"). Consequências:
+
+- O operador não sabe quais fabricantes o sistema já conhece.
+- Um erro de digitação ("Contro iD") ou uma marca sem perfil cai no genérico **sem nenhum aviso** — parece que foi reconhecido.
+- O perfil de monitoramento (`profileId`) só pode ser trocado depois, na edição; no cadastro ele nem é aceito.
+
+## A boa notícia: o catálogo já existe
+
+Não crie nada novo de backend para listar fabricantes. Já existem:
+
+- `GET /sca/profiles?deviceType=ACCESS_CONTROLLER` → `[{ id, label, metrics: [{ metricKey, oid, scale, unit }] }]`
+- `GET /cftv/profiles?deviceType=CAMERA` → mesmo formato
+- `PATCH` de ambos já aceita `profileId` e trata `'generic'` como "voltar para automático"
+
+O que falta é **usar** isso no cadastro.
+
+## B.1 Backend — aceitar `profileId` na criação
+
+Hoje o `POST /sca/controllers` grava só `manufacturer` em `Device.config`. Passe a aceitar também `profileId`, com a mesma validação já usada no PATCH (ID desconhecido → 400; `'generic'` ou `null` → automático):
+
+```ts
+config: {
+  snmpVersion: body.snmpVersion ?? '2c',
+  community: body.community?.trim() || 'public',
+  pollingIntervalMs: (body.pollingInterval ?? DEFAULT_POLLING_S) * 1000,
+  manufacturer: body.manufacturer?.trim() || null,
+  profileId: resolvedProfileId,                       // null = automático
+  profileSource: resolvedProfileId ? 'manual' : 'generic',
+},
+```
+
+Mesma mudança no cadastro de câmeras (`POST /cftv/cameras`).
+
+## B.2 Frontend — o campo vira seleção
+
+Substitua o texto livre por um `<select>` **alimentado pelo endpoint de perfis** (nunca uma lista escrita no código do frontend — é isso que faz marca nova aparecer sozinha):
+
+```
+Fabricante / perfil de monitoramento
+┌────────────────────────────────────────────┐
+│ Detecção automática (recomendado)        ▾ │   ← opção padrão
+│ Control iD                                 │   ← vindas de GET /sca/profiles
+│ Hikvision (Controle de Acesso)             │
+│ Intelbras (Controle de Acesso)             │
+│ ──────────────                             │
+│ Outro / não listado                        │   ← revela o campo de texto
+└────────────────────────────────────────────┘
+```
+
+Comportamento de cada opção:
+
+- **Detecção automática (padrão)** — envia `profileId: null` e `manufacturer: null`. O gateway identifica pelo `sysDescr`/`sysObjectID`/enterprise number lido do próprio equipamento. **É a opção mais confiável e por isso é o padrão** — o equipamento sabe melhor que o operador.
+- **Um fabricante da lista** — envia `profileId: <id>` e `manufacturer: <label>`. Já aplica os OIDs conhecidos daquela marca.
+- **Outro / não listado** — mostra o campo de texto de hoje; envia `manufacturer: <texto>` e `profileId: null`. O nome fica registrado para relatório e inventário mesmo sem perfil.
+
+Abaixo do select, um texto curto que muda conforme a escolha:
+
+- automática → *"O sistema identifica o fabricante lendo o próprio equipamento."*
+- fabricante escolhido → *"Aplica os OIDs conhecidos da {label}. Se algum não responder, o sistema descobre a leitura correta sozinho."*
+- outro → *"Sem perfil conhecido para esta marca — o sistema usa as MIBs padrão e descobre o resto no primeiro ciclo."*
+
+## B.3 A regra de ouro: fabricante é uma DICA, nunca uma trava
+
+Isto é o mais importante da Parte B, e não pode ser perdido na implementação:
+
+**Escolher o fabricante não pode desligar a descoberta automática.** O perfil é o ponto de partida; a descoberta é a rede de segurança.
+
+O caso real que prova a regra: a Control iD tem perfil com OIDs proprietários (enterprise 34475), mas **o firmware do equipamento em campo não implementa essa árvore**. Se selecionar "Control iD" travasse os OIDs do perfil, esse equipamento pararia de reportar CPU. Como o perfil é só uma camada da cadeia (`ponto → perfil → MIB padrão → descoberto`), ele funciona normalmente: a descoberta encontra a CPU em `hrProcessorLoad` e publica.
+
+Ou seja: o dropdown melhora a partida e a comunicação com o operador — **não** muda o motor.
+
+## B.4 Aviso crítico sobre as MIBs importadas
+
+A tela "MIBs SNMP" (que importa `CONTROLID-MIB`, `UCD-SNMP-MIB`, etc.) e o dropdown de fabricante resolvem **coisas diferentes**, e não podem ser misturados:
+
+| | Serve para | Não serve para |
+|---|---|---|
+| **Perfil de fabricante** | decidir **quais OIDs coletar** (comportamento) | dar nome a OID |
+| **MIB importada** | dar **nome legível** a um OID na tela de diagnóstico | decidir qual OID é CPU, memória ou temperatura |
+
+**Nunca use a MIB para escolher métrica.** Já foi comprovado em campo que a `CONTROLID-MIB` publicada **não corresponde à árvore real** do iDFlex — os grupos estão renumerados, e confiar na posição declarada na MIB grava temperatura no lugar de CPU. A MIB vale para nome, tipo e unidade; a **posição vem sempre de leitura real do equipamento**.
+
+Pelo mesmo motivo, **importar uma MIB não deve criar entrada no dropdown de fabricante**: ter o arquivo não significa saber qual OID é qual métrica.
+
+## B.5 Como uma marca nova entra no sistema
+
+Fluxo que precisa continuar valendo depois desta mudança:
+
+1. Cria-se um arquivo de perfil (backend: `access-controller-oid-profiles.ts` / `camera-oid-profiles.ts`; gateway: `profiles/vendors/*.profile.ts`) com os OIDs e o critério de match.
+2. **O dropdown passa a mostrar a marca automaticamente**, porque lê do endpoint de catálogo.
+3. Nenhuma alteração no frontend, no formulário ou no motor.
+
+Se a implementação exigir tocar no frontend para adicionar uma marca, está errada.
+
+## B.6 Critérios de aceite
+
+- [ ] Campo de fabricante é um `<select>` com as opções vindas de `GET /{sca|cftv}/profiles` — **nenhuma marca escrita no código do frontend**.
+- [ ] Opção padrão é **"Detecção automática (recomendado)"**.
+- [ ] "Outro / não listado" revela o campo de texto e preserva o comportamento atual.
+- [ ] `POST` de controladora e de câmera aceitam e persistem `profileId` + `profileSource`; ID desconhecido → 400.
+- [ ] Cadastrar escolhendo "Control iD" num equipamento cujo firmware não tem a árvore 34475 **continua reportando CPU** (via descoberta). Este é o teste que prova que o perfil não virou trava.
+- [ ] Cadastrar em "Detecção automática" identifica o fabricante sozinho quando o equipamento informa `sysDescr`/`sysObjectID` reconhecíveis.
+- [ ] Importar uma MIB **não** cria opção no dropdown de fabricante.
+- [ ] Texto de apoio abaixo do select muda conforme a opção escolhida.
+- [ ] `npx tsc --noEmit` limpo e testes verdes nos apps tocados.

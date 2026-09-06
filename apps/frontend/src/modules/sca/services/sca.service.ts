@@ -1,0 +1,383 @@
+import { apiGet, apiPost, apiPatch, apiDelete, sensitiveActionHeaders } from '@/lib/api-client';
+import type {
+  CustomPointSelection,
+  DiagMetric,
+  DiagnoseCandidate,
+  DiagnoseMetricResult,
+  DiagnoseWalkEntry,
+  DiagnoseWalkSection,
+  DiagnoseWalkStats,
+  DiscoveredSnmpObject,
+  SnmpDiagnoseOutcome,
+  SnmpDiagnoseProgress,
+  SnmpDiagnoseJobStatus,
+  SnmpUnreachableCause,
+  MonitoringProfile,
+  SnmpPointDisplay,
+  SnmpInfoEntry,
+  SnmpCardCategory,
+  LiveOidTestOutcome,
+  MetricProposal,
+  MetricProposalCandidate,
+  MetricConfidence,
+  AppliedOidSelection,
+} from '@/modules/cftv/services/cftv.service';
+import { pollSnmpDiagnoseJob } from '@/modules/cftv/services/cftv.service';
+import type { SnmpMibSummary } from '@/modules/admin/services/snmp-mib.service';
+
+// Re-export shared types to avoid duplication
+export type {
+  CustomPointSelection,
+  DiagMetric,
+  DiagnoseCandidate,
+  DiagnoseMetricResult,
+  DiagnoseWalkEntry,
+  DiagnoseWalkSection,
+  DiagnoseWalkStats,
+  DiscoveredSnmpObject,
+  SnmpDiagnoseOutcome,
+  SnmpDiagnoseProgress,
+  SnmpDiagnoseJobStatus,
+  SnmpUnreachableCause,
+  MonitoringProfile,
+  SnmpPointDisplay,
+  SnmpInfoEntry,
+  SnmpCardCategory,
+  LiveOidTestOutcome,
+  MetricProposal,
+  MetricProposalCandidate,
+  MetricConfidence,
+  AppliedOidSelection,
+};
+
+// ─── Tipos ────────────────────────────────────────────────────────────────────
+
+/** Métricas de saúde monitoradas via SNMP numa controladora. */
+export type AcHealthMetric =
+  | 'cpu'
+  | 'memory'
+  | 'memory_available'
+  | 'ram_total'
+  | 'temperature'
+  | 'packet_loss';
+
+/** Ponto de saúde de uma controladora de acesso (SNMP). */
+export interface ControllerPoint {
+  id: string;
+  tag: string;
+  objectName: string;
+  metric: string;
+  oid: string | null;
+  /** Metadados de exibição do card dinâmico (backend ≥ task 915). */
+  display?: SnmpPointDisplay;
+  /** OID comprovadamente inexistente (último diagnóstico SNMP). */
+  unsupported?: boolean;
+  healthState?: 'active' | 'broken' | 'suggested' | 'pending';
+  healthReason?: 'missing' | 'type_changed' | 'awaiting_read' | 'not_exposed_by_firmware' | null;
+  /** Ponto marcado como ativo crítico. */
+  critical?: boolean;
+  unit: string;
+  /** Último valor persistido (seed antes da telemetria ao vivo). */
+  lastValue: number | null;
+  lastValueAt: string | null;
+  lastValueState: string | null;
+  /**
+   * Indica se o ponto pode ser removido individualmente pelo operador.
+   * false = essencial (STATUS). undefined = backend legado.
+   */
+  removable?: boolean;
+}
+
+/** Perfil de OIDs por fabricante (catálogo do backend). */
+export interface AcOidProfile {
+  id: string;
+  label: string;
+  oids: Partial<Record<AcHealthMetric, { oid: string; scale: number; unit: string }>>;
+}
+
+/** Controladora de acesso (Device protocol 'snmp', monitoredDeviceType 'ACCESS_CONTROLLER'). */
+export interface Controller {
+  id: string;
+  name: string;
+  protocol: 'snmp';
+  /** Ativo crítico. */
+  critical?: boolean;
+  site: string;
+  siteId: string | null;
+  tenantId: string;
+  gatewayId: string | null;
+  gatewayOnline: boolean | null;
+  ip: string;
+  port: number;
+  snmpVersion: '1' | '2c' | '3';
+  community: string;
+  /** Vista pública da credencial SNMP — chaves NUNCA vêm da API. */
+  snmpCredential?: SnmpCredentialView | null;
+  pollingInterval: number;
+  manufacturer: string | null;
+  snmpMibId: string | null;
+  snmpMib: Pick<SnmpMibSummary, 'id' | 'label' | 'manufacturer' | 'isOffline'> | null;
+  status: 'online' | 'offline';
+  lastCommunication: string | null;
+  points: ControllerPoint[];
+  profileId: string | null;
+  profileLabel: string;
+  profileSource: 'detected' | 'manual' | 'generic';
+  profileOverrides: Record<string, string> | null;
+  /** Informações estáticas (firmware, serial, NTP…) do último diagnóstico. */
+  snmpInfo?: SnmpInfoEntry[];
+}
+
+/** Vista pública da credencial SNMP (flags no lugar das chaves). */
+export interface SnmpCredentialView {
+  version: '1' | '2c' | '3';
+  securityName: string | null;
+  authProtocol: string | null;
+  privProtocol: string | null;
+  contextName: string | null;
+  hasAuthKey: boolean;
+  hasPrivKey: boolean;
+}
+
+/** Campos SNMPv3 de formulário (chave vazia na edição = manter a atual). */
+export interface SnmpV3Input {
+  securityName?: string;
+  authProtocol?: string;
+  authKey?: string;
+  privProtocol?: string;
+  privKey?: string;
+  contextName?: string;
+}
+
+/** Payload de criação/edição de controladora. */
+export interface ControllerInput extends SnmpV3Input {
+  name?: string;
+  siteId?: string;
+  tenantId?: string;
+  gatewayId?: string;
+  ip?: string;
+  port?: number;
+  snmpVersion?: '1' | '2c' | '3';
+  community?: string;
+  pollingInterval?: number;
+  manufacturer?: string | null;
+  snmpMibId?: string | null;
+  /** Overrides manuais de OID por ponto. */
+  healthOids?: Partial<Record<DiagMetric, string>>;
+  profileId?: string | null;
+  profileOverrides?: Record<string, string> | null;
+}
+
+/** Resultado do teste SNMP. */
+export interface SnmpTestOutcome {
+  reachable: boolean;
+  values: Partial<Record<AcHealthMetric, number | null>>;
+  oids: Partial<Record<AcHealthMetric, string>>;
+  cause?: 'community' | 'no_response' | null;
+  identity?: { sysDescr: string | null; sysObjectId: string | null };
+  metricResults?: Partial<Record<string, {
+    canonicalKey: string;
+    label: string;
+    value: number | null;
+    rawValue: number | null;
+    selectedOid: string | null;
+    unit: string;
+    scale: number;
+    state: 'SUPPORTED' | 'UNSUPPORTED' | 'TEMPORARY_ERROR' | 'NO_PERMISSION';
+    cause: string | null;
+    source: string | null;
+  }>>;
+}
+
+/** Resultado de capacidade de uma métrica. */
+export interface MetricCapability {
+  metricKey: string;
+  state: 'SUPPORTED' | 'UNSUPPORTED' | 'TEMPORARY_ERROR' | 'NO_PERMISSION';
+  probeValue: number | null;
+  profileId: string | null;
+  profileLayer: 'base' | 'vendor' | 'override' | null;
+  lastProbeAt: string;
+}
+
+/** Mapa de capacidades da controladora. */
+export interface ControllerCapabilities {
+  profileId: string | null;
+  profileLabel: string;
+  profileSource: 'detected' | 'manual' | 'generic';
+  profileOverrides: Record<string, string> | null;
+  capabilities: MetricCapability[];
+}
+
+/** Resultado do probe de capacidades. */
+export interface ProbeCapabilitiesResult {
+  reachable: boolean;
+  cause?: 'community' | 'no_response' | null;
+  sysDescr?: string | null;
+  detectedProfileId: string;
+  detectedProfileLabel: string;
+  capabilities: MetricCapability[];
+}
+
+// ─── API ─────────────────────────────────────────────────────────────────────
+
+export async function getControllers(tenantId?: string): Promise<Controller[]> {
+  return apiGet<Controller[]>(`/sca/controllers${tenantId ? `?tenantId=${tenantId}` : ''}`);
+}
+
+export async function createController(data: ControllerInput): Promise<Controller> {
+  return apiPost<Controller>('/sca/controllers', data);
+}
+
+export async function updateController(id: string, data: ControllerInput): Promise<Controller> {
+  return apiPatch<Controller>(`/sca/controllers/${id}`, data);
+}
+
+/** Exclusão crítica: exige o token de confirmação de senha do operador. */
+export async function deleteController(id: string, confirmationToken: string): Promise<void> {
+  await apiDelete(`/sca/controllers/${id}`, {
+    headers: sensitiveActionHeaders(confirmationToken),
+  });
+}
+
+/** Lista os perfis de monitoramento disponíveis para ACCESS_CONTROLLER. */
+export async function getMonitoringProfiles(): Promise<MonitoringProfile[]> {
+  return apiGet<MonitoringProfile[]>('/sca/profiles?deviceType=ACCESS_CONTROLLER');
+}
+
+/** Catálogo de perfis de OIDs por fabricante. */
+export async function getAcOidProfiles(): Promise<AcOidProfile[]> {
+  return apiGet<AcOidProfile[]>('/sca/oid-profiles');
+}
+
+/** Lê o mapa de capacidades da controladora. */
+export async function getControllerCapabilities(
+  controllerId: string,
+): Promise<ControllerCapabilities> {
+  return apiGet<ControllerCapabilities>(`/sca/controllers/${controllerId}/capabilities`);
+}
+
+/** Executa o probe de capacidades via gateway. */
+export async function probeControllerCapabilities(
+  controllerId: string,
+): Promise<ProbeCapabilitiesResult> {
+  const data = await apiPost<
+    | ({ success: true } & ProbeCapabilitiesResult)
+    | { success: false; error?: string }
+  >(`/sca/controllers/${controllerId}/probe-capabilities`, {});
+  if (!data.success) {
+    throw new Error((data as { error?: string }).error ?? 'Erro desconhecido no probe.');
+  }
+  return data as ProbeCapabilitiesResult;
+}
+
+/**
+ * Testa o SNMP de uma controladora via gateway e pré-visualiza os valores.
+ */
+export async function testControllerSnmp(params: SnmpV3Input & {
+  tenantId: string;
+  gatewayId: string;
+  ip: string;
+  port?: number;
+  snmpVersion?: '1' | '2c' | '3';
+  community?: string;
+  manufacturer?: string | null;
+  oids?: Partial<Record<AcHealthMetric, string>>;
+}): Promise<SnmpTestOutcome> {
+  const data = await apiPost<{
+    success: boolean;
+    error?: string;
+    reachable?: boolean;
+    values?: Partial<Record<AcHealthMetric, number | null>>;
+    oids?: Partial<Record<AcHealthMetric, string>>;
+    cause?: 'community' | 'no_response' | null;
+    identity?: { sysDescr: string | null; sysObjectId: string | null };
+    metricResults?: SnmpTestOutcome['metricResults'];
+  }>('/sca/test-snmp', params);
+  if (!data.success) {
+    throw new Error(data.error ?? 'Erro desconhecido ao testar o SNMP.');
+  }
+  return {
+    reachable: Boolean(data.reachable),
+    values: data.values ?? {},
+    oids: data.oids ?? {},
+    cause: data.cause ?? null,
+    identity: data.identity,
+    metricResults: data.metricResults,
+  };
+}
+
+/** Resposta do POST que apenas confirma o início do diagnóstico. */
+type SnmpDiagnoseStartResponse =
+  | { success: true; started: true; diagnoseId: string }
+  | { success: false; error?: string };
+
+/**
+ * Roda o diagnóstico SNMP da controladora via gateway. Pode levar até ~2 min
+ * — o POST só confirma o início (evita conexões HTTP longas atrás do proxy
+ * de produção) e o resultado final é obtido por polling.
+ */
+export async function diagnoseControllerSnmp(
+  controllerId: string,
+  diagnoseId?: string,
+): Promise<SnmpDiagnoseOutcome> {
+  const id = diagnoseId?.trim() || crypto.randomUUID();
+  const started = await apiPost<SnmpDiagnoseStartResponse>(
+    `/sca/controllers/${controllerId}/diagnose-snmp`,
+    { diagnoseId: id },
+  );
+  if (!started.success) {
+    throw new Error(started.error ?? 'Erro desconhecido no diagnóstico SNMP.');
+  }
+  return pollSnmpDiagnoseJob(started.diagnoseId, (diagId) =>
+    apiGet<SnmpDiagnoseJobStatus>(`/sca/diagnose/${diagId}/progress`),
+  );
+}
+
+/** Progresso parcial do diagnóstico (polling). */
+export async function getDiagnoseProgress(
+  diagnoseId: string,
+): Promise<SnmpDiagnoseProgress | null> {
+  const status = await apiGet<SnmpDiagnoseJobStatus>(`/sca/diagnose/${diagnoseId}/progress`);
+  if (status.status === 'unknown') return null;
+  if (status.status === 'pending') return status.progress;
+  // done/error: sinaliza fim para quem só usa este polling de exibição.
+  return { phase: 'walk', tested: 0, total: 0, done: true };
+}
+
+/**
+ * Lê o valor ATUAL de um OID na controladora via gateway (teste ao vivo na
+ * descoberta, antes de aplicar).
+ */
+export async function testControllerOid(
+  controllerId: string,
+  oid: string,
+): Promise<LiveOidTestOutcome> {
+  return apiPost<LiveOidTestOutcome>(`/sca/controllers/${controllerId}/test-oid`, { oid });
+}
+
+/**
+ * Remove um ponto SNMP individual da controladora (para de coletar o OID e
+ * apaga alarmes/trends associados via cascade no banco).
+ */
+export async function removeControllerPoint(
+  controllerId: string,
+  pointId: string,
+): Promise<void> {
+  await apiDelete(`/sca/controllers/${controllerId}/points/${pointId}`);
+}
+
+/** Aplica OIDs sugeridos pelo diagnóstico (+ OIDs livres da descoberta). */
+export async function applySnmpOids(
+  controllerId: string,
+  oids: Partial<Record<DiagMetric, AppliedOidSelection>>,
+  customPoints?: CustomPointSelection[],
+  metricConfidence?: Partial<Record<string, MetricConfidence>>,
+): Promise<Controller> {
+  return apiPost<Controller>(`/sca/controllers/${controllerId}/apply-snmp-oids`, {
+    oids,
+    ...(customPoints?.length ? { customPoints } : {}),
+    ...(metricConfidence && Object.keys(metricConfidence).length
+      ? { metricConfidence }
+      : {}),
+  });
+}

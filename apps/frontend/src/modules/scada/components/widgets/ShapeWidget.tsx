@@ -1,0 +1,132 @@
+'use client';
+
+import type { ShapeWidgetBase, ScadaAnimation, VisibilityOperator, PolygonPoint } from '../../types/scada.types';
+import { toScadaNumber, parseScadaGradient, scaleScadaPolygonPoints } from '../../types/scada.types';
+
+interface Props {
+  widget: ShapeWidgetBase & { type: 'rectangle' | 'square' | 'circle' | 'ellipse' | 'triangle' | 'polygon'; points?: PolygonPoint[] };
+  getValue: (deviceId: string, tag: string) => number | boolean | string | null;
+  staticRender?: boolean;
+}
+
+function matchOp(v: number, op: VisibilityOperator, target: number): boolean {
+  switch (op) {
+    case 'eq': return v === target;
+    case 'neq': return v !== target;
+    case 'gt': return v > target;
+    case 'lt': return v < target;
+    case 'gte': return v >= target;
+    case 'lte': return v <= target;
+    default: return false;
+  }
+}
+
+function animationCss(a: ScadaAnimation): string | undefined {
+  return a === 'pulse' ? 'scada-pulse 1.6s ease-in-out infinite'
+    : a === 'spin' ? 'scada-spin 2.4s linear infinite'
+    : a === 'blink' ? 'scada-blink 1s step-start infinite'
+    : a === 'fade' ? 'scada-fade 1.6s ease-in-out infinite'
+    : undefined;
+}
+
+/**
+ * Forma básica (retângulo/quadrado/círculo/elipse/triângulo). Pode ser preenchida
+ * ou apenas contorno. Quando há ponto vinculado, a 1ª regra que casar com o valor
+ * define a cor principal (fundo no modo preenchido; linha no modo contorno).
+ */
+export function ShapeWidgetView({ widget, getValue, staticRender }: Props) {
+  // Padding interno uniforme (px): a forma é desenhada inset dentro do widget.
+  // Ausente/0 = ocupa toda a área (comportamento atual).
+  const pad = Math.max(0, widget.padding ?? 0);
+  const W = Math.max(widget.width - 2 * pad, 4);
+  const H = Math.max(widget.height - 2 * pad, 4);
+  const filled = widget.fillEnabled !== false;
+
+  // No modo estático: fill/stroke base, sem regras de estado nem animação.
+  const bound = !staticRender && Boolean(widget.deviceId && widget.tagStatus);
+  const raw = bound ? getValue(widget.deviceId as string, widget.tagStatus as string) : null;
+  const value = toScadaNumber(raw);
+
+  // Cor principal: estática (fill/stroke) e, se houver regra que case, a da regra.
+  let mainColor = filled ? widget.fillColor : widget.strokeColor;
+  let animation: ScadaAnimation = 'none';
+  if (bound && raw !== null && !Number.isNaN(value)) {
+    for (const rule of widget.stateRules ?? []) {
+      if (matchOp(value, rule.operator, rule.value)) {
+        mainColor = rule.color;
+        animation = rule.animation;
+        break;
+      }
+    }
+  }
+
+  // Gradiente no preenchimento: SVG não aceita CSS linear-gradient em `fill`,
+  // então convertemos para um <linearGradient> equivalente (ângulo CSS: 0deg =
+  // para cima, sentido horário → vetor dx=sin(A), dy=-cos(A)).
+  const grad = filled ? parseScadaGradient(mainColor) : null;
+  const gradId = grad ? `scada-grad-${widget.id}` : '';
+  const gradCoords = grad
+    ? (() => {
+        const rad = (grad.angle * Math.PI) / 180;
+        const dx = Math.sin(rad) / 2;
+        const dy = -Math.cos(rad) / 2;
+        return { x1: 0.5 - dx, y1: 0.5 - dy, x2: 0.5 + dx, y2: 0.5 + dy };
+      })()
+    : null;
+
+  const fill = filled ? (grad ? `url(#${gradId})` : mainColor) : 'none';
+  const stroke = filled ? widget.strokeColor : mainColor;
+  const sw = filled ? widget.strokeWidth : Math.max(widget.strokeWidth || 0, 2);
+  const inset = sw / 2;
+
+  let shapeEl: React.ReactNode;
+  switch (widget.type) {
+    case 'circle': {
+      const r = Math.max(Math.min(W, H) / 2 - inset, 0);
+      shapeEl = <circle cx={W / 2} cy={H / 2} r={r} fill={fill} stroke={stroke} strokeWidth={sw} />;
+      break;
+    }
+    case 'ellipse':
+      shapeEl = <ellipse cx={W / 2} cy={H / 2} rx={Math.max(W / 2 - inset, 0)} ry={Math.max(H / 2 - inset, 0)} fill={fill} stroke={stroke} strokeWidth={sw} />;
+      break;
+    case 'triangle':
+      shapeEl = <polygon points={`${W / 2},${inset} ${W - inset},${H - inset} ${inset},${H - inset}`} fill={fill} stroke={stroke} strokeWidth={sw} strokeLinejoin="round" />;
+      break;
+    case 'polygon': {
+      const points = scaleScadaPolygonPoints(widget.points, widget.width, widget.height, W, H);
+      shapeEl = <polygon
+        data-scada-polygon="true"
+        points={points.map((point) => `${point.x},${point.y}`).join(' ')}
+        fill={fill}
+        stroke={stroke}
+        strokeWidth={sw}
+        strokeLinejoin="round"
+      />;
+      break;
+    }
+    default: // rectangle, square
+      shapeEl = <rect x={inset} y={inset} width={Math.max(W - sw, 0)} height={Math.max(H - sw, 0)} rx={widget.borderRadius} fill={fill} stroke={stroke} strokeWidth={sw} />;
+  }
+
+  return (
+    <svg
+      data-scada-shape="true"
+      data-scada-hover-border-surface="true"
+      width={W}
+      height={H}
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="none"
+      style={{ position: 'absolute', inset: pad, overflow: 'visible', animation: animationCss(animation), transformOrigin: 'center' }}
+    >
+      {grad && gradCoords && (
+        <defs>
+          <linearGradient id={gradId} x1={gradCoords.x1} y1={gradCoords.y1} x2={gradCoords.x2} y2={gradCoords.y2}>
+            <stop offset="0%" stopColor={grad.from} />
+            <stop offset="100%" stopColor={grad.to} />
+          </linearGradient>
+        </defs>
+      )}
+      {shapeEl}
+    </svg>
+  );
+}

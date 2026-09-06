@@ -1,0 +1,98 @@
+# Tarefa: tornar a escrita BACnet do agente resiliente à perda do SimpleACK na primeira escrita (cold device)
+
+Contexto do bug:
+A primeira WriteProperty BACnet/IP a uma controladora "fria" (logo após o agente subir, ou após
+ociosidade) frequentemente PERDE a confirmação (SimpleACK) durante o ARP/address-binding inicial.
+node-bacnet NÃO retransmite: o callback do writeProperty então NUNCA dispara. A controladora recebeu e
+EXECUTOU a escrita (a saída comuta), mas o agente nunca fica sabendo, nunca publica em
+${PREFIX}/commands/result, e o backend espera o timeout inteiro → o botão SCADA mostra ERRO/loading travado.
+Cliques seguintes pegam o device "quente", confirmam rápido e funcionam.
+
+Hoje, no index.mjs, a escrita faz UM writeProperty, SEM timeout próprio e SEM retry — por isso o
+callback fica pendurado quando o ACK se perde. Vamos corrigir com (1) timeout POR TENTATIVA e
+(2) retransmissão da MESMA escrita (WriteProperty é idempotente: mesmo objeto/valor, reenviar é seguro).
+
+Mudança LOCALIZADA: alterar apenas infra/gateway-agent/index.mjs.
+
+────────────────────────────────────────────────────────
+## 1) Constantes (perto das demais constantes BACnet do topo)
+
+  // Escrita BACnet: timeout por tentativa e nº de tentativas. A 1ª escrita a um
+  // equipamento "frio" costuma perder o SimpleACK no ARP/binding; como node-bacnet
+  // não retransmite, o callback nunca volta. Limitamos cada tentativa e reenviamos
+  // a MESMA escrita (idempotente) para garantir o ACK.
+  const WRITE_APDU_TIMEOUT_MS = Number(process.env.BACNET_WRITE_TIMEOUT_MS ?? 4000); // por tentativa
+  const WRITE_MAX_ATTEMPTS    = Math.max(1, Number(process.env.BACNET_WRITE_RETRIES ?? 2));
+
+────────────────────────────────────────────────────────
+## 2) bacnetWriteProperty: adicionar timeout por tentativa
+
+Substituir o wrapper atual (que só faz callback → Promise, sem timeout) por uma versão que REJEITA se o
+SimpleACK não chegar em timeoutMs. Sem isso, um ACK perdido pendura o callback do node-bacnet para sempre:
+
+  function bacnetWriteProperty(address, objectId, property, valueList, priority, timeoutMs = WRITE_APDU_TIMEOUT_MS) {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        reject(new Error(`confirmação BACnet não recebida em ${timeoutMs}ms`));
+      }, timeoutMs);
+      bacnetClient.writeProperty(address, objectId, property, valueList, { priority }, (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        err ? reject(err) : resolve();
+      });
+    });
+  }
+
+────────────────────────────────────────────────────────
+## 3) writeBacnet: envolver a escrita num loop de retransmissão
+
+Trocar a chamada única do writeProperty por um loop de até WRITE_MAX_ATTEMPTS. Sucesso em qualquer
+tentativa → success:true (logar "(tentativa N)" quando N>1). Só depois de esgotar as tentativas →
+success:false com o último erro real:
+
+  const applicationTag = ANALOG_OBJECT_TYPES.has(objectType) ? BACNET_TAG_REAL : BACNET_TAG_ENUMERATED;
+
+  let lastError = 'falha desconhecida';
+  for (let attempt = 1; attempt <= WRITE_MAX_ATTEMPTS; attempt++) {
+    try {
+      await bacnetWriteProperty(
+        ip,
+        { type: objectType, instance: objectInstance },
+        PRESENT_VALUE,
+        [{ type: applicationTag, value }],
+        priority,
+      );
+      const suffix = attempt > 1 ? ` (tentativa ${attempt})` : '';
+      console.log(`✓ write OK${suffix} — ${ip} obj=${objectType}:${objectInstance} value=${value} prio=${priority}`);
+      return { success: true };
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+      console.error(`✗ write tentativa ${attempt}/${WRITE_MAX_ATTEMPTS} FALHOU — ${ip} obj=${objectType}:${objectInstance}: ${lastError}`);
+    }
+  }
+  return { success: false, error: lastError };
+
+────────────────────────────────────────────────────────
+## 4) TRAVA DE TEMPO (conferir no backend — crítico)
+
+O orçamento de retry do agente tem que caber DENTRO da janela do backend, senão o usuário continua
+vendo ERRO mesmo depois de o agente recuperar o ACK na 2ª tentativa:
+
+  agente: WRITE_MAX_ATTEMPTS × WRITE_APDU_TIMEOUT_MS  (≈ 2 × 4000ms = 8s)  + ida/volta MQTT
+                                   <
+  backend: WRITE_TIMEOUT_MS  (em apps/backend/.../bacnet-write.service.ts)
+
+Conferir WRITE_TIMEOUT_MS no backend e garantir folga (na referência: 15000ms). Se na sua versão estiver
+menor que ~8s + margem MQTT, AUMENTAR para ~15000ms.
+
+────────────────────────────────────────────────────────
+## Critérios de aceite
+- Reiniciar o agente e clicar UMA vez num ponto BO frio: a saída atua E o botão confirma sucesso (sem
+  loading travado). No log do agente deve aparecer "✓ write OK (tentativa 2)" no caso do ACK perdido.
+- Em falha real (device inacessível): após esgotar as tentativas, publica success:false com o erro real
+  (sem falso positivo), e o botão mostra erro legítimo.
+- WriteProperty continua idempotente: reenviar o mesmo objeto/valor não causa efeito colateral.

@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Relatório de Segurança — Plataforma Beeldings (v2)</title>
+<style>
+  @page { size: A4; margin: 0; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', Arial, Helvetica, sans-serif; color: #1e293b; font-size: 11pt; line-height: 1.55; }
+  .page { width: 210mm; min-height: 297mm; padding: 22mm 20mm; page-break-after: always; position: relative; }
+  .page:last-child { page-break-after: auto; }
+
+  .cover { background: linear-gradient(160deg, #0b1526 0%, #12233f 55%, #0e2f4f 100%); color: #e6eefb; display: flex; flex-direction: column; justify-content: space-between; }
+  .cover .brand { font-size: 15pt; font-weight: 700; letter-spacing: 3px; color: #f5b301; text-transform: uppercase; }
+  .cover h1 { font-size: 30pt; font-weight: 800; line-height: 1.2; margin-top: 52mm; }
+  .cover .sub { font-size: 13pt; color: #9db4d4; margin-top: 6mm; max-width: 145mm; }
+  .cover .meta { border-top: 1px solid #2c4468; padding-top: 6mm; font-size: 10pt; color: #9db4d4; display: flex; gap: 14mm; }
+  .cover .meta b { color: #e6eefb; display: block; font-size: 11pt; }
+  .badge-ok { display: inline-block; background: #123f2a; border: 1px solid #2e8b57; color: #7be3a8; padding: 2mm 5mm; border-radius: 4mm; font-weight: 700; font-size: 10.5pt; margin-top: 9mm; margin-right: 3mm; }
+
+  h2 { font-size: 16pt; color: #0e2f4f; border-bottom: 3px solid #f5b301; padding-bottom: 2mm; margin-bottom: 6mm; }
+  h3 { font-size: 12pt; color: #0e2f4f; margin: 6mm 0 2.5mm; }
+  p { margin-bottom: 3.5mm; text-align: justify; }
+  ul { margin: 0 0 4mm 6mm; }
+  li { margin-bottom: 1.8mm; }
+
+  table { width: 100%; border-collapse: collapse; margin: 3mm 0 6mm; font-size: 9.5pt; }
+  th { background: #0e2f4f; color: #fff; text-align: left; padding: 2.2mm 3mm; }
+  td { border-bottom: 1px solid #dbe3ee; padding: 2mm 3mm; vertical-align: top; }
+  tr:nth-child(even) td { background: #f4f7fb; }
+
+  .pill { display: inline-block; padding: 0.5mm 2.5mm; border-radius: 3mm; font-size: 8.5pt; font-weight: 700; white-space: nowrap; }
+  .pill.alta { background: #fde8e8; color: #b42318; }
+  .pill.baixa { background: #fff4d6; color: #935e00; }
+  .pill.info { background: #e8eef7; color: #33517a; }
+  .pill.ok { background: #e5f6ec; color: #1a7f4b; }
+
+  .cardrow { display: flex; gap: 5mm; margin: 4mm 0 7mm; }
+  .card { flex: 1; border: 1px solid #dbe3ee; border-radius: 3mm; padding: 4mm; text-align: center; }
+  .card .num { font-size: 22pt; font-weight: 800; color: #0e2f4f; }
+  .card .num.green { color: #1a7f4b; }
+  .card .lbl { font-size: 8.5pt; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
+
+  .note { background: #fff8e6; border-left: 4px solid #f5b301; padding: 3.5mm 4mm; font-size: 10pt; margin: 5mm 0; }
+  .footer { position: absolute; bottom: 10mm; left: 20mm; right: 20mm; display: flex; justify-content: space-between; font-size: 8.5pt; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 2.5mm; }
+  .check { color: #1a7f4b; font-weight: 700; }
+  .muted { color: #64748b; }
+</style>
+</head>
+<body>
+
+<!-- CAPA -->
+<div class="page cover">
+  <div class="brand">Beeldings</div>
+  <div>
+    <h1>Relatório de<br>Segurança da Plataforma</h1>
+    <div class="sub">Avaliação de segurança em duas etapas — varredura interna (código e dependências) e varredura externa de intrusão (OWASP ZAP) contra o ambiente de produção — com as correções já aplicadas.</div>
+    <div>
+      <span class="badge-ok">✓ 0 vulnerabilidades críticas ou altas em aberto</span>
+      <span class="badge-ok">✓ Varredura externa: nenhum achado grave</span>
+    </div>
+  </div>
+  <div class="meta">
+    <div><b>Período da avaliação</b>14 a 16 de agosto de 2026</div>
+    <div><b>Escopo</b>Aplicação web, API, dependências e superfície externa</div>
+    <div><b>Versão</b>2.0 — 16/08/2026</div>
+    <div><b>Classificação</b>Confidencial</div>
+  </div>
+</div>
+
+<!-- PÁGINA 2: RESUMO + METODOLOGIA -->
+<div class="page">
+  <h2>1. Resumo executivo</h2>
+  <p>Entre 14 e 16 de agosto de 2026, a plataforma Beeldings passou por uma avaliação de segurança em <b>duas etapas complementares</b>: (1) varreduras internas automatizadas sobre o código-fonte, as bibliotecas de terceiros e o fluxo de dados sensíveis; e (2) uma <b>varredura externa de intrusão com a ferramenta OWASP ZAP</b> — padrão de mercado utilizado por empresas de teste de invasão — executada de fora para dentro contra o ambiente de produção (www.beeldings.com.br), simulando o ponto de vista de um atacante na internet.</p>
+  <p>Resultado consolidado: <b>nenhuma vulnerabilidade crítica ou alta foi encontrada em nenhuma das etapas.</b> As 9 vulnerabilidades altas identificadas em bibliotecas de terceiros na etapa interna foram corrigidas no mesmo dia (14/08), e os apontamentos de baixo risco da varredura externa — relacionados a cabeçalhos de proteção do navegador — foram corrigidos em 16/08.</p>
+
+  <div class="cardrow">
+    <div class="card"><div class="num green">0</div><div class="lbl">Críticas encontradas</div></div>
+    <div class="card"><div class="num green">0</div><div class="lbl">Altas em aberto</div></div>
+    <div class="card"><div class="num">9</div><div class="lbl">Altas corrigidas (bibliotecas)</div></div>
+    <div class="card"><div class="num">6</div><div class="lbl">Melhorias aplicadas (ZAP)</div></div>
+  </div>
+
+  <h2>2. Metodologia</h2>
+  <table>
+    <tr><th style="width:34%">Etapa</th><th>O que verifica</th><th style="width:24%">Resultado</th></tr>
+    <tr><td><b>Análise de dependências (SCA)</b><br><span class="muted">interna — 14/08</span></td><td>Vulnerabilidades conhecidas (CVEs) em todas as bibliotecas de terceiros utilizadas pela plataforma.</td><td><span class="pill ok">9 altas corrigidas · 0 em aberto</span></td></tr>
+    <tr><td><b>Análise estática de código (SAST)</b><br><span class="muted">interna — 14/08</span></td><td>Padrões inseguros no código-fonte: injeções, exposição de credenciais, uso incorreto de criptografia.</td><td><span class="pill ok">Sem achados relevantes</span></td></tr>
+    <tr><td><b>Fluxo de dados sensíveis</b><br><span class="muted">interna — 14/08</span></td><td>Vazamento de dados pessoais ou sensíveis para logs, arquivos ou serviços externos.</td><td><span class="pill ok">Sem achados relevantes</span></td></tr>
+    <tr><td><b>Varredura externa de intrusão (OWASP ZAP 2.17)</b><br><span class="muted">externa — 16/08</span></td><td>Ataque automatizado de fora para dentro contra o ambiente de produção: spider tradicional e moderno (browser), análise ativa e passiva de todas as respostas.</td><td><span class="pill ok">0 graves · apontamentos de baixo risco corrigidos</span></td></tr>
+  </table>
+
+  <div class="note"><b>Sobre o OWASP ZAP:</b> é a ferramenta de código aberto mais utilizada no mundo para testes de segurança de aplicações web, mantida pela comunidade OWASP e adotada como base por empresas especializadas em testes de invasão. A varredura foi executada contra o endereço público de produção, sem nenhum acesso privilegiado — exatamente como um atacante externo enxergaria o sistema.</div>
+
+  <div class="footer"><span>Beeldings — Relatório de Segurança da Plataforma · v2.0</span><span>Confidencial · 16/08/2026 · pág. 2</span></div>
+</div>
+
+<!-- PÁGINA 3: CORREÇÕES INTERNAS -->
+<div class="page">
+  <h2>3. Etapa interna — vulnerabilidades corrigidas (14/08)</h2>
+  <p>As nove vulnerabilidades abaixo estavam em bibliotecas de terceiros (não no código da plataforma) e foram <b>corrigidas em 14/08/2026</b> por atualização para as versões oficiais seguras, com varredura de confirmação registrando zero pendências:</p>
+  <table>
+    <tr><th style="width:26%">Componente</th><th>Vulnerabilidade (CVE)</th><th style="width:14%">Severidade</th><th style="width:14%">Situação</th></tr>
+    <tr><td>Next.js (framework web)</td><td>CVE-2026-64649 — Server-Side Request Forgery em Server Actions</td><td><span class="pill alta">Alta</span></td><td class="check">Corrigida</td></tr>
+    <tr><td>Next.js (framework web)</td><td>CVE-2026-64645 — Server-Side Request Forgery via rewrites</td><td><span class="pill alta">Alta</span></td><td class="check">Corrigida</td></tr>
+    <tr><td>Next.js (framework web)</td><td>CVE-2026-64642 — Bypass de middleware/proxy no App Router</td><td><span class="pill alta">Alta</span></td><td class="check">Corrigida</td></tr>
+    <tr><td>Next.js (framework web)</td><td>CVE-2026-64641 — Negação de serviço em Server Actions</td><td><span class="pill alta">Alta</span></td><td class="check">Corrigida</td></tr>
+    <tr><td>nanoid (geração de IDs)</td><td>CVE-2026-67213 — Laço infinito com tamanho zero</td><td><span class="pill alta">Alta</span></td><td class="check">Corrigida</td></tr>
+    <tr><td>nanoid (geração de IDs)</td><td>CVE-2026-67214 — Laço infinito com tamanho negativo</td><td><span class="pill alta">Alta</span></td><td class="check">Corrigida</td></tr>
+    <tr><td>brace-expansion (utilitário)</td><td>CVE-2026-14257 — Negação de serviço por expansão ilimitada</td><td><span class="pill alta">Alta</span></td><td class="check">Corrigida</td></tr>
+    <tr><td>brace-expansion (utilitário)</td><td>CVE-2026-13149 — Negação de serviço por expansão exponencial</td><td><span class="pill alta">Alta</span></td><td class="check">Corrigida</td></tr>
+    <tr><td>brace-expansion (utilitário)</td><td>CVE-2026-69152 — Bypass da mitigação do CVE-2026-14257</td><td><span class="pill alta">Alta</span></td><td class="check">Corrigida</td></tr>
+  </table>
+
+  <h2>4. Etapa externa — varredura OWASP ZAP e correções (16/08)</h2>
+  <p>A varredura externa <b>não encontrou nenhuma vulnerabilidade de severidade alta ou crítica</b>. Os apontamentos foram de baixo risco/informativos — recomendações de "endurecimento" (hardening) de cabeçalhos HTTP, presentes em praticamente qualquer aplicação web. As correções abaixo foram aplicadas:</p>
+  <table>
+    <tr><th style="width:34%">Apontamento do ZAP</th><th>Correção aplicada</th><th style="width:13%">Risco</th><th style="width:14%">Situação</th></tr>
+    <tr><td>Server Leaks Information ("X-Powered-By")</td><td>O servidor não anuncia mais a tecnologia utilizada, dificultando o reconhecimento por atacantes.</td><td><span class="pill baixa">Baixo</span></td><td class="check">Corrigida</td></tr>
+    <tr><td>Missing Anti-clickjacking Header</td><td>Cabeçalhos X-Frame-Options e frame-ancestors: nenhum site de terceiros pode embutir a plataforma em um iframe (previne roubo de cliques).</td><td><span class="pill baixa">Baixo</span></td><td class="check">Corrigida</td></tr>
+    <tr><td>X-Content-Type-Options Header Missing</td><td>Cabeçalho "nosniff": o navegador não tenta "adivinhar" o tipo de arquivos, mitigando execução indevida de conteúdo.</td><td><span class="pill baixa">Baixo</span></td><td class="check">Corrigida</td></tr>
+    <tr><td>Referrer-Policy ausente</td><td>URLs internas completas não são mais repassadas a sites externos ao seguir links.</td><td><span class="pill info">Info</span></td><td class="check">Corrigida</td></tr>
+    <tr><td>Permissions-Policy ausente</td><td>Câmera, microfone e localização do navegador explicitamente bloqueados (a plataforma não os utiliza).</td><td><span class="pill info">Info</span></td><td class="check">Corrigida</td></tr>
+    <tr><td>Cookies sem flags (HttpOnly / Secure / SameSite)</td><td>Verificado: o cookie de sessão (autenticação) já possui todas as proteções — HttpOnly, Secure e SameSite. Os cookies apontados são auxiliares, sem dados sensíveis.</td><td><span class="pill baixa">Baixo</span></td><td class="check">Verificada</td></tr>
+  </table>
+  <p class="muted" style="font-size:9.5pt">Os demais apontamentos do ZAP são informativos (ex.: "Modern Web Application", "Session Management Response Identified") ou referem-se à Content Security Policy completa, tratada na seção 6 como evolução planejada. As correções acima integram a publicação de produção subsequente à data deste relatório.</p>
+
+  <div class="footer"><span>Beeldings — Relatório de Segurança da Plataforma · v2.0</span><span>Confidencial · 16/08/2026 · pág. 3</span></div>
+</div>
+
+<!-- PÁGINA 4: CONTROLES -->
+<div class="page">
+  <h2>5. Controles de segurança implementados</h2>
+
+  <h3>5.1 Autenticação e sessões</h3>
+  <ul>
+    <li>Senhas armazenadas apenas com <b>hash criptográfico</b> — nunca em texto claro.</li>
+    <li>Sessão em <b>cookie HttpOnly + Secure + SameSite</b>: o token de acesso não é legível por scripts no navegador, mitigando roubo de sessão via XSS.</li>
+    <li><b>Proteção anti-robô (Cloudflare Turnstile)</b> na tela de login do ambiente de produção.</li>
+    <li><b>Limite de tentativas</b> (rate limiting) contra ataques de força bruta, com identificação correta do IP de origem.</li>
+  </ul>
+
+  <h3>5.2 Isolamento entre clientes (multi-tenant)</h3>
+  <ul>
+    <li>Todos os dados são <b>segregados por cliente</b>: cada organização acessa exclusivamente seus próprios sites, equipamentos, alarmes e relatórios.</li>
+    <li>O escopo do cliente é resolvido de forma centralizada no servidor a cada requisição — nunca confiado ao navegador.</li>
+    <li>Contas de clientes inativados são bloqueadas imediatamente, inclusive nas conexões em tempo real já abertas.</li>
+  </ul>
+
+  <h3>5.3 Proteção de operações críticas</h3>
+  <ul>
+    <li>Exclusões de dados críticos exigem <b>reconfirmação de senha</b>, com autorização de curta validade (5 minutos) e uso único.</li>
+    <li>Comandos de escrita em equipamentos passam por validação de permissão e são bloqueados em pontos sem comunicação.</li>
+    <li><b>Trilha de auditoria</b>: ações relevantes (login, comandos, alterações) são registradas com autor, data/hora e resultado — incluindo tentativas de login que falharam.</li>
+  </ul>
+
+  <h3>5.4 Proteção de dados e comunicação</h3>
+  <ul>
+    <li>Todo o tráfego externo ocorre exclusivamente sobre <b>HTTPS (TLS)</b>, com <b>HSTS</b> ativo (o navegador recusa conexões não criptografadas).</li>
+    <li>Credenciais de câmeras e equipamentos são armazenadas <b>criptografadas (AES-GCM)</b> e só decifradas no momento do uso.</li>
+    <li>Comunicação com gateways de campo via <b>MQTT autenticado</b>, com credenciais individuais por dispositivo e listas de controle de acesso (ACL) restritas por tópico.</li>
+    <li>Segredos e chaves de API ficam em <b>cofre de variáveis de ambiente</b> — fora do código-fonte e do controle de versão.</li>
+    <li>Cabeçalhos de segurança HTTP no servidor de aplicação (Helmet) e no frontend, com política de origens (CORS) centralizada e restritiva.</li>
+  </ul>
+
+  <div class="footer"><span>Beeldings — Relatório de Segurança da Plataforma · v2.0</span><span>Confidencial · 16/08/2026 · pág. 4</span></div>
+</div>
+
+<!-- PÁGINA 5: RECOMENDAÇÕES + CONCLUSÃO -->
+<div class="page">
+  <h2>6. Recomendações e evolução contínua</h2>
+  <p>A segurança é tratada como processo contínuo na plataforma. As frentes de aprimoramento já mapeadas incluem:</p>
+  <ul>
+    <li><b>Content Security Policy (CSP) completa</b>, restringindo as fontes de scripts e estilos — ajuste fino planejado para não interferir no funcionamento da aplicação.</li>
+    <li><b>Testes automatizados de isolamento entre clientes</b>, garantindo de forma permanente que nenhum cadastro exiba dados de outra organização (já planejado no roadmap).</li>
+    <li><b>Varreduras periódicas</b> — internas (dependências e código) a cada ciclo de publicação e externas (ZAP) em marcos relevantes, mantendo o resultado de zero vulnerabilidades críticas/altas.</li>
+    <li>Abertura a <b>testes de intrusão (pentest) manuais independentes</b> contratados pelo cliente, com apoio técnico da equipe Beeldings.</li>
+  </ul>
+
+  <h2>7. Escopo e limitações</h2>
+  <div class="note">
+    Este relatório documenta os <b>controles de segurança implementados</b> e os resultados de <b>varreduras automatizadas internas</b> (análise de dependências, análise estática de código e rastreamento de fluxo de dados, em 14/08/2026) e de uma <b>varredura externa de intrusão com OWASP ZAP</b> contra o ambiente de produção (16/08/2026). Varreduras automatizadas — mesmo externas — não substituem integralmente um teste de invasão manual conduzido por especialistas; a plataforma está preparada para receber esse tipo de avaliação quando o cliente desejar.
+  </div>
+
+  <h2>8. Conclusão</h2>
+  <p>Na data desta avaliação, a plataforma Beeldings encontra-se <b>sem vulnerabilidades críticas ou altas conhecidas em aberto</b> — resultado confirmado tanto pela análise interna quanto pela varredura externa de intrusão contra o ambiente de produção. Os controles essenciais — autenticação robusta, isolamento total entre clientes, criptografia de credenciais, trilha de auditoria, proteção de operações críticas e cabeçalhos de proteção do navegador — estão implementados. A equipe mantém rotina de atualização de dependências e correção imediata de apontamentos, como demonstrado nas duas rodadas deste relatório: <b>todas as correções foram aplicadas em até 24 horas após a identificação.</b></p>
+
+  <p style="margin-top:14mm; color:#64748b; font-size:10pt;">Documento gerado pela equipe técnica da plataforma Beeldings.<br>Dúvidas técnicas sobre este relatório podem ser encaminhadas ao responsável pela conta.</p>
+
+  <div class="footer"><span>Beeldings — Relatório de Segurança da Plataforma · v2.0</span><span>Confidencial · 16/08/2026 · pág. 5</span></div>
+</div>
+
+</body>
+</html>

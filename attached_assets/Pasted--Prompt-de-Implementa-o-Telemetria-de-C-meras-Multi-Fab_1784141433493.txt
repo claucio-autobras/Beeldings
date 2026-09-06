@@ -1,0 +1,232 @@
+# Prompt de Implementação — Telemetria de Câmeras Multi-Fabricante
+
+## Objetivo
+
+O sistema hoje já coleta telemetria SNMP corretamente para Hikvision (correção já aplicada
+e validada). Precisamos generalizar a arquitetura para suportar **múltiplos fabricantes
+(atuais e futuros)** sem reescrever a lógica central a cada marca nova — incluindo marcas
+que ainda não sabemos que vamos ter no sistema.
+
+## Princípio de arquitetura: "Provider por fabricante" + fallback universal
+
+Não implementar telemetria como uma lista fixa de OIDs por marca espalhada pelo código.
+Implementar como uma arquitetura em **3 camadas**, onde cada camada é tentada em ordem até
+uma funcionar:
+
+```
+Camada 1: SNMP MIB-II padrão (universal, tentar sempre primeiro)
+    ↓ (se OID não suportado / noSuchName / noSuchObject)
+Camada 2: Provider específico do fabricante (SNMP enterprise OU API HTTP proprietária)
+    ↓ (se fabricante desconhecido, ou provider específico também falhar)
+Camada 3: Fallback sintético calculado pelo próprio sistema (funciona para qualquer marca)
+```
+
+Isso significa: **nunca** assumir que uma marca nova vai precisar de código novo em todo
+lugar. Uma marca nova = um novo "provider" plugado na Camada 2, seguindo uma interface
+comum. Se não houver provider para uma marca, o sistema cai automaticamente na Camada 3 e
+continua funcionando (com dados mais limitados, mas sem quebrar).
+
+## Camada 1 — SNMP padrão (tentar sempre, independente da marca)
+
+Antes de qualquer lógica específica de fabricante, tentar sempre estes OIDs padrão MIB-II:
+
+| Métrica | OID padrão |
+|---|---|
+| Descrição do sistema | `1.3.6.1.2.1.1.1.0` (sysDescr) |
+| Tempo ligada | `1.3.6.1.2.1.1.3.0` (sysUpTime) |
+| Pacotes descartados (interface) | `1.3.6.1.2.1.2.2.1.13.<ifIndex>` (ifInDiscards) |
+| Erros de interface | `1.3.6.1.2.1.2.2.1.14.<ifIndex>` (ifInErrors) |
+
+Essa camada **não é garantida em todas as marcas** (a Hikvision testada não implementa
+nada disso), mas quando funciona, é a forma mais barata e universal de obter o dado — não
+custa nada tentar primeiro, e evita ter que manter lógica de fabricante para câmeras que já
+respondem ao padrão.
+
+## Camada 2 — Providers por fabricante (arquitetura extensível)
+
+Implementar um registro/tabela de providers, algo como:
+
+```
+providers = {
+  "hikvision": {
+    tipo: "snmp_enterprise",
+    oid_base: "1.3.6.1.4.1.39165.1",
+    campos: { cpu: ".7.0", memoria: ".11.0", modelo: ".1.0", firmware: ".3.0", ... },
+    parser: "extrair_numero_de_string_com_unidade",   // ex: "45 PERCENT" -> 45
+    fallback_http: {
+      base: "/ISAPI/System/status",
+      auth: "digest",
+      campos: { uptime: "deviceUpTime" }              // segundos, direto do XML
+    }
+  },
+  "dahua": {
+    tipo: "snmp_enterprise",
+    oid_base: "1.3.6.1.4.1.1004849",
+    mib_referencia: "DAHUA-SNMP-MIB",
+    campos: { cpu: ".2.1.3.0", ... },                  // completar via snmpwalk de teste
+    confiabilidade: "alta"
+  },
+  "intelbras": {
+    tipo: "snmp_enterprise",
+    oid_base: "1.3.6.1.4.1.1004849",                   // mesma árvore da Dahua (OEM)
+    confiabilidade: "media_baixa",                      // NÃO homologado oficialmente pela Intelbras
+    validacao_extra: true,                               // ver seção "Cuidado com Intelbras" abaixo
+    fallback_http: null                                  // não documentada oficialmente, não usar
+  },
+  "axis": {
+    tipo: "snmp_padrao",                                 // Axis geralmente implementa MIB-II corretamente
+    // normalmente resolvido já na Camada 1; provider aqui só se precisar de algo extra via VAPIX
+  }
+  // novas marcas entram aqui como novas entradas, sem tocar no motor de coleta
+}
+```
+
+**Regra de ouro:** o motor de coleta (o código que faz o GET/walk e decide o que fazer com
+o resultado) deve ser **genérico** e apenas consultar essa tabela — ele não deve conter
+`if fabricante == "hikvision"` espalhado pela lógica de negócio. Toda diferença entre marcas
+fica isolada dentro da configuração/provider daquela marca.
+
+### Prioridade entre fontes de dado dentro da Camada 2
+
+Quando mais de uma fonte existir para o mesmo campo (ex: Hikvision tem SNMP enterprise E
+ISAPI), a ordem de preferência é sempre **dado real do hardware > estimativa calculada pelo
+sistema**. Nunca pular direto para a Camada 3 (estimativa) se existir uma fonte real
+documentada e testada, mesmo que essa fonte exija um protocolo diferente do SNMP (ex: HTTP).
+
+Exemplo concreto — Tempo ligada (uptime) na Hikvision:
+1. Tentar SNMP enterprise (`1.3.6.1.4.1.39165.x`) → não existe nessa árvore (confirmado).
+2. Tentar ISAPI (`GET /ISAPI/System/status`, autenticação digest) → retorna `deviceUpTime`
+   em segundos, quando suportado pelo firmware. **Esse é o valor real e deve ter
+   prioridade.**
+3. Só cair para a estimativa calculada pelo sistema (Camada 3) se o ISAPI também falhar ou
+   não existir nessa versão de firmware.
+
+### Identificação automática do fabricante
+
+Antes de escolher o provider, o sistema precisa saber qual fabricante está falando. Ordem
+de prioridade sugerida:
+
+1. Se o cadastro da câmera já tem o fabricante informado manualmente (campo de config) → usar esse.
+2. Senão, tentar identificar via SNMP: o `sysDescr` (`1.3.6.1.2.1.1.1.0`) ou o `sysObjectID`
+   (`1.3.6.1.2.1.1.2.0`) costumam indicar o fabricante quando disponíveis. Quando não
+   disponíveis (como no caso da Hikvision testada), o **número de enterprise** que aparece
+   nos OIDs retornados no walk já entrega essa informação (`39165` = Hikvision, `1004849`
+   = Dahua/Intelbras — nesse caso não dá pra diferenciar Dahua de Intelbras só pelo SNMP,
+   já que usam a mesma árvore; o cadastro manual da marca resolve isso).
+3. Se nada identificar a marca → cair direto na Camada 3 (fallback universal).
+
+## Providers baseados em ONVIF (câmeras sem SNMP disponível)
+
+Nem toda câmera do sistema vai ter SNMP — algumas são cadastradas via **ONVIF**, que é um
+protocolo estruturalmente diferente (SOAP/HTTP, não OIDs) e precisa de um **tipo de
+provider diferente** na tabela, não apenas outra lista de OIDs.
+
+Diferente do SNMP (sempre polling/GET), o ONVIF mistura dois mecanismos:
+
+| Campo | Serviço ONVIF | Mecanismo |
+|---|---|---|
+| Status online/offline | Independente de protocolo (já existe) | Polling de conectividade |
+| Stream de vídeo disponível | Media (`GetStreamUri`) + validação do RTSP retornado | Polling/verificação ativa |
+| Latência de resposta | Round-trip da própria chamada ONVIF/RTSP | Medido pelo sistema |
+| Tempo ligada | **Não existe campo padronizado no ONVIF** | Vai direto para a Camada 3 (estimativa) — aqui não há uma API HTTP alternativa documentada como no caso da Hikvision, então a estimativa costuma ser o caminho principal, não só um fallback residual |
+| Detecção de movimento | Events (`PullPointSubscription` / `WS-BaseNotification`) | **Push** — requer assinatura ativa, não polling |
+| Tempo desde o último movimento | Não vem pronto de nenhum serviço | Calculado pelo sistema a partir do timestamp do último evento de movimento recebido |
+| Violação/tamper | Events, tipo `TamperDetector` | Push |
+| Perda de vídeo | Events, se a câmera suportar esse tipo de evento | Push, nem toda câmera oferece |
+
+### Distinção obrigatória: "sem dados" não significa a mesma coisa em todo campo
+
+Para campos por **polling**, "sem dados" é sempre uma falha real de leitura.
+
+Para campos por **evento** (movimento, tamper, perda de vídeo), a ausência de dado pode
+significar simplesmente que nenhum evento ocorreu ainda desde que a assinatura foi
+estabelecida — isso não é uma falha. O provider ONVIF deve reportar um destes três estados
+distintos para esses campos, nunca um "sem dados" genérico:
+
+- `aguardando_evento` — assinatura ativa e funcionando, só ainda não disparou.
+- `nao_suportado` — a câmera não oferece esse tipo de evento (capability não presente).
+- `erro` — a assinatura falhou, expirou, ou não foi possível estabelecer.
+
+Sem essa distinção, uma câmera saudável que simplesmente não teve movimento na frente dela
+ainda vai aparecer com o mesmo status de uma câmera com falha real de monitoramento — o que
+gera alarme falso ou desconfiança do cliente no sistema.
+
+## Camada 3 — Fallback universal (funciona para qualquer marca, inclusive desconhecida)
+
+Quando não há provider para a marca, ou o provider falhou, usar mecanismos que não
+dependem do fabricante:
+
+- **Tempo ligada (uptime):** o sistema mantém, por câmera, um timestamp de "último instante
+  em que ficou indisponível" (baseado no próprio polling/monitoramento contínuo que o
+  sistema já faz). O "uptime" reportado nesse caso é o tempo desde a última indisponibilidade
+  detectada — não é o uptime real do hardware, mas é uma métrica útil, funciona pra
+  qualquer câmera, e deve ser rotulada na interface como **"tempo online estimado"**, para
+  não ser confundida com o uptime interno real do dispositivo.
+- **Perda de pacotes:** medição ativa via ping periódico (ex: a cada X minutos, N pacotes),
+  calculando % de perda no próprio sistema de monitoramento, em vez de depender de contador
+  reportado pelo dispositivo.
+
+Essa camada deve existir independentemente de quantas marcas o sistema conhece — é o "chão
+mínimo garantido" de telemetria para qualquer câmera no sistema.
+
+## Cuidado especial: Intelbras
+
+Intelbras (a maioria dos modelos) usa a mesma base de firmware da Dahua e frequentemente
+responde à mesma árvore SNMP enterprise (`1.3.6.1.4.1.1004849.x`). **Porém**, o suporte
+oficial da Intelbras já declarou publicamente que a função SNMP dos gravadores é
+homologada apenas para OIDs de rede padrão — a parte "enterprise" (CPU, storage, status de
+canal, etc.) não tem garantia oficial de suporte, varia por modelo/firmware, e tem bugs
+conhecidos (ex.: status de canal remoto retornando sempre vazio mesmo com a câmera
+funcionando).
+
+**Implicações práticas para o código:**
+- Tratar o provider Intelbras como "melhor esforço", nunca como fonte garantida.
+- Validar valores retornados contra sentinelas conhecidos de bug (ex: campo de status
+  sempre vazio/zero) — se detectado, marcar como "dado não confiável" em vez de exibir como
+  se fosse um valor real.
+- Não deixar uma falha nessa árvore derrubar o restante da coleta daquela câmera — cada
+  campo deve falhar isoladamente e cair pra Camada 3 individualmente.
+
+## Normalização de valores (regra geral, todas as marcas)
+
+Muitos fabricantes (confirmado na Hikvision) retornam valores SNMP como texto com unidade
+embutida (`"45 PERCENT"`, `"256 MB"`, `"0.0 GB"`), não como inteiros puros. A função de
+parsing deve:
+
+1. Nunca assumir tipo `INTEGER` só porque o campo é numérico conceitualmente.
+2. Extrair a parte numérica via regex antes de qualquer cálculo/exibição.
+3. Ser uma função central única, reutilizada por **todo** provider — não duplicar lógica de
+   parsing dentro de cada adapter de fabricante.
+
+## Contratos de referência (testes de regressão)
+
+Manter estes comandos como teste de aceitação sempre que mexer na coleta, para garantir que
+mudanças futuras não quebrem o que já funciona:
+
+```bash
+# Hikvision (validado e funcionando em produção)
+snmpwalk -v1 -c public <IP_HIKVISION> .1
+
+# Dahua / Intelbras (validar com câmera real antes de confiar 100%)
+snmpwalk -v2c -c public <IP_DAHUA_OU_INTELBRAS> 1.3.6.1.4.1.1004849
+```
+
+## Critério de aceitação
+
+- Uma câmera de marca **não cadastrada** no sistema ainda deve exibir pelo menos uptime
+  estimado e perda de pacotes via ping (Camada 3) — nunca "sem dados" em branco sem
+  explicação.
+- Adicionar uma marca nova deve significar apenas **criar uma nova entrada na tabela de
+  providers**, sem alterar o motor de coleta genérico.
+- Nenhum campo de uma marca "melhor esforço" (ex: Intelbras) deve travar a coleta dos
+  demais campos daquela câmera se falhar.
+- Todo valor numérico exibido deve estar limpo de unidades/texto (parsing centralizado).
+- Quando existir mais de uma fonte para o mesmo campo, o sistema deve sempre preferir o
+  dado real (SNMP enterprise ou API do fabricante) antes de recorrer à estimativa da
+  Camada 3 — nunca o contrário.
+- Para câmeras ONVIF, os campos baseados em evento (movimento, tamper, perda de vídeo)
+  devem distinguir `aguardando_evento`, `nao_suportado` e `erro` — nunca um "sem dados"
+  único que misture os três casos.
+- Uma câmera offline deve mostrar todos os campos como indisponíveis de forma consistente
+  (não é uma falha do provider — é a ausência de qualquer canal de comunicação com o
+  dispositivo).

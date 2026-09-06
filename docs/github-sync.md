@@ -1,0 +1,87 @@
+# Sincronização bidirecional com GitHub (BlueBee-Infra)
+
+O repositório `github.com/claucio-autobras/Beeldings` espelha o `main` do Replit e
+aceita commits feitos fora do Replit (IDE local). A sincronização é feita por
+`scripts/sync-github.sh` e **nunca** envia o histórico completo local (~3,8 GB, exigido
+pelos checkpoints do Replit) nem faz force-push depois da base publicada.
+
+## Comandos (rodados no Replit)
+
+| Comando | O que faz |
+| --- | --- |
+| `scripts/sync-github.sh status` | Mostra se Replit e GitHub estão em dia, à frente, atrás ou divergentes. |
+| `scripts/sync-github.sh push` | Reproduz cada commit local desde o último ponto sincronizado como commit normal em cima do `main` remoto (sem force). **Aborta** se o GitHub tiver commits ainda não trazidos — rode `pull` primeiro. |
+| `scripts/sync-github.sh push-snapshot` | Publica o estado atual da `main` como um único commit normal. É o comando recomendado quando existem muitos commits locais pendentes; exclui `attached_assets/`, `exports/`, `screenshots/`, vídeos, o artefato de vídeo e saídas geradas. |
+| `scripts/sync-github.sh pull` | Busca os commits novos do GitHub, aplica o diff ao worktree e cria um commit no `main` local preservando mensagem/autoria originais no texto. |
+| `scripts/sync-github.sh init-base` | Só para primeiro setup ou recuperação: force-pusha um snapshot sem histórico do HEAD atual e registra o ponto de sincronização. Apaga commits remotos ainda não trazidos — use com cuidado. |
+
+Requisitos: `GITHUB_TOKEN` no ambiente (vai via credential helper do git — nunca em URLs,
+arquivos ou logs). O estado do ponto de sincronização (SHA local ↔ SHA remoto) fica em
+`.git/bluebee-github-sync`, fora do worktree versionado. `backups/`, `attached_assets/`,
+`exports/`, `screenshots/`, vídeos e artefatos de vídeo nunca são publicados. Assets de
+runtime em `apps/frontend/public` continuam no snapshot porque são necessários para o app.
+
+**Nenhuma publicação no GitHub acontece automaticamente.** Iniciar o projeto executa
+somente os workflows da aplicação, e o pós-merge faz apenas a preparação local
+(instalação de dependências e migrações/regeneração do Prisma). O daemon foi mantido
+no repositório como código legado, mas não é registrado nem iniciado pela workspace.
+Qualquer atualização remota deve ser uma solicitação explícita do usuário usando
+`scripts/sync-github.sh`. O sincronizador manual continua usando lock, recusando
+divergências e protegendo contra force-push fora do `init-base`.
+
+## Fluxo manual para atualizar o GitHub
+
+Quando o usuário solicitar uma atualização, execute os comandos no Replit nesta ordem:
+
+1. `scripts/sync-github.sh status` — confirme o estado local/remoto.
+2. Se o remoto estiver à frente ou divergente, execute
+   `scripts/sync-github.sh pull` e resolva qualquer conflito antes de continuar.
+3. Para publicar commits locais normalmente, execute
+   `scripts/sync-github.sh push`; quando houver muitos commits ou for desejado um
+   único snapshot filtrado, use `scripts/sync-github.sh push-snapshot`.
+4. Execute `scripts/sync-github.sh status` novamente para confirmar o resultado.
+
+Use `scripts/sync-github.sh init-base` somente em primeiro setup ou recuperação e
+apenas após confirmar explicitamente que o force-push destrutivo é desejado.
+O daemon não faz parte desse fluxo manual recomendado.
+
+Se o GitHub avançar pela IDE, nenhum comando automático faz pull ou force-push:
+resolva a divergência manualmente. O sincronizador continua recusando qualquer
+checkout que não seja o branch local `main`, inclusive um estado detached.
+Como proteção adicional, os comandos de sincronização recusam qualquer checkout que
+não seja o branch local `main`, inclusive um estado detached.
+Para validar essa proteção sem chamar o GitHub, rode
+`bash scripts/test-github-sync-main-guard.sh`.
+O teste de avanço remoto usa somente um repositório temporário local:
+`bash scripts/test-github-sync-remote-divergence.sh`.
+Para verificar que nenhum acionador automático foi reintroduzido, rode:
+`bash scripts/test-github-sync-no-auto.sh`.
+
+## Fluxo para trabalhar na IDE local
+
+1. Clonar: `git clone https://github.com/claucio-autobras/Beeldings.git`
+2. Instalar dependências: `npm install` na raiz (monorepo npm workspaces).
+3. Criar os `.env` locais necessários (não são versionados): `DATABASE_URL`,
+   `JWT_SECRET`, e os demais que o backend exigir no seu cenário
+   (veja `replit.md` / `apps/backend`).
+4. Rodar: frontend `cd apps/frontend && npx next dev`, backend
+   `cd apps/backend && npm run start:dev`.
+5. Corrigir/commitar/pushar normalmente para o `main` do GitHub.
+6. No Replit, somente quando solicitado pelo usuário, rodar
+   `scripts/sync-github.sh pull` — as mudanças entram no `main` do Replit como um
+   commit local que cita as mensagens e autores originais.
+
+## Regras de ouro
+
+- Nunca reescrever histórico no GitHub (force-push) depois da base — o `pull` aborta se
+  detectar isso.
+- Se `push` reclamar que o remoto avançou, rode `pull` antes; se o mesmo arquivo mudou
+  dos dois lados e o patch não aplicar, resolva localmente no Replit e tente de novo.
+- Se o mapeamento se perder (rollback de checkpoint muito antigo, etc.),
+  `init-base` recomeça a base — commits remotos não trazidos são perdidos, então rode
+  `pull` antes se possível.
+
+## Histórico
+
+- 2026-07-30: fluxo bidirecional ativado; primeiro commit de teste feito direto no GitHub.
+- 2026-08-27: publicação automática desativada; atualizações remotas agora são manuais.

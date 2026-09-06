@@ -1,0 +1,77 @@
+# Ambiente de teste local — BlueBee IoT
+# Uso: docker compose -f docker-compose.test.yml up -d
+#
+# Acessos:
+#   EMQX Dashboard:  http://localhost:18083  (admin / bluebee123)
+#   MQTT Broker:     localhost:1883  (sem TLS — apenas testes locais)
+#   PostgreSQL:      localhost:5432  (postgres / bluebee123 — db: bluebee)
+#     DATABASE_URL=postgresql://postgres:bluebee123@localhost:5432/bluebee
+
+services:
+  postgres:
+    # TimescaleDB = PostgreSQL 16 + extensão TimescaleDB (time_bucket usado em trends/reports)
+    image: timescale/timescaledb:2.17.2-pg16
+    container_name: bluebee-postgres
+    # Força UTC no servidor (sobrepõe a config gravada no initdb). A aplicação
+    # assume timestamps em UTC, como no Supabase.
+    command: ["postgres", "-c", "timezone=UTC"]
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=bluebee123
+      - POSTGRES_DB=bluebee
+      # UTC para espelhar o Supabase — a aplicação assume timestamps em UTC.
+      # NÃO usar timezone local aqui, senão a janela de consulta dos trends
+      # fica defasada e o gráfico aparece vazio.
+      - TZ=UTC
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d bluebee"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bluebee-test
+
+  emqx:
+    image: emqx/emqx:5.8.3
+    container_name: bluebee-emqx
+    ports:
+      - "1883:1883"    # MQTT TCP
+      - "8083:8083"    # MQTT WebSocket
+      - "18083:18083"  # Dashboard web
+    environment:
+      - EMQX_NODE_NAME=emqx@127.0.0.1
+      - EMQX_DASHBOARD__DEFAULT_PASSWORD=bluebee123
+      - EMQX_MQTT__MAX_PACKET_SIZE=1MB
+      # Bootstrap API key para o backend provisionar gateways via REST API
+      # Formato: key_id:key_secret  (não alterar sem atualizar backend/.env)
+      - EMQX_API_KEY__BOOTSTRAP_FILE=/opt/emqx/data/bootstrap_api_keys.txt
+    volumes:
+      - emqx_data:/opt/emqx/data
+      - emqx_log:/opt/emqx/log
+      - ./infra/emqx/bootstrap_api_keys.txt:/opt/emqx/data/bootstrap_api_keys.txt:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "emqx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bluebee-test
+
+volumes:
+  postgres_data:
+    driver: local
+  emqx_data:
+    driver: local
+  emqx_log:
+    driver: local
+
+networks:
+  bluebee-test:
+    driver: bridge
+    name: bluebee-test

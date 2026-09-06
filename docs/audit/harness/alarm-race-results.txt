@@ -1,0 +1,11 @@
+== ALARME 1 instância: 5 msg/s x 12s alternando 10/90 ==
+{"sent":55}
+eventos (ativos,total) 1-instância: 1|1
+ACTIVE|1
+== ALARME 2 instâncias ==
+{"sent":55}
+total após (antes=1): 4
+ACTIVE|2
+NORMALIZED_UNACK|2
+ACTIVE simultâneos: 2
+DONE

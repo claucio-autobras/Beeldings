@@ -1,0 +1,139 @@
+# Objetivo
+
+Antes de implementar qualquer código, quero que você faça uma análise completa da documentação da API da Infraspeak.
+
+Documentação oficial:
+
+https://infraspeak.stoplight.io/docs/api/f89e68a07621b-requirements
+
+## IMPORTANTE
+
+Nesta etapa **NÃO escreva nenhum código**.
+
+O objetivo é apenas entender exatamente como a API funciona.
+
+Não faça suposições.
+
+Não utilize conhecimento prévio.
+
+Não utilize exemplos encontrados na internet.
+
+Considere como verdade apenas o que estiver documentado oficialmente.
+
+Se alguma informação não estiver disponível na documentação, informe claramente que ela não pôde ser confirmada.
+
+---
+
+# Quero um relatório contendo:
+
+## 1. Autenticação
+
+* Como funciona a autenticação.
+* Headers obrigatórios.
+* Tokens necessários.
+* Tempo de expiração, caso exista.
+* Fluxo completo de autenticação.
+
+---
+
+## 2. Endpoint
+
+Identifique o endpoint oficial utilizado para consultar Requirements.
+
+Informe:
+
+* URL
+* Método HTTP
+* Headers
+* Query Parameters
+* Path Parameters
+
+---
+
+## 3. Paginação
+
+Explique exatamente como funciona.
+
+Informe:
+
+* parâmetros
+* limite por página
+* página inicial
+* como descobrir se existem mais páginas
+
+---
+
+## 4. Filtros
+
+Liste todos os filtros disponíveis.
+
+Não invente filtros.
+
+---
+
+## 5. Estrutura da resposta
+
+Liste todos os campos retornados.
+
+Se houver objetos internos, descreva-os.
+
+---
+
+## 6. Rate Limit
+
+Existe limite de chamadas?
+
+Se existir:
+
+* quantidade
+* janela de tempo
+* comportamento quando excedido
+
+---
+
+## 7. Erros
+
+Liste todos os códigos HTTP documentados.
+
+Explique o significado de cada um.
+
+---
+
+## 8. Exemplo real
+
+Monte um exemplo completo de requisição utilizando exclusivamente informações documentadas.
+
+---
+
+## 9. Restrições
+
+Informe qualquer limitação importante encontrada na documentação.
+
+---
+
+## 10. Recomendações
+
+Pensando em uma integração de produção, quais cuidados devem ser tomados?
+
+Considere:
+
+* autenticação
+* paginação
+* tratamento de erros
+* performance
+* retries
+* segurança
+
+---
+
+# Resultado esperado
+
+Quero um relatório técnico detalhado.
+
+Não implemente nenhum código.
+
+Não proponha arquitetura.
+
+Não faça alterações no projeto.
+
+Apenas documente exatamente como a API funciona com base na documentação oficial.

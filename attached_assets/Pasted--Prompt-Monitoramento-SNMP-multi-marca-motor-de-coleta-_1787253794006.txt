@@ -1,0 +1,194 @@
+# Prompt — Monitoramento SNMP multi-marca: motor de coleta auto-curável, diagnóstico por walk e cards de dispositivo
+
+> Cole este prompt inteiro no agente. Ele descreve uma implementação **já validada em campo** contra uma controladora Control iD iDFlex real (10.201.10.120) e contra câmeras Hikvision. Implemente exatamente estes comportamentos — os OIDs, escalas, heurísticas e regras foram todos comprovados com o equipamento respondendo.
+
+---
+
+## Princípio inegociável (vale para TODO o código)
+
+O sistema monitora **diversas marcas e modelos** (Control iD, Hikvision, Dahua, Intelbras, Axis e outras que virão). **Nada pode ficar amarrado a um equipamento específico.**
+
+- Específico de marca vive **somente em arquivos de perfil de fabricante** (dados declarativos: OIDs + escala + critério de match).
+- O **motor de coleta conhece apenas MIBs padrão** (HOST-RESOURCES, UCD-SNMP, IF-MIB, ENTITY-SENSOR) + descoberta automática por walk.
+- Índices de tabela SNMP **nunca são confiáveis**: um firmware expõe CPU em `hrProcessorLoad.1`, outro em `.196608` (caso real do iDFlex, 4 núcleos em `.196608–.196611`). A MIB publicada de um fabricante serve para nome/tipo/unidade, **nunca para posição** — a posição vem sempre de um walk real.
+- Marca nova = novo arquivo de perfil. Nunca mudança no motor.
+
+---
+
+## 1. Motor de coleta SNMP (ciclo de polling)
+
+### 1.1 Cadeia de resolução por métrica (ordem fixa)
+
+Para cada ponto/métrica de saúde (`cpu`, `memory`, `ram_total`, `temperature`, `packet_loss`, `uptime`), o valor é resolvido nesta ordem — o primeiro que responder vence:
+
+1. **OID do ponto** (cadastrado no banco para o equipamento);
+2. **OID do perfil do fabricante** (se identificado);
+3. **Fallback escalar universal** (OIDs padrão, ver 1.2);
+4. **Mapeamento descoberto por walk** (ver 1.3).
+
+Regras críticas:
+- Os OIDs do perfil e dos fallbacks entram **SEMPRE no mesmo GET em lote** do ciclo, para todas as métricas presentes nos pontos — não só quando o ponto está sem OID. (Bug real corrigido: ponto com OID errado nunca acionava o fallback porque o OID do perfil ficava fora do batch.)
+- Ponto marcado `unsupported` pula **só o próprio OID** — os fallbacks continuam valendo (o OID cadastrado pode estar errado sem a métrica estar ausente).
+- Falha de um campo nunca derruba os demais (resolução por campo).
+- Valores OCTET STRING numéricos ("12.3", "45 PERCENT", "87,5 %") são coagidos para número num único ponto de parsing.
+- Erro de protocolo SNMP (noSuchName/noSuchObject) = o agente **respondeu** (equipamento vivo, OID ausente). Só timeout = silêncio/offline.
+
+### 1.2 Fallbacks escalares universais (sempre no batch)
+
+| Métrica | OID | Escala | Unidade |
+|---|---|---|---|
+| memory (disponível) | `1.3.6.1.4.1.2021.4.6.0` (UCD memAvailReal) | 1 | kB |
+| ram_total | `1.3.6.1.4.1.2021.4.5.0` (UCD memTotalReal) | 1/1024 | MB |
+| ram_total (2ª opção) | `1.3.6.1.2.1.25.2.2.0` (hrMemorySize) | 1/1024 | MB |
+
+### 1.3 Auto-descoberta por walk (one-shot, cacheada)
+
+Quando ponto + perfil + fallback falham para uma métrica descobrível, o motor faz um **walk único** (nunca a cada ciclo), cacheia o resultado e:
+- resolve o valor **já no ciclo corrente** (valores do walk entram no mapa de valores);
+- nos ciclos seguintes, os OIDs descobertos entram no **GET em lote normal** (sem walk).
+- Resultado negativo também é cacheado; nova tentativa só a cada **10 minutos**.
+- Descoberta só roda com o equipamento respondendo (reachable).
+- Cache é por equipamento e limpo no dispose/reinício.
+
+**CPU** — walk da coluna `1.3.6.1.2.1.25.3.3.1.2` (hrProcessorLoad):
+- aceita QUALQUER índice; descarta linhas com valor fora de 0–100;
+- publica a **MÉDIA de todos os núcleos** (agregação `avg`), scale 1, unidade %;
+- caso real validado: iDFlex com núcleos 33/18/11/18 → publica 20%.
+
+**Temperatura** — dois walks em ordem:
+1. lm-sensors: coluna `1.3.6.1.4.1.2021.13.16.2.1.3` (valores; nomes na coluna `...2.1.2`);
+2. ENTITY-SENSOR: coluna de tipo `1.3.6.1.2.1.99.1.1.1.1` — só sensores **celsius (tipo 8)**; valor na coluna `...1.4`.
+- Escala inferida pela **magnitude do valor cru**: ≥1000 → 0.001 (mili-°C); ≥200 → 0.1; senão 1.
+- No ENTITY-SENSOR, se as colunas scale/precision existirem, usar RFC 3433 (`10^(3×(scale−9) − precision)`), com validação de plausibilidade: valor final fora de −40..150°C → cai na heurística de magnitude.
+- Valor cru 0 é descartado (sensor ausente/bugado).
+- Pega o primeiro sensor plausível (agregação `first`).
+- Se nada existir (caso real do iDFlex atual): a métrica fica **honestamente "não suportado"** — nunca inventar valor.
+
+**Pacotes perdidos** — a descoberta roda **sempre uma vez** (não só quando falta valor), porque o OID padrão `ifInDiscards.1` RESPONDE mesmo apontando para loopback — e mente:
+1. walk da coluna `1.3.6.1.2.1.2.2.1.3` (ifType); loopback = tipo **24**, ethernet = tipo **6**;
+2. guarda o conjunto de índices loopback;
+3. escolhe a interface real: primeira ethernet, senão primeira não-loopback;
+4. mapeamento descoberto = **soma** de `ifInDiscards.<idx>` + `ifInErrors.<idx>` da interface real (agregação `sum`).
+- Na resolução, qualquer OID de perda IF-MIB (`...2.2.1.13.x` ou `...2.2.1.14.x`) apontando para um índice loopback conhecido é **ignorado** (tanto o do ponto quanto o fallback MIB-II da interface 1) — o descoberto assume.
+- Se a interface 1 já é ethernet (câmeras comuns), o OID do ponto continua valendo — comportamento antigo preservado.
+- Caso real validado: iDFlex com `lo`=if1 e `eth0`=if2 → passa a somar descartes+erros da eth0.
+
+Pontos resolvidos por descoberta publicam `source: "discovered"`.
+
+### 1.4 Uptime e status
+
+- STATUS deriva da alcançabilidade (respondeu = 1), nunca de OID.
+- Uptime: sysUpTime MIB-II (`1.3.6.1.2.1.1.3.0`, ticks × 0.01 → s) com prioridade sobre OID do ponto.
+
+---
+
+## 2. Diagnóstico SNMP sob demanda (walk + candidatos dinâmicos)
+
+### 2.1 Subárvores do walk resumido
+
+Além de MIB-II system (`1.3.6.1.2.1.1`) e interfaces (`1.3.6.1.2.1.2`), varrer:
+
+| Raiz | Conteúdo |
+|---|---|
+| `1.3.6.1.2.1.25.2` | HOST-RESOURCES armazenamento/RAM (hrMemorySize + hrStorageTable) |
+| `1.3.6.1.2.1.25.3.3` | HOST-RESOURCES processadores (hrProcessorLoad) |
+| `1.3.6.1.2.1.99.1.1` | ENTITY-SENSOR sensores físicos |
+| `1.3.6.1.4.1.2021.4` | UCD memória |
+| `1.3.6.1.4.1.2021.10` | UCD load average |
+| `1.3.6.1.4.1.2021.11` | UCD estatísticas de CPU |
+| `1.3.6.1.4.1.2021.13.16` | UCD lm-sensors |
+| subárvore enterprise do sysObjectID | árvore proprietária do fabricante |
+
+Cada subárvore com limite de entradas (~150) e tempo (~12s); subárvore não suportada responde em milissegundos (endOfMib) — custo baixo. Timeout total do diagnóstico ≥180s.
+
+### 2.2 Candidatos dinâmicos gerados do walk
+
+O diagnóstico testa os OIDs cadastrados + catálogo estático dos perfis + **candidatos dinâmicos derivados do walk real** (dedupe contra o catálogo; todo candidato dinâmico já vem comprovadamente respondido, com o valor do walk):
+
+- **cpu**: cada linha `1.3.6.1.2.1.25.3.3.1.2.<i>` com valor 0–100 → candidato (scale 1, %), rótulo "CPU real do equipamento (hrProcessorLoad `<i>`)";
+- **memory**: `1.3.6.1.4.1.2021.4.6.0` se presente (kB);
+- **ram_total**: UCD memTotalReal (1/1024 → MB); hrMemorySize (1/1024 → MB); linhas de RAM da hrStorageTable — linha é RAM quando a coluna type (`...25.2.3.1.2.<i>`) é **igual** a `1.3.6.1.2.1.25.2.1.2` (hrStorageRam; comparação por igualdade, nunca substring) OU a descrição casa com /physical memory|memória física|\bram\b/i; candidato = hrStorageSize `...25.2.3.1.5.<i>` com scale = allocationUnits(`...4.<i>`)/1048576 → MB;
+- **temperature**: cada sensor lm-sensors (nome incluído no rótulo; sensores com nome contendo cpu/core/proc/soc vêm PRIMEIRO na lista — a UI pré-seleciona o primeiro que respondeu); sensores ENTITY-SENSOR tipo celsius com escala RFC 3433 + plausibilidade; escala por magnitude como no motor;
+- **packet_loss**: cada linha de ifInDiscards/ifInErrors por interface real do walk de interfaces.
+
+### 2.3 Aplicar sugestões
+
+- O apply aceita, por métrica, string OID (legado) **ou objeto `{oid, scale, unit}`** — obrigatório para candidatos dinâmicos (ex.: temperatura em mili-°C precisa de scale 0.001; sem isso o valor gravado sairia 1000× errado).
+- Ao aplicar: atualiza o binding do ponto existente (IDs preservados — trends/alarmes sobrevivem), limpa a marca `unsupported`, cria o ponto se a métrica não tinha, republica a config no gateway.
+- A UI de sugestões exibe os valores **já multiplicados pela escala do candidato** (45230 cru × 0.001 → "45.2°C"; ticks de uptime × 0.01 → "7h 54m").
+
+---
+
+## 3. Perfil Control iD (dados de campo)
+
+Enterprise 34475. Match por manufacturer/sysDescr contendo "control id"/"controlid"/"control-id" ou enterprise 34475.
+
+OIDs proprietários levantados por **walk real** num iDFlex V2 (firmwares 5.13.9/5.19.3):
+- cpu: `1.3.6.1.4.1.34475.1.1.4.0` (OCTET STRING numérico, %), scale 1;
+- temperatura: `1.3.6.1.4.1.34475.1.1.5.0` (Gauge32 em mili-°C), scale 0.001;
+- ram_total: UCD memTotalReal (genérico).
+
+**AVISOS obrigatórios em comentário no perfil:**
+1. A árvore exposta NÃO corresponde à CONTROLID-MIB publicada (grupos renumerados por modelo) — posição vem do walk, nunca da MIB.
+2. Alguns firmwares do MESMO equipamento rodam net-snmp genérico **sem a árvore 34475** (comprovado: sysObjectID `1.3.6.1.4.1.8072.3.2.10`, walk da 34475 vazio) — nesses, quem entrega CPU é a auto-descoberta de hrProcessorLoad. O perfil é só fallback; o walk dinâmico é a fonte de verdade por equipamento.
+
+Pontos padrão de controladora nova: STATUS (sem OID), UPTIME (sysUpTime ×0.01), CPU (hrProcessorLoad.1), MEMORIA (memAvailReal, kB), **RAM_TOTAL (memTotalReal, 1/1024, MB)**, TEMPERATURA (lm-sensors.1, ×0.001), PACOTES_PERDIDOS (ifInDiscards.1), PERDA_PING (sem OID). Controladoras já cadastradas sem o ponto RAM_TOTAL ganham ele por **backfill idempotente** na primeira listagem (criar uma vez + republicar config).
+
+---
+
+## 4. Frontend — cards de dispositivo (SCA e CFTV idênticos)
+
+Componentes **compartilhados** entre controladoras e câmeras (um só lugar para manter):
+
+### 4.1 Cabeçalho do card
+
+- **Avatar** 36×36 arredondado com ícone do tipo (digital/fingerprint para controladora; câmera para CFTV), fundo/cor pelo status: verde online, vermelho offline, cinza sem dados;
+- Nome + selo do protocolo ("SNMP"/"ONVIF") + estrela de crítico (admin);
+- Linha do site; linha monoespaçada `ip:porta · fabricante`;
+- À direita: pill de status (Online/Offline/Sem dados com bolinha) e uptime formatado ("7h 56m") abaixo;
+- **CFTV — canto superior direito**: botão **"Ao vivo"** (ícone monitor-play + rótulo) **sempre visível**:
+  - habilitado só com câmera online E credenciais de vídeo configuradas;
+  - offline → desabilitado (opacidade 40%), tooltip "Disponível quando a câmera estiver online";
+  - sem credenciais → desabilitado, tooltip "Configure as credenciais de vídeo (ONVIF/RTSP) no cadastro para habilitar".
+
+### 4.2 Grade de métricas (tiles dinâmicas)
+
+Grid de 2 colunas; cada tile: ícone + rótulo uppercase 10px, valor 14px semibold, barra de progresso para percentuais. **Só renderiza métricas que o equipamento tem ponto** — nada de slot vazio fixo.
+
+Ordem e regras das tiles:
+1. **Uso de CPU** — `NN%` + barra;
+2. **Memória usada** — DERIVADA quando há memória disponível (kB) + RAM total (MB): `usada% = 100 × (1 − disponível/total)`, com barra e tooltip "X MB livres de Y MB". Se o firmware já reporta memória em % (Hikvision), usa direto e NÃO cria tile de disponível;
+3. **Memória RAM** (total) — formatada com auto-escala: `31.0 MB`, `117 MB`, `2.0 GB` (≥1024 MB vira GB; ≥100 MB sem casa decimal). **Nunca** exibir número cru de bytes;
+4. **Memória disp.** — só quando não dá para derivar a usada (sem total conhecido), em MB;
+5. **Temperatura** — `NN.N°C`;
+6. **Pacotes perdidos** — `N pkts`;
+7. **Perda ping** — `N%` + barra;
+8. **Armazenamento** (câmeras/NVR) — `NN%` + barra.
+
+- Cor da barra: normal → **âmbar ≥75%** → **vermelho ≥90%**;
+- Estados por tile: valor ausente → "sem dados"; ponto marcado unsupported → "não suportado" com tooltip "O equipamento não expõe esta métrica via SNMP (último diagnóstico)"; leitura não confiável → valor em âmbar com "⚠" e tooltip.
+
+### 4.3 Rodapé — barra de ações rotuladas
+
+Botões com **ícone + rótulo** (rótulo some em telas muito estreitas), compartilhados entre SCA e CFTV:
+`📈 Telemetria · 🔔 Alarmes · 🩺 Diagnóstico · ✏️ Editar · 🗑 Remover`
+- Telemetria visível para todos os perfis; demais só admin; Remover em vermelho (tom danger);
+- Sino preenchido/colorido pela severidade quando o dispositivo tem alarme configurado;
+- Diagnóstico só para dispositivos com canal SNMP.
+
+### 4.4 Modal de Telemetria
+
+Lista todos os pontos do dispositivo: nome do ponto + `TAG · unidade` à esquerda; valor formatado + "lido às HH:MM" à direita. Formatação: STATUS → Online/Offline; UPTIME → "7h 54m"; memória kB → MB/GB; RAM total → MB/GB; sem leitura → estado ("sem dados"/"não suportado"). Subtítulo com `ip:porta — fabricante — perfil` (IP só para admin).
+
+---
+
+## 5. Critérios de aceite (validados no equipamento real)
+
+Simular/testar com o cenário do iDFlex real:
+1. Agente net-snmp genérico, CPU em `hrProcessorLoad.196608–.196611` (33/18/11/18), ponto CPU cadastrado com `.1` e marcado unsupported → card mostra **CPU 20%** (média), `source=discovered`, no primeiro ciclo; segundo ciclo resolve por GET **sem novo walk**;
+2. `lo`=if1 (ifType 24), `eth0`=if2 (ifType 6), ponto de pacotes em `ifInDiscards.1` → publica soma descartes+erros da **eth0**; com if1=ethernet, OID do ponto continua valendo;
+3. memAvailReal 31700 kB + memTotalReal 119424 kB → card: **Memória usada 73%** (tooltip "31.0 MB livres de 117 MB"), **Memória RAM 117 MB**;
+4. Sem lm-sensors/ENTITY-SENSOR/árvore proprietária → Temperatura "não suportado" (nunca valor inventado); walk de temperatura NÃO se repete no ciclo seguinte (cache negativo);
+5. Câmera Hikvision com memória em % (77) → tile "Memória usada 77%" direta, sem tile de disponível;
+6. Diagnóstico no iDFlex lista candidato de CPU para cada núcleo com valor lido; aplicar persiste OID + scale e limpa unsupported;
+7. Equipamento offline (timeout) → STATUS=0, pontos null, **nenhum walk de descoberta**.

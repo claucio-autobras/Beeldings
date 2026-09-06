@@ -1,0 +1,23 @@
+### dashboard-overview (c=10 d=20s)
+  p50=27ms p90=36ms p97.5=44ms p99=53ms max=110ms | rps avg=346 | 2xx=6915 non2xx=0 errors=0 timeouts=0
+### alarm-events (c=10 d=20s)
+  p50=21ms p90=28ms p97.5=33ms p99=37ms max=64ms | rps avg=446 | 2xx=8925 non2xx=0 errors=0 timeouts=0
+### trend-data (c=10 d=20s)
+  p50=12ms p90=16ms p97.5=21ms p99=26ms max=175ms | rps avg=774 | 2xx=15473 non2xx=0 errors=0 timeouts=0
+### trends-history (c=10 d=20s)
+  p50=15ms p90=24ms p97.5=41ms p99=78ms max=219ms | rps avg=536 | 2xx=10726 non2xx=0 errors=0 timeouts=0
+### dashboard-c25 (c=25 d=15s)
+  p50=74ms p90=91ms p97.5=111ms p99=149ms max=341ms | rps avg=322 | 2xx=4824 non2xx=0 errors=0 timeouts=0
+### dashboard-c50 (c=50 d=15s)
+  p50=148ms p90=177ms p97.5=205ms p99=284ms max=568ms | rps avg=327 | 2xx=4906 non2xx=0 errors=0 timeouts=0
+### dashboard-c100 (c=100 d=15s)
+  p50=273ms p90=301ms p97.5=319ms p99=340ms max=413ms | rps avg=362 | 2xx=5432 non2xx=0 errors=0 timeouts=0
+### login (POST, bcrypt) c=4 d=15s — non2xx esperado = 429 do @Throttle(10/min)
+  p50=0ms p99=2ms | rps avg=4904.5 | 2xx=10 non2xx=73547
+### latência de login legítimo (5 amostras sequenciais)
+  429 0.001791s
+  429 0.001268s
+  429 0.001465s
+  200 0.099180s
+  200 0.122384s
+DONE

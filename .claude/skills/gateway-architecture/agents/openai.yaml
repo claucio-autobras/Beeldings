@@ -1,0 +1,4 @@
+interface:
+  display_name: "Gateway Architecture"
+  short_description: "Arquitetura do gateway IoT local"
+  default_prompt: "Use $gateway-architecture to apply the BlueBee IoT gateway-architecture standards."
